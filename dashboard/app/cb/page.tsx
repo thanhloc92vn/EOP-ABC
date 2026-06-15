@@ -257,6 +257,7 @@ export default function CBPage() {
   const [isSendingAllEmails, setIsSendingAllEmails] = useState(false);
   const [excelFileName, setExcelFileName] = useState("");
   const [timesheetMonth, setTimesheetMonth] = useState("");
+  const [excelSearchQuery, setExcelSearchQuery] = useState("");
 
   const [importedTimesheets, setImportedTimesheets] = useState<any[]>([]);
   const [isSavingTimesheet, setIsSavingTimesheet] = useState(false);
@@ -407,6 +408,20 @@ export default function CBPage() {
       .trim();
   };
 
+  const filteredExcelEmployees = useMemo(() => {
+    return parsedEmployees.filter(emp => {
+      if (!excelSearchQuery) return true;
+      const q = normalizeText(excelSearchQuery);
+      if (!q) return true;
+      return (
+        normalizeText(emp.name).includes(q) ||
+        normalizeText(emp.employeeCode).includes(q) ||
+        (emp.department && normalizeText(emp.department).includes(q)) ||
+        (emp.email && normalizeText(emp.email).includes(q))
+      );
+    });
+  }, [parsedEmployees, excelSearchQuery]);
+
   const parseExcelDate = (val: any): string => {
     if (val === undefined || val === null || val === "") return "";
     const num = Number(val);
@@ -520,13 +535,36 @@ export default function CBPage() {
             const cleanedName = rawName.replace(/^EC\s*-\s*/gi, "").trim();
             const dept = colIndices.dept !== -1 ? String(firstRow[colIndices.dept] || "").trim() : "";
 
-            const dbEmp = dbEmployees?.find(e => 
-              (e.employee_code && String(e.employee_code).trim() === code) ||
-              (normalizeText(e.name) === normalizeText(cleanedName))
-            );
+            const cleanCode = (c: string) => String(c || "").replace(/^0+/, "").trim();
+            const dbEmp = dbEmployees?.find(e => {
+              const dbCode = cleanCode(e.employee_code);
+              const excelCode = cleanCode(code);
+              const dbNormName = normalizeText(e.name);
+              const excelNormName = normalizeText(cleanedName);
+              
+              const codeMatches = dbCode && excelCode && dbCode === excelCode;
+              const nameMatches = dbNormName === excelNormName;
+              const specialQuyenMatches = (excelNormName === "nttquyen" || excelCode === "5897") && dbNormName === "nguyen truong thuy quyen";
+              
+              return codeMatches || nameMatches || specialQuyenMatches;
+            });
 
-            const email = dbEmp?.email || "";
+            let email = dbEmp?.email || "";
+            if (!email && (normalizeText(cleanedName) === "nttquyen" || cleanCode(code) === "5897")) {
+              email = "quyenntt@trungnamgroup.com.vn, quyen.0408@gmail.com";
+            }
             const emailFound = !!email;
+
+            let displayName = cleanedName;
+            if (dbEmp) {
+              if (normalizeText(dbEmp.name) === "nguyen truong thuy quyen") {
+                displayName = "Nguyễn Trương Thùy Quyên - CV Tuyển dụng";
+              } else {
+                displayName = dbEmp.name;
+              }
+            } else if (normalizeText(cleanedName) === "nttquyen" || cleanCode(code) === "5897") {
+              displayName = "Nguyễn Trương Thùy Quyên - CV Tuyển dụng";
+            }
 
             let totalDays = 0;
             let totalLate = 0;
@@ -634,7 +672,7 @@ export default function CBPage() {
 
             parsedList.push({
               employeeCode: code,
-              name: cleanedName,
+              name: displayName,
               department: dept || dbEmp?.department || "",
               email,
               emailFound,
@@ -1899,13 +1937,30 @@ export default function CBPage() {
                     {/* TABLE PREVIEW */}
                     {parsedEmployees.length > 0 && (
                       <div className="space-y-3 pt-3 border-t border-slate-100">
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                          <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Danh sách nhân viên nhận diện từ Excel</h4>
-                          {parsedEmployees.filter(e => !e.emailFound).length > 0 && (
-                            <span className="text-[10px] text-amber-600 font-bold bg-amber-50 px-2.5 py-0.5 rounded-full flex items-center gap-1">
-                              <AlertCircle size={10} /> Có {parsedEmployees.filter(e => !e.emailFound).length} nhân viên chưa có email. Vui lòng cập nhật trực tiếp tại dòng tương ứng.
-                            </span>
-                          )}
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 bg-slate-50/50 p-3 rounded-2xl border border-slate-150">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Danh sách nhân viên nhận diện từ Excel</h4>
+                            {excelSearchQuery && (
+                              <span className="text-[10px] text-blue-600 font-bold bg-blue-50 px-2.5 py-0.5 rounded-full border border-blue-100">
+                                Tìm thấy {filteredExcelEmployees.length}/{parsedEmployees.length} nhân viên
+                              </span>
+                            )}
+                            {parsedEmployees.filter(e => !e.emailFound).length > 0 && !excelSearchQuery && (
+                              <span className="text-[10px] text-amber-600 font-bold bg-amber-50 px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                                <AlertCircle size={10} /> Có {parsedEmployees.filter(e => !e.emailFound).length} nhân viên chưa có email. Vui lòng cập nhật trực tiếp tại dòng tương ứng.
+                              </span>
+                            )}
+                          </div>
+                          <div className="relative w-full md:w-72">
+                            <Search size={13} className="absolute left-3 top-2.5 text-slate-400" />
+                            <input
+                              type="text"
+                              value={excelSearchQuery}
+                              onChange={(e) => setExcelSearchQuery(e.target.value)}
+                              placeholder="Tìm kiếm nhanh nhân viên..."
+                              className="w-full border border-slate-200 rounded-xl py-1.5 pl-8 pr-4 text-xs font-semibold text-slate-800 bg-white focus:ring-2 focus:ring-blue-500/20 outline-none transition-all shadow-xs"
+                            />
+                          </div>
                         </div>
 
                         <div className="overflow-x-auto border border-slate-100 rounded-xl">
@@ -1924,7 +1979,7 @@ export default function CBPage() {
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                              {parsedEmployees.map((emp) => (
+                              {filteredExcelEmployees.map((emp) => (
                                 <tr key={emp.employeeCode} className="hover:bg-slate-50/50">
                                   <td className="py-3 px-3">
                                     <div className="font-bold text-slate-800">{emp.name}</div>
@@ -2039,7 +2094,21 @@ export default function CBPage() {
                                           <div className="flex items-center gap-1 shrink-0">
                                             <button
                                               onClick={() => {
-                                                setParsedEmployees(file.parsed_data);
+                                                const enrichedData = (file.parsed_data || []).map((emp: any) => {
+                                                  const cleanCode = (c: string) => String(c || "").replace(/^0+/, "").trim();
+                                                  const normName = normalizeText(emp.name || "");
+                                                  if (normName === "nttquyen" || normName === "n.t.t.quyen" || cleanCode(emp.employeeCode) === "5897") {
+                                                    return {
+                                                      ...emp,
+                                                      name: "Nguyễn Trương Thùy Quyên - CV Tuyển dụng",
+                                                      department: emp.department && emp.department !== "Chưa phân loại" ? emp.department : "Phòng Hành Chính Nhân Sự",
+                                                      email: emp.email && emp.email !== "Nhập email thủ công..." ? emp.email : "quyenntt@trungnamgroup.com.vn, quyen.0408@gmail.com",
+                                                      emailFound: true
+                                                    };
+                                                  }
+                                                  return emp;
+                                                });
+                                                setParsedEmployees(enrichedData);
                                                 setTimesheetMonth(file.month);
                                                 setExcelFileName(file.file_name);
                                                 // Clear current file object as we are loading from db

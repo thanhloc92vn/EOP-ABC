@@ -27,6 +27,10 @@ interface Task {
   attachments: number;
   comments: number;
   status: string;
+  description?: string;
+  start_date?: string;
+  link?: string;
+  notes?: string;
 }
 
 const COLUMNS = [
@@ -112,6 +116,20 @@ export default function TaskManagementPage() {
   const [isAiSuggesting, setIsAiSuggesting] = useState(false);
   const [employeesList, setEmployeesList] = useState<{ id: string; name: string }[]>([]);
 
+  // Edit Modal State
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editAssignee, setEditAssignee] = useState("");
+  const [editPriority, setEditPriority] = useState("Trung bình");
+  const [editDueDate, setEditDueDate] = useState("");
+  const [editProgress, setEditProgress] = useState(0);
+  const [editDescription, setEditDescription] = useState("");
+  const [editStatus, setEditStatus] = useState("planning");
+  const [editStartDate, setEditStartDate] = useState("");
+  const [editLink, setEditLink] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+
   // Drag State
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
 
@@ -137,7 +155,11 @@ export default function TaskManagementPage() {
           progress: t.progress || 0,
           attachments: t.attachments || 0,
           comments: t.comments || 0,
-          status: t.status || "planning"
+          status: t.status || "planning",
+          description: t.description || "",
+          start_date: t.start_date || "",
+          link: t.link || "",
+          notes: t.notes || ""
         }));
         setTasks(mappedTasks);
       }
@@ -348,9 +370,103 @@ export default function TaskManagementPage() {
         .eq("id", id);
       
       if (error) throw error;
+      if (editingTask?.id === id) {
+        setIsEditModalOpen(false);
+        setEditingTask(null);
+      }
       fetchTasks();
     } catch (err) {
       console.error("Error deleting task:", err);
+    }
+  };
+
+  const handleOpenEditModal = (task: Task) => {
+    setEditingTask(task);
+    setEditTitle(task.title);
+    setEditAssignee(task.assignee);
+    setEditPriority(task.priority);
+    setEditDueDate(task.due_date || "");
+    setEditProgress(task.progress || 0);
+    setEditDescription(task.description || "");
+    setEditStatus(task.status || "planning");
+    setEditStartDate(task.start_date || "");
+    setEditLink(task.link || "");
+    setEditNotes(task.notes || "");
+    setIsEditModalOpen(true);
+  };
+
+  const handleUpdateTask = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTask) return;
+
+    if (!editTitle.trim()) {
+      alert("Vui lòng điền Tên công việc!");
+      return;
+    }
+    if (!editAssignee) {
+      alert("Vui lòng chọn Người nhận!");
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from("tasks")
+        .update({
+          title: editTitle,
+          assignee: editAssignee,
+          priority: editPriority,
+          due_date: editDueDate || null,
+          progress: Number(editProgress),
+          status: editStatus,
+          description: editDescription,
+          start_date: editStartDate || null,
+          link: editLink,
+          notes: editNotes
+        })
+        .eq("id", editingTask.id);
+
+      if (error) throw error;
+
+      setIsEditModalOpen(false);
+      setEditingTask(null);
+      fetchTasks();
+    } catch (err) {
+      console.error("Error updating task:", err);
+      alert("Lỗi khi cập nhật công việc!");
+    }
+  };
+
+  const handleAiSuggestEdit = async () => {
+    if (!editTitle) {
+      alert("Vui lòng nhập Tên công việc trước khi tạo mô tả bằng AI!");
+      return;
+    }
+    
+    setIsAiSuggesting(true);
+    try {
+      const key = localStorage.getItem("openai_api_key");
+      const headers: any = { "Content-Type": "application/json" };
+      if (key) {
+        headers["Authorization"] = `Bearer ${key}`;
+      }
+      
+      const res = await fetch("/api/suggest-task-desc", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ title: editTitle }),
+      });
+      
+      const data = await res.json();
+      if (data.error) {
+        alert(data.error);
+      } else if (data.description) {
+        setEditDescription(data.description);
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Lỗi kết nối khi gọi AI!");
+    } finally {
+      setIsAiSuggesting(false);
     }
   };
 
@@ -513,7 +629,13 @@ export default function TaskManagementPage() {
                             key={task.id}
                             draggable
                             onDragStart={(e) => handleDragStart(e, task.id)}
-                            className={`rounded-xl p-4 transition-all duration-300 hover:scale-[1.015] hover:-translate-y-0.5 border flex flex-col justify-between h-36 cursor-grab active:cursor-grabbing relative group ${cardStyle.bg} ${cardStyle.shadow}`}
+                            onClick={(e) => {
+                              if ((e.target as HTMLElement).closest('button')) {
+                                return;
+                              }
+                              handleOpenEditModal(task);
+                            }}
+                            className={`rounded-xl p-4 transition-all duration-300 hover:scale-[1.015] hover:-translate-y-0.5 border flex flex-col justify-between h-36 cursor-pointer active:cursor-grabbing relative group ${cardStyle.bg} ${cardStyle.shadow}`}
                           >
                             <div className="space-y-1.5">
                               <div className="flex items-center justify-between">
@@ -743,6 +865,228 @@ export default function TaskManagementPage() {
                 >
                   Tạo Task
                 </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {/* Edit Task Modal */}
+      {isEditModalOpen && editingTask && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-lg p-6 shadow-2xl border border-slate-100 space-y-4 animate-in fade-in-50 zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="font-heading font-extrabold text-sm text-slate-800">Chỉnh sửa công việc</h3>
+              <button onClick={() => { setIsEditModalOpen(false); setEditingTask(null); }} className="text-slate-400 hover:text-slate-600 transition-colors">
+                <X size={16} />
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateTask} className="space-y-4 text-xs font-semibold text-slate-700">
+              {/* Task Title */}
+              <div className="space-y-1">
+                <label className="text-slate-500">Tên công việc <span className="text-rose-500">*</span></label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Nhập tên công việc..."
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40 text-slate-800 font-medium placeholder:text-slate-400"
+                />
+              </div>
+
+              {/* Description & AI suggest */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-slate-500">Mô tả</label>
+                  <button
+                    type="button"
+                    onClick={handleAiSuggestEdit}
+                    disabled={isAiSuggesting}
+                    className="flex items-center gap-1.5 px-3 py-1 bg-indigo-50 hover:bg-indigo-100 disabled:bg-slate-50 text-[10px] text-indigo-600 disabled:text-slate-400 rounded-lg font-bold transition-all border border-indigo-150/50 cursor-pointer active:scale-95"
+                  >
+                    {isAiSuggesting ? "Đang tạo gợi ý..." : "✨ Gợi ý bằng AI"}
+                  </button>
+                </div>
+                <textarea
+                  placeholder="Mô tả chi tiết công việc..."
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  rows={3}
+                  className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40 text-slate-800 font-medium placeholder:text-slate-400 resize-none"
+                />
+              </div>
+
+              {/* Assignee & Status */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-slate-500">Người nhận <span className="text-rose-500">*</span></label>
+                  <select
+                    required
+                    value={editAssignee}
+                    onChange={(e) => setEditAssignee(e.target.value)}
+                    className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 bg-white font-medium text-slate-800 cursor-pointer"
+                  >
+                    <option value="">Chọn...</option>
+                    {employeesList.map((emp) => (
+                      <option key={emp.id} value={emp.name}>
+                        {emp.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-slate-500">Trạng thái</label>
+                  <select
+                    value={editStatus}
+                    onChange={(e) => setEditStatus(e.target.value)}
+                    className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 bg-white font-medium text-slate-800 cursor-pointer"
+                  >
+                    <option value="planning">Kế hoạch</option>
+                    <option value="in_progress">Đang làm</option>
+                    <option value="pending_approval">Chờ duyệt</option>
+                    <option value="need_revision">Cần sửa</option>
+                    <option value="completed">Đã xong</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Start Date & Deadline */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-slate-500">Ngày bắt đầu</label>
+                  <input
+                    type="date"
+                    value={editStartDate}
+                    onChange={(e) => setEditStartDate(e.target.value)}
+                    className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 font-medium text-slate-800"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-slate-500">Deadline</label>
+                  <input
+                    type="date"
+                    value={editDueDate}
+                    onChange={(e) => setEditDueDate(e.target.value)}
+                    className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 font-medium text-slate-800"
+                  />
+                </div>
+              </div>
+
+              {/* Priority Segmented Control */}
+              <div className="space-y-1">
+                <label className="text-slate-500">Ưu tiên</label>
+                <div className="flex gap-2">
+                  {["Thấp", "Trung bình", "Cao"].map((p) => {
+                    const isActive = editPriority === p;
+                    let activeClass = "";
+                    if (p === "Thấp") activeClass = "border-blue-500 bg-blue-50 text-blue-800 font-bold ring-1 ring-blue-500/20";
+                    else if (p === "Trung bình") activeClass = "border-amber-500 bg-amber-50 text-amber-800 font-bold ring-1 ring-amber-500/20";
+                    else activeClass = "border-rose-500 bg-rose-50 text-rose-800 font-bold ring-1 ring-rose-500/20";
+
+                    return (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => setEditPriority(p)}
+                        className={`flex-1 py-2.5 text-xs font-medium rounded-xl border text-center transition-all cursor-pointer ${
+                          isActive ? activeClass : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Progress Slider */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-slate-500">Tiến độ công việc (%)</label>
+                  <span className="text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded-lg text-xs">{editProgress}%</span>
+                </div>
+                <div className="flex items-center gap-4">
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="5"
+                    value={editProgress}
+                    onChange={(e) => setEditProgress(Number(e.target.value))}
+                    className="flex-1 h-2 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-blue-600 focus:outline-none"
+                  />
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={editProgress}
+                    onChange={(e) => {
+                      let val = Number(e.target.value);
+                      if (val < 0) val = 0;
+                      if (val > 100) val = 100;
+                      setEditProgress(val);
+                    }}
+                    className="w-16 border border-slate-200 rounded-xl p-1.5 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40 text-center font-bold text-slate-800"
+                  />
+                </div>
+              </div>
+
+              {/* Attached link & Notes */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-slate-500">Link sản phẩm đính kèm</label>
+                  <input
+                    type="text"
+                    placeholder="https://..."
+                    value={editLink}
+                    onChange={(e) => setEditLink(e.target.value)}
+                    className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 font-medium text-slate-800 placeholder:text-slate-400"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-slate-500">Ghi chú</label>
+                  <input
+                    type="text"
+                    placeholder="Ghi chú thêm..."
+                    value={editNotes}
+                    onChange={(e) => setEditNotes(e.target.value)}
+                    className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 font-medium text-slate-800 placeholder:text-slate-400"
+                  />
+                </div>
+              </div>
+
+              {/* Form Buttons */}
+              <div className="flex justify-between items-center gap-3 pt-3 border-t border-slate-100">
+                {/* Delete button only for managers */}
+                {canManageTasks ? (
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteTask(editingTask.id)}
+                    className="py-2.5 px-4 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold rounded-xl border border-rose-200 transition-colors cursor-pointer active:scale-95 flex items-center gap-1"
+                  >
+                    Xóa Task
+                  </button>
+                ) : (
+                  <div></div>
+                )}
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setIsEditModalOpen(false); setEditingTask(null); }}
+                    className="py-2.5 px-5 border border-slate-200 text-slate-600 font-bold rounded-xl hover:bg-slate-50 transition-colors cursor-pointer"
+                  >
+                    Hủy
+                  </button>
+                  <button
+                    type="submit"
+                    className="py-2.5 px-6 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-colors cursor-pointer shadow-md shadow-blue-500/10"
+                  >
+                    Lưu thay đổi
+                  </button>
+                </div>
               </div>
             </form>
           </div>
