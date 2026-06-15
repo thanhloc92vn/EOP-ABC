@@ -1248,7 +1248,8 @@ export default function RecruitmentPage() {
       fetchCandidates();
     } catch (err) {
       console.error("Error saving to database:", err);
-      alert("Lỗi khi lưu vào database: " + (err instanceof Error ? err.message : String(err)));
+      const errMsg = err && typeof err === "object" && "message" in err ? String((err as any).message) : String(err);
+      alert("Lỗi khi lưu vào database: " + errMsg);
     }
   };
 
@@ -1346,7 +1347,8 @@ export default function RecruitmentPage() {
       fetchCandidates();
     } catch (err) {
       console.error("Error creating candidate:", err);
-      alert("Lỗi khi thêm ứng viên!");
+      const errMsg = err && typeof err === "object" && "message" in err ? String((err as any).message) : String(err);
+      alert("Lỗi khi thêm ứng viên: " + errMsg);
     }
   };
 
@@ -1406,7 +1408,8 @@ export default function RecruitmentPage() {
       await fetchCandidates();
     } catch (err) {
       console.error("Error inserting blank row:", err);
-      alert("Lỗi khi thêm dòng trống!");
+      const errMsg = err && typeof err === "object" && "message" in err ? String((err as any).message) : String(err);
+      alert("Lỗi khi thêm dòng trống: " + errMsg);
     }
   };
 

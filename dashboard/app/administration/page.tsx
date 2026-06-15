@@ -744,7 +744,7 @@ export default function AdministrationPage() {
         .reduce((sum, r) => sum + r.qty, 0);
       const initialStock = s.initialStock !== undefined ? s.initialStock : (s.stock !== undefined ? s.stock : 0);
       const imported = s.imported !== undefined ? s.imported : 0;
-      const remaining = initialStock + imported - allocatedSum;
+      const remaining = imported - allocatedSum;
       const ending = initialStock + imported - allocatedSum;
       return {
         ...s,
@@ -2192,7 +2192,7 @@ export default function AdministrationPage() {
     if (!request || request.status === "Đã cấp phát") return;
 
     // Check if stock is sufficient
-    const supply = suppliesWithDynamicAllocated.find(s => s.name === request.item);
+    const supply = findMatchingSupplyDynamic(request.item);
     if (supply && supply.ending < request.qty) {
       const confirmProceed = window.confirm(
         `Cảnh báo: Số lượng tồn kho của "${request.item}" (Còn lại: ${supply.ending} ${supply.unit}) ít hơn số lượng yêu cầu (${request.qty} ${supply.unit}).\nBạn vẫn muốn tiếp tục cấp phát?`
@@ -2209,19 +2209,8 @@ export default function AdministrationPage() {
 
       if (error) throw error;
 
-      // Deduct stock if supply exists
-      setSupplies(prev => prev.map(s => {
-        if (s.name === request.item) {
-          const newStock = Math.max(0, s.stock - request.qty);
-          return {
-            ...s,
-            stock: newStock,
-            allocated: s.allocated + request.qty,
-            alert: newStock < 15 ? "Cảnh báo" : "Bình thường"
-          };
-        }
-        return s;
-      }));
+      // Update deptRequests state locally (optimistic/immediate update)
+      setDeptRequests(prev => prev.map(r => r.id === reqId ? { ...r, status: "Đã cấp phát" } : r));
 
       alert(`Đã duyệt cấp phát ${request.qty} ${request.item} cho ${request.dept}. Tồn kho đã tự động khấu trừ.`);
       
@@ -2276,23 +2265,8 @@ export default function AdministrationPage() {
 
       if (error) throw error;
 
-      // Deduct stock locally
-      setSupplies(prev => prev.map(s => {
-        let updatedStock = s.stock;
-        let updatedAllocated = s.allocated;
-        pendingReqs.forEach(req => {
-          if (req.item.trim().toLowerCase() === s.name.trim().toLowerCase()) {
-            updatedStock = Math.max(0, updatedStock - req.qty);
-            updatedAllocated += req.qty;
-          }
-        });
-        return {
-          ...s,
-          stock: updatedStock,
-          allocated: updatedAllocated,
-          alert: updatedStock < 15 ? "Cảnh báo" : "Bình thường"
-        };
-      }));
+      // Update deptRequests state locally (optimistic/immediate update)
+      setDeptRequests(prev => prev.map(r => ids.includes(r.id) ? { ...r, status: "Đã cấp phát" } : r));
 
       alert(`Đã phê duyệt cấp phát thành công ${pendingReqs.length} yêu cầu.`);
       fetchDeptRequests();
@@ -3313,7 +3287,7 @@ export default function AdministrationPage() {
                       <div className="z-10">
                         <p className="text-slate-400 text-[10px] font-extrabold uppercase tracking-wider">Tồn kho Hành chính</p>
                         <p className="font-heading font-black text-3xl text-slate-800 mt-1">
-                          {supplies.reduce((sum, item) => sum + item.stock, 0)} <span className="text-xs font-semibold text-slate-500">vật tư</span>
+                          {suppliesWithDynamicAllocated.reduce((sum, item) => sum + item.initialStock + item.imported, 0)} <span className="text-xs font-semibold text-slate-500">vật tư</span>
                         </p>
                         <p className="text-[10px] text-slate-400 font-semibold">{supplies.length} danh mục hàng hóa</p>
                       </div>
@@ -3368,7 +3342,7 @@ export default function AdministrationPage() {
                       <div className="z-10">
                         <p className="text-slate-400 text-[10px] font-extrabold uppercase tracking-wider">Còn lại trong kho</p>
                         <p className="font-heading font-black text-3xl text-sky-700 mt-1">
-                          {suppliesWithDynamicAllocated.reduce((sum, item) => sum + (item.stock - item.allocated), 0)} <span className="text-xs font-semibold text-slate-500">vật tư</span>
+                          {suppliesWithDynamicAllocated.reduce((sum, item) => sum + item.ending, 0)} <span className="text-xs font-semibold text-slate-500">vật tư</span>
                         </p>
                         <p className="text-[10px] text-slate-400 font-semibold">Khả dụng cấp phát</p>
                       </div>
@@ -4858,12 +4832,12 @@ export default function AdministrationPage() {
                               className="w-full px-3 py-2.5 border border-slate-200 rounded-lg bg-white font-semibold text-slate-700 focus:border-blue-500 focus:outline-none mt-1 cursor-pointer"
                               required
                             >
-                              {supplies.length === 0 ? (
+                              {suppliesWithDynamicAllocated.length === 0 ? (
                                 <option value="">-- Không có vật tư nào trong kho --</option>
                               ) : (
-                                supplies.map((item, i) => (
+                                suppliesWithDynamicAllocated.map((item, i) => (
                                   <option key={i} value={item.name}>
-                                    {item.name} (Còn lại: {item.stock} {item.unit})
+                                    {item.name} (Còn lại: {item.ending} {item.unit})
                                   </option>
                                 ))
                               )}
