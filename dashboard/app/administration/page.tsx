@@ -744,7 +744,7 @@ export default function AdministrationPage() {
         .reduce((sum, r) => sum + r.qty, 0);
       const initialStock = s.initialStock !== undefined ? s.initialStock : (s.stock !== undefined ? s.stock : 0);
       const imported = s.imported !== undefined ? s.imported : 0;
-      const remaining = imported - allocatedSum;
+      const remaining = initialStock + imported - allocatedSum;
       const ending = initialStock + imported - allocatedSum;
       return {
         ...s,
