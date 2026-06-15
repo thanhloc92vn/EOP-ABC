@@ -72,7 +72,7 @@ interface AllocationTarget {
 interface ChecklistItem {
   id: string;
   task: string;
-  assignee: "Như Quỳnh" | "Thùy Quyên" | "Thanh Hằng";
+  assignee: "Như Quỳnh" | "Thùy Quyên" | "Thanh Hằng" | "Thanh Ngân";
   frequency: "Hàng ngày" | "Hàng tuần" | "Hàng tháng";
   status: "Kế hoạch" | "Đang xử lý" | "Chờ duyệt" | "Cần chỉnh sửa" | "Hoàn thành";
   priority?: "Cao" | "Trung bình" | "Thấp";
@@ -402,7 +402,7 @@ export default function AdministrationPage() {
   const [draggedOverCol, setDraggedOverCol] = useState<string | null>(null);
   const [showAddTask, setShowAddTask] = useState(false);
   const [newTaskName, setNewTaskName] = useState("");
-  const [newTaskAssignee, setNewTaskAssignee] = useState<"Như Quỳnh" | "Thùy Quyên" | "Thanh Hằng">("Như Quỳnh");
+  const [newTaskAssignee, setNewTaskAssignee] = useState<"Như Quỳnh" | "Thùy Quyên" | "Thanh Hằng" | "Thanh Ngân">("Như Quỳnh");
   const [newTaskPriority, setNewTaskPriority] = useState<"Cao" | "Trung bình" | "Thấp">("Trung bình");
   const [newTaskFreq, setNewTaskFreq] = useState<"Hàng ngày" | "Hàng tuần" | "Hàng tháng">("Hàng ngày");
 
@@ -835,10 +835,9 @@ export default function AdministrationPage() {
         setSupplies(seedData);
         localStorage.setItem("tnec_supplies", JSON.stringify(seedData));
       }
+      setIsSuppliesLoadedFromServer(true);
     } catch (err) {
       console.error("Error fetching supplies catalog from Supabase:", err);
-    } finally {
-      setIsSuppliesLoadedFromServer(true);
     }
   };
 
@@ -4951,6 +4950,7 @@ export default function AdministrationPage() {
                           >
                             <option value="Như Quỳnh">Như Quỳnh</option>
                             <option value="Thanh Hằng">Thanh Hằng</option>
+                            <option value="Thanh Ngân">Thanh Ngân</option>
                           </select>
                         </div>
                         <div className="space-y-1">
@@ -4991,7 +4991,7 @@ export default function AdministrationPage() {
                   )}
 
                   {/* Personnel summary */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-100">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-100">
                     <div>
                       <p className="text-[10px] font-bold text-slate-400 uppercase">Nhân sự: <strong>Như Quỳnh (Phó phòng Hành chính)</strong></p>
                       <p className="text-[11px] text-slate-600 font-semibold mt-1">Nhiệm vụ: Phụ trách hậu cần, kho VPP, phòng họp, tiếp khách & làm hồ sơ thanh toán, đối soát hóa đơn</p>
@@ -4999,6 +4999,10 @@ export default function AdministrationPage() {
                     <div className="border-l border-slate-200 pl-4">
                       <p className="text-[10px] font-bold text-slate-400 uppercase">Nhân sự: <strong>Thanh Hằng (Văn thư)</strong></p>
                       <p className="text-[11px] text-slate-600 font-semibold mt-1">Nhiệm vụ: Phụ trách tiếp nhận, phân loại, lưu trữ và chuyển phát công văn</p>
+                    </div>
+                    <div className="border-l border-slate-200 pl-4">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase">Nhân sự: <strong>Thanh Ngân (Hành chính)</strong></p>
+                      <p className="text-[11px] text-slate-600 font-semibold mt-1">Nhiệm vụ: Phụ trách hỗ trợ công tác hành chính, quản lý văn phòng phẩm & cấp phát vật tư</p>
                     </div>
                   </div>
 
