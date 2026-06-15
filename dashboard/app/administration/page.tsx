@@ -61,6 +61,8 @@ interface DeptRequest {
   target?: "phongban" | "duan";
   targetName?: string;
   requesterName?: string;
+  cat?: string;
+  unit?: string;
 }
 
 interface AllocationTarget {
@@ -588,7 +590,9 @@ export default function AdministrationPage() {
           status: t.status === "completed" ? "Đã cấp phát" : "Chờ duyệt",
           target: parsed.target || "phongban",
           targetName: normTargetName,
-          requesterName: parsed.requesterName || ""
+          requesterName: parsed.requesterName || "",
+          cat: parsed.cat || "",
+          unit: parsed.unit || ""
         };
       }
     } catch (e) {
@@ -609,7 +613,9 @@ export default function AdministrationPage() {
       allocationTime: "",
       status: t.status === "completed" ? "Đã cấp phát" : "Chờ duyệt",
       target: t.title.includes("Ban điều hành") || t.title.includes("BĐH") ? "duan" : "phongban",
-      targetName: targetName
+      targetName: targetName,
+      cat: "",
+      unit: ""
     };
   };
 
@@ -2605,25 +2611,30 @@ export default function AdministrationPage() {
     }
   };
 
-  const updateVppRequestField = async (reqId: string, field: "qty" | "allocationTime", value: any) => {
+  const updateVppRequestField = async (reqId: string, field: "qty" | "allocationTime" | "item" | "cat" | "unit", value: any) => {
     const currentReq = deptRequests.find(r => r.id === reqId);
     if (!currentReq) return;
 
     try {
       const updatedQty = field === "qty" ? Number(value) : currentReq.qty;
       const updatedTime = field === "allocationTime" ? String(value) : (currentReq.allocationTime || "");
+      const updatedItem = field === "item" ? String(value) : currentReq.item;
+      const updatedCat = field === "cat" ? String(value) : (currentReq.cat || "");
+      const updatedUnit = field === "unit" ? String(value) : (currentReq.unit || "");
 
-      const newTitle = `VPP: ${currentReq.targetName} | ${currentReq.item} | ${updatedQty}`;
+      const newTitle = `VPP: ${currentReq.targetName} | ${updatedItem} | ${updatedQty}`;
       
       const newNotes = {
         dept: currentReq.dept,
         target: currentReq.target,
         targetName: currentReq.targetName,
-        item: currentReq.item,
+        item: updatedItem,
         qty: updatedQty,
         date: currentReq.date,
         allocationTime: updatedTime,
-        requesterName: currentReq.requesterName || ""
+        requesterName: currentReq.requesterName || "",
+        cat: updatedCat,
+        unit: updatedUnit
       };
 
       const { error } = await supabase
@@ -2641,7 +2652,10 @@ export default function AdministrationPage() {
           return {
             ...r,
             qty: updatedQty,
-            allocationTime: updatedTime
+            allocationTime: updatedTime,
+            item: updatedItem,
+            cat: updatedCat,
+            unit: updatedUnit
           };
         }
         return r;
@@ -3961,16 +3975,37 @@ export default function AdministrationPage() {
                                     />
                                   </td>
                                   <td className="py-3.5 px-4 text-slate-800 font-bold">{req.targetName}</td>
-                                  <td className="py-3.5 px-4 text-slate-600">{req.item}</td>
+                                  <td className="py-2 px-4">
+                                    <input
+                                      type="text"
+                                      value={req.item}
+                                      onChange={(e) => updateVppRequestField(req.id, "item", e.target.value)}
+                                      className="w-full px-2 py-1 border border-slate-200 rounded-lg outline-none focus:border-[#005BAC] text-xs font-semibold bg-white text-slate-700"
+                                    />
+                                  </td>
                                   {(() => {
                                     const supplyItem = findMatchingSupplyDynamic(req.item);
-                                    const cat = supplyItem ? supplyItem.cat : "Chưa rõ";
-                                    const unit = supplyItem ? supplyItem.unit : "Chưa rõ";
+                                    const cat = req.cat || (supplyItem ? supplyItem.cat : "Chưa rõ");
+                                    const unit = req.unit || (supplyItem ? supplyItem.unit : "Chưa rõ");
                                     
                                     return (
                                       <>
-                                        <td className="py-3.5 px-4 text-slate-500">{cat}</td>
-                                        <td className="py-3.5 px-4 font-mono text-slate-500">{unit}</td>
+                                        <td className="py-2 px-4">
+                                          <input
+                                            type="text"
+                                            value={cat}
+                                            onChange={(e) => updateVppRequestField(req.id, "cat", e.target.value)}
+                                            className="w-full px-2 py-1 border border-slate-200 rounded-lg outline-none focus:border-[#005BAC] text-xs font-semibold bg-white text-slate-700"
+                                          />
+                                        </td>
+                                        <td className="py-2 px-4">
+                                          <input
+                                            type="text"
+                                            value={unit}
+                                            onChange={(e) => updateVppRequestField(req.id, "unit", e.target.value)}
+                                            className="w-full px-2 py-1 border border-slate-200 rounded-lg outline-none focus:border-[#005BAC] text-xs font-semibold bg-white text-slate-700"
+                                          />
+                                        </td>
                                         <td className="py-2 px-4 text-center">
                                           {(() => {
                                             if (!supplyItem) {
@@ -4188,16 +4223,37 @@ export default function AdministrationPage() {
                                     />
                                   </td>
                                   <td className="py-3.5 px-4 text-slate-800 font-bold">{req.dept}</td>
-                                  <td className="py-3.5 px-4 text-slate-600">{req.item}</td>
+                                  <td className="py-2 px-4">
+                                    <input
+                                      type="text"
+                                      value={req.item}
+                                      onChange={(e) => updateVppRequestField(req.id, "item", e.target.value)}
+                                      className="w-full px-2 py-1 border border-slate-200 rounded-lg outline-none focus:border-[#005BAC] text-xs font-semibold bg-white text-slate-700"
+                                    />
+                                  </td>
                                   {(() => {
                                     const supplyItem = findMatchingSupplyDynamic(req.item);
-                                    const cat = supplyItem ? supplyItem.cat : "Chưa rõ";
-                                    const unit = supplyItem ? supplyItem.unit : "Chưa rõ";
+                                    const cat = req.cat || (supplyItem ? supplyItem.cat : "Chưa rõ");
+                                    const unit = req.unit || (supplyItem ? supplyItem.unit : "Chưa rõ");
                                     
                                     return (
                                       <>
-                                        <td className="py-3.5 px-4 text-slate-500">{cat}</td>
-                                        <td className="py-3.5 px-4 font-mono text-slate-500">{unit}</td>
+                                        <td className="py-2 px-4">
+                                          <input
+                                            type="text"
+                                            value={cat}
+                                            onChange={(e) => updateVppRequestField(req.id, "cat", e.target.value)}
+                                            className="w-full px-2 py-1 border border-slate-200 rounded-lg outline-none focus:border-[#005BAC] text-xs font-semibold bg-white text-slate-700"
+                                          />
+                                        </td>
+                                        <td className="py-2 px-4">
+                                          <input
+                                            type="text"
+                                            value={unit}
+                                            onChange={(e) => updateVppRequestField(req.id, "unit", e.target.value)}
+                                            className="w-full px-2 py-1 border border-slate-200 rounded-lg outline-none focus:border-[#005BAC] text-xs font-semibold bg-white text-slate-700"
+                                          />
+                                        </td>
                                         <td className="py-2 px-4 text-center">
                                           {(() => {
                                             if (!supplyItem) {
