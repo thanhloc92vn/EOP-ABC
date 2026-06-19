@@ -96,6 +96,7 @@ export default function CalendarPage() {
   const [modalStart, setModalStart] = useState("2026-06-05");
   const [modalEnd, setModalEnd] = useState("2026-06-05");
   const [modalNotes, setModalNotes] = useState("");
+  const [leaveType, setLeaveType] = useState("Nghỉ phép năm hưởng lương");
 
   // Leave specific states
   const [isHalfDay, setIsHalfDay] = useState(false);
@@ -273,6 +274,13 @@ export default function CalendarPage() {
   useEffect(() => {
     fetchCurrentUser();
     fetchData();
+
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("action") === "request_leave" || params.get("leave") === "true") {
+        setIsLeaveModalOpen(true);
+      }
+    }
   }, []);
 
   // Format month title
@@ -618,19 +626,19 @@ export default function CalendarPage() {
     }
 
     let status = "pending_approval";
-    let titleStr = `Nghỉ phép: ${modalName} (${duration} ngày)`;
+    let titleStr = `Nghỉ phép (${leaveType}): ${modalName} (${duration} ngày)`;
     let notesStr = modalNotes || "";
 
     if (duration === 0.5) {
       status = "completed"; // Auto-approved
-      titleStr = `Nghỉ phép: ${modalName} (Nửa ngày ${halfDayPeriod})`;
-      notesStr = `Được duyệt tự động. ${modalNotes ? `Lý do: ${modalNotes}` : ""}`;
+      titleStr = `Nghỉ phép (${leaveType}): ${modalName} (Nửa ngày ${halfDayPeriod})`;
+      notesStr = `Loại nghỉ phép: ${leaveType}. Được duyệt tự động. ${modalNotes ? `Lý do: ${modalNotes}` : ""}`;
     } else {
       if (!selectedApprover) {
         alert("Vui lòng chọn người duyệt!");
         return;
       }
-      notesStr = `Người duyệt: ${selectedApprover}. ${modalNotes ? `Lý do: ${modalNotes}` : ""}`;
+      notesStr = `Loại nghỉ phép: ${leaveType}. Người duyệt: ${selectedApprover}. ${modalNotes ? `Lý do: ${modalNotes}` : ""}`;
     }
 
     try {
@@ -655,6 +663,7 @@ export default function CalendarPage() {
       setModalNotes("");
       setIsHalfDay(false);
       setSelectedApprover("");
+      setLeaveType("Nghỉ phép năm hưởng lương");
       setIsLeaveModalOpen(false);
       fetchData();
       alert(duration === 0.5 ? "Đơn xin nghỉ phép đã được tự động duyệt thành công!" : "Đã gửi đơn xin nghỉ phép chờ phê duyệt.");
@@ -1370,6 +1379,24 @@ ${tripRoutes.map((r, i) => `Chặng ${i + 1}:
             </div>
 
             <form onSubmit={handleRequestLeave} className="space-y-4 text-xs font-semibold text-slate-700">
+              {/* Chọn loại nghỉ phép */}
+              <div className="space-y-1.5">
+                <label className="text-slate-500 text-[11px] font-bold">Loại nghỉ phép <span className="text-rose-500">*</span></label>
+                <select
+                  value={leaveType}
+                  onChange={(e) => setLeaveType(e.target.value)}
+                  className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-indigo-500/20 bg-white font-semibold text-slate-800 text-xs cursor-pointer"
+                >
+                  <option value="Nghỉ phép năm hưởng lương">Nghỉ phép năm hưởng lương</option>
+                  <option value="Nghỉ việc riêng không hưởng lương">Nghỉ việc riêng không hưởng lương</option>
+                  <option value="Nghỉ việc riêng hưởng nguyên lương">Nghỉ việc riêng hưởng nguyên lương (Hiếu hỷ...)</option>
+                  <option value="Nghỉ ốm đau hưởng BHXH">Nghỉ ốm đau hưởng BHXH</option>
+                  <option value="Nghỉ thai sản hưởng BHXH">Nghỉ thai sản hưởng BHXH</option>
+                  <option value="Nghỉ tai nạn lao động hưởng BHXH">Nghỉ tai nạn lao động hưởng BHXH</option>
+                  <option value="Nghỉ chế độ khác">Nghỉ chế độ khác</option>
+                </select>
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <label className="text-slate-500 text-[11px] font-bold">Ngày bắt đầu <span className="text-rose-500">*</span></label>

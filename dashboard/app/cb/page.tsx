@@ -93,7 +93,6 @@ const MOCK_TERMINATIONS = [
 ];
 
 const MOCK_CONCURRENTS = [
-  { name: "Phạm Thành Lộc", primary: "Trưởng nhóm Marketing", concurrent: "Quản trị truyền thông nội bộ", dept: "Phòng HCNS", allowance: 2000000, date: "2026-02-01" },
   { name: "Trần Nghiệp Quang", primary: "Chỉ huy phó Vàm Lẽo", concurrent: "Giám sát ATLĐ dự án Vàm Lẽo", dept: "Khối Dự án", allowance: 3000000, date: "2026-04-01" }
 ];
 
@@ -109,10 +108,7 @@ const MOCK_EXPLANATIONS = [
   { date: "2026-06-05", name: "Trần Nghiệp Quang", reason: "Đi gặp đối tác trực tiếp tại công trường", propose: "Cả ngày công tác", status: "Đã duyệt" }
 ];
 
-const MOCK_LEAVES = [
-  { name: "Phạm Thành Lộc", type: "Phép năm", from: "2026-06-12", to: "2026-06-12", days: 1, reason: "Giải quyết việc gia đình", status: "Đã duyệt" },
-  { name: "Nguyễn Bích Như Quỳnh", type: "Phép năm", from: "2026-06-20", to: "2026-06-22", days: 3, reason: "Nghỉ mát hè cùng gia đình", status: "Chờ duyệt" }
-];
+const MOCK_LEAVES: any[] = [];
 
 const MOCK_TRAVELS = [
   { name: "Trần Nghiệp Quang", dest: "Dự án Cà Ná", from: "2026-06-10", to: "2026-06-12", purpose: "Kiểm tra kỹ thuật ATLĐ", allowance: 1500000, status: "Đã duyệt" }
@@ -376,6 +372,19 @@ export default function CBPage() {
   const [selectedBirthdayMonth, setSelectedBirthdayMonth] = useState<number>(new Date().getMonth() + 1);
   const [showBirthdayPreviewModal, setShowBirthdayPreviewModal] = useState(false);
   const [isExportingBirthday, setIsExportingBirthday] = useState(false);
+
+  // --- LEAVE & ANNUAL LEAVE STATES ---
+  const [leaves, setLeaves] = useState<any[]>([]);
+  const [showCreateLeaveModal, setShowCreateLeaveModal] = useState(false);
+  const [leaveTabMode, setLeaveTabMode] = useState<"quota" | "history">("quota");
+  const [leaveSearchQuery, setLeaveSearchQuery] = useState("");
+  const [leaveForm, setLeaveForm] = useState({
+    employeeId: "",
+    type: "Phép năm",
+    from: new Date().toISOString().split("T")[0],
+    to: new Date().toISOString().split("T")[0],
+    reason: ""
+  });
   const [claimForm, setClaimForm] = useState({
     employeeId: "",
     category: "Sinh nhật" as any,
@@ -1058,6 +1067,64 @@ export default function CBPage() {
     }
   };
 
+  const handleCreateLeave = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!leaveForm.employeeId) {
+      alert("Vui lòng chọn nhân viên!");
+      return;
+    }
+    const emp = employees.find(e => e.id === leaveForm.employeeId);
+    if (!emp) return;
+
+    const dFrom = new Date(leaveForm.from);
+    const dTo = new Date(leaveForm.to);
+    const diffTime = dTo.getTime() - dFrom.getTime();
+    if (diffTime < 0) {
+      alert("Từ ngày không thể lớn hơn Đến ngày!");
+      return;
+    }
+    const days = Math.round(diffTime / (1000 * 60 * 60 * 24)) + 1;
+
+    const newLeave = {
+      id: `leave_${Date.now()}`,
+      name: emp.name,
+      type: leaveForm.type,
+      from: leaveForm.from,
+      to: leaveForm.to,
+      days,
+      reason: leaveForm.reason || "Nghỉ phép năm",
+      status: "Đã duyệt"
+    };
+
+    setLeaves(prev => {
+      const updated = [newLeave, ...prev];
+      if (typeof window !== "undefined") {
+        localStorage.setItem("tnec_cb_leaves", JSON.stringify(updated));
+      }
+      return updated;
+    });
+    setShowCreateLeaveModal(false);
+    setLeaveForm({
+      employeeId: "",
+      type: "Phép năm",
+      from: new Date().toISOString().split("T")[0],
+      to: new Date().toISOString().split("T")[0],
+      reason: ""
+    });
+    alert("Đăng ký nghỉ phép thành công!");
+  };
+
+  const handleDeleteLeave = (leaveId: string) => {
+    if (!confirm("Bạn có chắc chắn muốn xóa yêu cầu nghỉ phép này không?")) return;
+    setLeaves(prev => {
+      const updated = prev.filter(l => l.id !== leaveId);
+      if (typeof window !== "undefined") {
+        localStorage.setItem("tnec_cb_leaves", JSON.stringify(updated));
+      }
+      return updated;
+    });
+  };
+
   const handleUpdateHolidayAdjustment = (empId: string, amount: number) => {
     const updatedAdjustments = { ...holidayBonusAdjustments, [empId]: amount };
     setHolidayBonusAdjustments(updatedAdjustments);
@@ -1198,6 +1265,80 @@ export default function CBPage() {
     else if (tabId === "org_chart") setActiveSubTab("chart");
   };
 
+  const parseTaskToLeave = (t: any) => {
+    let type = "Phép năm";
+    const title = t.title || "";
+    
+    if (title.includes("Nghỉ phép")) {
+      const match = title.match(/Nghỉ phép \((.*?)\)/);
+      if (match && match[1]) {
+        const ext = match[1].toLowerCase();
+        if (ext.includes("phép năm") || ext.includes("phep nam")) {
+          type = "Phép năm";
+        } else if (ext.includes("không hưởng lương") || ext.includes("khong huong luong")) {
+          type = "Nghỉ không lương";
+        } else if (ext.includes("việc riêng") || ext.includes("viec rieng")) {
+          type = "Việc riêng";
+        } else {
+          type = match[1];
+        }
+      }
+    }
+    
+    let days = 1;
+    const daysMatch = title.match(/(\d+(\.\d+)?)\s*ngày/);
+    if (daysMatch && daysMatch[1]) {
+      days = parseFloat(daysMatch[1]);
+    } else if (title.toLowerCase().includes("nửa ngày") || title.toLowerCase().includes("nua ngay")) {
+      days = 0.5;
+    } else {
+      if (t.start_date && t.due_date) {
+        const dFrom = new Date(t.start_date);
+        const dTo = new Date(t.due_date);
+        const diffTime = dTo.getTime() - dFrom.getTime();
+        if (diffTime >= 0) {
+          days = Math.round(diffTime / (1000 * 60 * 60 * 24)) + 1;
+        }
+      }
+    }
+
+    let status = "Chờ duyệt";
+    if (t.status === "completed") {
+      status = "Đã duyệt";
+    } else if (t.status === "rejected") {
+      status = "Từ chối";
+    } else if (t.status === "pending_approval") {
+      status = "Chờ duyệt";
+    }
+    
+    return {
+      id: t.id,
+      name: t.assignee || "Chưa rõ",
+      type,
+      from: t.start_date || new Date().toISOString().split("T")[0],
+      to: t.due_date || new Date().toISOString().split("T")[0],
+      days,
+      reason: t.notes || "Nghỉ phép",
+      status
+    };
+  };
+
+  const fetchLeavesFromSupabase = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("tasks")
+        .select("*")
+        .ilike("title", "%Nghỉ phép%")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      if (data) {
+        setLeaves(data.map(parseTaskToLeave));
+      }
+    } catch (e) {
+      console.error("Error fetching leaves from Supabase:", e);
+    }
+  };
+
   const checkAccessAndLoad = async () => {
     try {
       setLoadingAuth(true);
@@ -1252,9 +1393,9 @@ export default function CBPage() {
       };
       setCurrentUser(userInfo);
 
-      // Now load employees and contracts
       await loadEmployeesData(email, fullAccess, userInfo.name, empData);
       await fetchContracts();
+      await fetchLeavesFromSupabase();
     } catch (err) {
       console.error("Error checking user access:", err);
     } finally {
@@ -1380,8 +1521,72 @@ export default function CBPage() {
   }, [hasFullAccess, currentUser]);
 
   const filteredLeaves = useMemo(() => {
-    return MOCK_LEAVES.filter(l => hasFullAccess || l.name === currentUser?.name);
-  }, [hasFullAccess, currentUser]);
+    return leaves.filter(l => hasFullAccess || l.name === currentUser?.name);
+  }, [leaves, hasFullAccess, currentUser]);
+
+  const isConcurrentOrSupport = (emp: any): boolean => {
+    if (!emp) return false;
+    const roleLower = (emp.role || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[đĐ]/g, "d");
+    const nameLower = (emp.name || "").toLowerCase().trim();
+    
+    if (roleLower.includes("kiem nhiem") || roleLower.includes("ho tro")) return true;
+    const inMockConcurrent = MOCK_CONCURRENTS.some(c => c.name.toLowerCase().trim() === nameLower);
+    return inMockConcurrent;
+  };
+
+  const annualLeaveData = useMemo(() => {
+    return employees.map(emp => {
+      const isConcurrent = isConcurrentOrSupport(emp);
+      const tenureYears = getEmployeeTenureYears(emp);
+      const tenureStr = getEmployeeTenureStr(emp);
+      
+      const baseLeave = 12;
+      const seniorLeave = Math.floor(tenureYears / 5);
+      const totalLeave = isConcurrent ? 0 : (baseLeave + seniorLeave);
+      
+      // Calculate used leave: sum of approved leave days of type "Phép năm"
+      const usedLeave = leaves
+        .filter(l => l.name === emp.name && l.type === "Phép năm" && l.status === "Đã duyệt")
+        .reduce((sum, l) => sum + (l.days || 0), 0);
+        
+      const remainingLeave = Math.max(0, totalLeave - usedLeave);
+      
+      return {
+        id: emp.id,
+        name: emp.name,
+        role: emp.role,
+        department: emp.department,
+        created_at: emp.created_at,
+        tenureStr,
+        isConcurrent,
+        baseLeave: isConcurrent ? 0 : baseLeave,
+        seniorLeave: isConcurrent ? 0 : seniorLeave,
+        totalLeave,
+        usedLeave,
+        remainingLeave
+      };
+    });
+  }, [employees, leaves]);
+
+  const searchedAnnualLeaveData = useMemo(() => {
+    if (!leaveSearchQuery) return annualLeaveData;
+    const q = normalizeText(leaveSearchQuery);
+    return annualLeaveData.filter(d => 
+      normalizeText(d.name).includes(q) || 
+      normalizeText(d.role || "").includes(q) || 
+      normalizeText(d.department || "").includes(q)
+    );
+  }, [annualLeaveData, leaveSearchQuery]);
+
+  const searchedLeaves = useMemo(() => {
+    if (!leaveSearchQuery) return filteredLeaves;
+    const q = normalizeText(leaveSearchQuery);
+    return filteredLeaves.filter(l => 
+      normalizeText(l.name).includes(q) || 
+      normalizeText(l.type || "").includes(q) || 
+      normalizeText(l.reason || "").includes(q)
+    );
+  }, [filteredLeaves, leaveSearchQuery]);
 
   const filteredTravels = useMemo(() => {
     return MOCK_TRAVELS.filter(t => hasFullAccess || t.name === currentUser?.name);
@@ -2684,43 +2889,415 @@ export default function CBPage() {
               )}
 
               {activeSubTab === "leave" && (
-                <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium space-y-4">
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                    <h3 className="font-heading font-extrabold text-slate-800 text-sm">THEO DÕI NGHỈ PHÉP NĂM</h3>
-                    <span className="text-[10px] text-slate-400 font-bold">Quản lý duyệt đơn nghỉ phép năm, nghỉ việc riêng, nghỉ không lương</span>
+                <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium space-y-6">
+                  {/* Thống kê nhanh phép năm */}
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="bg-white p-4 rounded-2xl border border-slate-150 shadow-md shadow-slate-100/40">
+                      <div className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Nhân sự áp dụng</div>
+                      <div className="text-xl font-extrabold text-slate-800 mt-1">
+                        {annualLeaveData.filter(d => !d.isConcurrent).length} nhân viên
+                      </div>
+                    </div>
+                    <div className="bg-white p-4 rounded-2xl border border-slate-150 shadow-md shadow-slate-100/40">
+                      <div className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Tổng ngày phép cấp</div>
+                      <div className="text-xl font-extrabold text-[#005BAC] mt-1">
+                        {annualLeaveData.reduce((sum, d) => sum + d.totalLeave, 0)} ngày
+                      </div>
+                    </div>
+                    <div className="bg-white p-4 rounded-2xl border border-slate-150 shadow-md shadow-slate-100/40">
+                      <div className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Tổng ngày đã nghỉ</div>
+                      <div className="text-xl font-extrabold text-emerald-600 mt-1">
+                        {annualLeaveData.reduce((sum, d) => sum + d.usedLeave, 0)} ngày
+                      </div>
+                    </div>
+                    <div className="bg-white p-4 rounded-2xl border border-slate-150 shadow-md shadow-slate-100/40">
+                      <div className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Tổng ngày còn lại</div>
+                      <div className="text-xl font-extrabold text-indigo-600 mt-1">
+                        {annualLeaveData.reduce((sum, d) => sum + d.remainingLeave, 0)} ngày
+                      </div>
+                    </div>
                   </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs text-left border-collapse">
-                      <thead>
-                        <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 font-extrabold uppercase tracking-wider text-[10px]">
-                          <th className="py-3 px-3">Nhân viên</th>
-                          <th className="py-3 px-3">Loại nghỉ phép</th>
-                          <th className="py-3 px-3">Từ ngày</th>
-                          <th className="py-3 px-3">Đến ngày</th>
-                          <th className="py-3 px-3 text-center">Tổng số ngày nghỉ</th>
-                          <th className="py-3 px-3">Lý do nghỉ</th>
-                          <th className="py-3 px-3 w-32 text-center">Trạng thái duyệt</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
-                        {filteredLeaves.map((l, idx) => (
-                          <tr key={idx} className="hover:bg-slate-50/50">
-                            <td className="py-3.5 px-3 text-slate-800 font-bold">{l.name}</td>
-                            <td className="py-3.5 px-3 text-blue-600 font-bold">{l.type}</td>
-                            <td className="py-3.5 px-3">{new Date(l.from).toLocaleDateString("vi-VN")}</td>
-                            <td className="py-3.5 px-3">{new Date(l.to).toLocaleDateString("vi-VN")}</td>
-                            <td className="py-3.5 px-3 text-center">{l.days} ngày</td>
-                            <td className="py-3.5 px-3 text-slate-500 italic font-medium">{l.reason}</td>
-                            <td className="py-3.5 px-3 text-center">
-                              <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
-                                l.status === "Đã duyệt" ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"
-                              }`}>{l.status}</span>
-                            </td>
+
+                  {/* Header & Mode Switch */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-150 pb-3 gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="flex bg-[#005BAC]/5 p-1 rounded-xl border border-blue-100/20">
+                        <button
+                          type="button"
+                          onClick={() => setLeaveTabMode("quota")}
+                          className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer border ${
+                            leaveTabMode === "quota" 
+                              ? "bg-white text-[#005BAC] border-blue-100/60 shadow-sm" 
+                              : "bg-transparent border-transparent text-slate-500 hover:text-slate-800"
+                          }`}
+                        >
+                          Hạn mức phép năm
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setLeaveTabMode("history")}
+                          className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer border ${
+                            leaveTabMode === "history" 
+                              ? "bg-white text-[#005BAC] border-blue-100/60 shadow-sm" 
+                              : "bg-transparent border-transparent text-slate-500 hover:text-slate-800"
+                          }`}
+                        >
+                          Lịch sử nghỉ phép
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-1 items-center justify-end gap-3 flex-wrap sm:flex-nowrap">
+                      {/* Bộ tìm kiếm nhân viên */}
+                      <div className="relative w-full sm:w-64">
+                        <Search size={14} className="absolute left-3 top-2.5 text-slate-400" />
+                        <input
+                          type="text"
+                          placeholder="Tìm tên nhân viên..."
+                          value={leaveSearchQuery}
+                          onChange={(e) => setLeaveSearchQuery(e.target.value)}
+                          className="w-full pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none text-xs font-semibold transition-all"
+                        />
+                        {leaveSearchQuery && (
+                          <button
+                            type="button"
+                            onClick={() => setLeaveSearchQuery("")}
+                            className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                          >
+                            <X size={12} />
+                          </button>
+                        )}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          window.location.href = "/calendar?action=request_leave";
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-[#005BAC] hover:bg-[#004b90] text-white font-bold rounded-lg cursor-pointer text-[10px] transition-all shadow-md shadow-blue-500/10 active:scale-95 shrink-0"
+                      >
+                        <Plus size={12} /> Đăng ký nghỉ phép
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Hiển thị bảng theo mode */}
+                  {leaveTabMode === "quota" && (
+                    <div className="overflow-x-auto border border-slate-150 rounded-2xl">
+                      <table className="w-full text-xs text-left border-collapse">
+                        <thead>
+                          <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 font-extrabold uppercase tracking-wider text-[10px]">
+                            <th className="py-3 px-3 w-10 text-center">STT</th>
+                            <th className="py-3 px-3">Nhân viên</th>
+                            <th className="py-3 px-3">Phòng ban & Chức danh</th>
+                            <th className="py-3 px-3 text-center">Ngày nhận việc</th>
+                            <th className="py-3 px-3 text-center">Thâm niên</th>
+                            <th className="py-3 px-3 text-center">Phép cơ bản</th>
+                            <th className="py-3 px-3 text-center">Phép thâm niên</th>
+                            <th className="py-3 px-3 text-center">Tổng phép</th>
+                            <th className="py-3 px-3 text-center">Đã nghỉ</th>
+                            <th className="py-3 px-3 text-center">Còn lại</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
+                          {searchedAnnualLeaveData.map((d, idx) => (
+                            <tr key={d.id} className="hover:bg-slate-50/50">
+                              <td className="py-3.5 px-3 text-center text-slate-400">{idx + 1}</td>
+                              <td className="py-3.5 px-3 text-slate-805 font-bold text-slate-800">{d.name}</td>
+                              <td className="py-3.5 px-3 text-slate-500">
+                                {d.department} <span className="text-[10px] text-slate-400">({d.role})</span>
+                              </td>
+                              <td className="py-3.5 px-3 text-center font-mono text-slate-550">
+                                {d.created_at ? new Date(d.created_at).toLocaleDateString("vi-VN") : "--"}
+                              </td>
+                              <td className="py-3.5 px-3 text-center text-slate-800">{d.tenureStr}</td>
+                              <td className="py-3.5 px-3 text-center text-slate-500">
+                                {d.isConcurrent ? "0 ngày" : `${d.baseLeave} ngày`}
+                              </td>
+                              <td className="py-3.5 px-3 text-center text-slate-500">
+                                {d.isConcurrent ? "0 ngày" : `+${d.seniorLeave} ngày`}
+                              </td>
+                              <td className="py-3.5 px-3 text-center font-bold text-slate-800">
+                                {d.isConcurrent ? (
+                                  <span className="px-2 py-0.5 bg-slate-100 text-slate-400 border border-slate-200/40 rounded text-[9px] font-bold">Kiêm nhiệm/Hỗ trợ</span>
+                                ) : (
+                                  `${d.totalLeave} ngày`
+                                )}
+                              </td>
+                              <td className="py-3.5 px-3 text-center text-emerald-600">{d.usedLeave} ngày</td>
+                              <td className="py-3.5 px-3 text-center">
+                                {d.isConcurrent ? (
+                                  <span className="text-slate-400 font-normal">-</span>
+                                ) : (
+                                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                                    d.remainingLeave > 5 ? "bg-blue-50 text-[#005BAC]" : "bg-rose-50 text-rose-600"
+                                  }`}>{d.remainingLeave} ngày</span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {leaveTabMode === "history" && (
+                    <div className="overflow-x-auto border border-slate-150 rounded-2xl">
+                      <table className="w-full text-xs text-left border-collapse">
+                        <thead>
+                          <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 font-extrabold uppercase tracking-wider text-[10px]">
+                            <th className="py-3 px-3 w-10 text-center">STT</th>
+                            <th className="py-3 px-3">Nhân viên</th>
+                            <th className="py-3 px-3">Loại nghỉ phép</th>
+                            <th className="py-3 px-3">Từ ngày</th>
+                            <th className="py-3 px-3">Đến ngày</th>
+                            <th className="py-3 px-3 text-center">Tổng số ngày nghỉ</th>
+                            <th className="py-3 px-3">Lý do nghỉ</th>
+                            <th className="py-3 px-3 w-32 text-center">Trạng thái duyệt</th>
+                            <th className="py-3 px-3 w-20 text-center">Thao tác</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
+                          {searchedLeaves.length === 0 ? (
+                            <tr>
+                              <td colSpan={9} className="py-6 text-center italic text-slate-400">
+                                Chưa ghi nhận lịch sử nghỉ phép nào.
+                              </td>
+                            </tr>
+                          ) : (
+                            searchedLeaves.map((l, idx) => (
+                              <tr key={idx} className="hover:bg-slate-50/50">
+                                <td className="py-3.5 px-3 text-center text-slate-400">{idx + 1}</td>
+                                <td className="py-3.5 px-3 text-slate-800 font-bold">{l.name}</td>
+                                <td className="py-3.5 px-3 text-[#005BAC] font-bold">{l.type}</td>
+                                <td className="py-3.5 px-3 font-mono">{new Date(l.from).toLocaleDateString("vi-VN")}</td>
+                                <td className="py-3.5 px-3 font-mono">{new Date(l.to).toLocaleDateString("vi-VN")}</td>
+                                <td className="py-3.5 px-3 text-center text-slate-800 font-bold">{l.days} ngày</td>
+                                <td className="py-3.5 px-3 text-slate-500 italic font-medium">{l.reason}</td>
+                                <td className="py-3.5 px-3 text-center">
+                                  <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold ${
+                                    l.status === "Đã duyệt" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-amber-50 text-amber-700 border border-amber-200"
+                                  }`}>{l.status}</span>
+                                </td>
+                                <td className="py-3.5 px-3 text-center">
+                                  <button
+                                    onClick={() => handleDeleteLeave(l.id)}
+                                    className="p-1 hover:bg-rose-50 text-rose-500 rounded-lg hover:text-rose-700 transition-all cursor-pointer inline-flex items-center justify-center active:scale-95"
+                                    title="Xóa yêu cầu nghỉ phép"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* ─── MODAL ĐĂNG KÝ NGHỈ PHÉP ─── */}
+                  {showCreateLeaveModal && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fade-in">
+                      <div className="bg-white w-full max-w-lg rounded-2xl shadow-premium border border-slate-100 overflow-hidden transform transition-all animate-scale-up">
+                        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-[#005BAC] text-white">
+                          <h3 className="font-heading font-black text-sm flex items-center gap-2">
+                            <Calendar size={16} /> Đăng ký nghỉ phép
+                          </h3>
+                          <button
+                            type="button"
+                            onClick={() => setShowCreateLeaveModal(false)}
+                            className="text-white/80 hover:text-white transition-all cursor-pointer p-1 rounded-lg hover:bg-white/10"
+                          >
+                            <X size={16} />
+                          </button>
+                        </div>
+
+                        <form onSubmit={handleCreateLeave} className="p-6 space-y-4 text-xs font-semibold text-slate-700">
+                          {/* Chọn nhân viên */}
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Chọn cán bộ nhân viên</label>
+                            <select
+                              value={leaveForm.employeeId}
+                              onChange={(e) => setLeaveForm(prev => ({ ...prev, employeeId: e.target.value }))}
+                              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none transition-all cursor-pointer"
+                            >
+                              <option value="">-- Chọn nhân viên --</option>
+                              {employees.map(e => (
+                                <option key={e.id} value={e.id}>{e.name} - {e.role} ({e.department})</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {/* Thông tin phép năm còn lại của nhân viên */}
+                          {leaveForm.employeeId && (() => {
+                            const empLeave = annualLeaveData.find(d => d.id === leaveForm.employeeId);
+                            if (!empLeave) return null;
+                            
+                            return (
+                              <div className={`p-4 rounded-xl border ${
+                                empLeave.isConcurrent 
+                                  ? "bg-amber-50/60 border-amber-200/65" 
+                                  : "bg-slate-50 border-slate-150"
+                              } space-y-2`}>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Thông tin phép năm nhân sự:</span>
+                                  {empLeave.isConcurrent && (
+                                    <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-amber-100 text-amber-800">
+                                      Nhân sự kiêm nhiệm/hỗ trợ (Không hưởng phép năm)
+                                    </span>
+                                  )}
+                                </div>
+                                
+                                <div className="grid grid-cols-3 gap-2 text-center">
+                                  <div className="p-2 bg-white rounded-lg border border-slate-100">
+                                    <div className="text-[9px] font-bold text-slate-400">Tổng hạn mức</div>
+                                    <div className="text-sm font-black text-slate-800 mt-0.5">{empLeave.totalLeave} ngày</div>
+                                  </div>
+                                  <div className="p-2 bg-white rounded-lg border border-slate-100">
+                                    <div className="text-[9px] font-bold text-slate-400">Đã nghỉ phép năm</div>
+                                    <div className="text-sm font-black text-emerald-600 mt-0.5">{empLeave.usedLeave} ngày</div>
+                                  </div>
+                                  <div className="p-2 bg-white rounded-lg border border-slate-100">
+                                    <div className="text-[9px] font-bold text-slate-400">Còn lại khả dụng</div>
+                                    <div className={`text-sm font-black mt-0.5 ${
+                                      empLeave.remainingLeave > 0 ? "text-indigo-600" : "text-slate-400"
+                                    }`}>{empLeave.remainingLeave} ngày</div>
+                                  </div>
+                                </div>
+                                
+                                {!empLeave.isConcurrent && (
+                                  <div className="text-[9.5px] font-medium text-slate-400 leading-normal flex items-center gap-1 mt-1">
+                                    <Info size={11} className="text-slate-400 shrink-0" />
+                                    <span>Thâm niên: <strong className="text-slate-600 font-bold">{empLeave.tenureStr}</strong> (Được cộng {empLeave.seniorLeave} ngày phép thâm niên).</span>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
+
+                          {/* Loại nghỉ phép */}
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Loại nghỉ phép</label>
+                            <select
+                              value={leaveForm.type}
+                              onChange={(e) => setLeaveForm(prev => ({ ...prev, type: e.target.value }))}
+                              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none transition-all cursor-pointer"
+                            >
+                              <option value="Phép năm">Nghỉ phép năm (Trừ vào hạn mức phép năm)</option>
+                              <option value="Việc riêng">Nghỉ việc riêng (Không trừ phép năm)</option>
+                              <option value="Nghỉ không lương">Nghỉ không hưởng lương (Không trừ phép năm)</option>
+                            </select>
+                          </div>
+
+                          {/* Thời gian nghỉ */}
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1.5">
+                              <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Từ ngày</label>
+                              <input
+                                type="date"
+                                value={leaveForm.from}
+                                onChange={(e) => setLeaveForm(prev => ({ ...prev, from: e.target.value }))}
+                                required
+                                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none transition-all"
+                              />
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Đến ngày</label>
+                              <input
+                                type="date"
+                                value={leaveForm.to}
+                                onChange={(e) => setLeaveForm(prev => ({ ...prev, to: e.target.value }))}
+                                required
+                                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none transition-all"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Hiện số ngày nghỉ tự động tính toán & Cảnh báo hạn mức */}
+                          {(() => {
+                            if (!leaveForm.from || !leaveForm.to) return null;
+                            const dFrom = new Date(leaveForm.from);
+                            const dTo = new Date(leaveForm.to);
+                            const diffTime = dTo.getTime() - dFrom.getTime();
+                            if (diffTime < 0) {
+                              return (
+                                <div className="p-3 bg-rose-50 border border-rose-100 rounded-xl text-rose-600 flex items-center gap-2">
+                                  <AlertTriangle size={14} />
+                                  <span>Ngày kết thúc không được nhỏ hơn ngày bắt đầu!</span>
+                                </div>
+                              );
+                            }
+                            
+                            const days = Math.round(diffTime / (1000 * 60 * 60 * 24)) + 1;
+                            const empLeave = annualLeaveData.find(d => d.id === leaveForm.employeeId);
+                            const isOverLimit = leaveForm.type === "Phép năm" && empLeave && days > empLeave.remainingLeave;
+                            const isConcurrentWarning = leaveForm.type === "Phép năm" && empLeave?.isConcurrent;
+
+                            return (
+                              <div className="space-y-2">
+                                <div className="p-3 bg-[#005BAC]/5 border border-[#005BAC]/10 rounded-xl flex items-center justify-between text-slate-700">
+                                  <div className="flex items-center gap-1.5">
+                                    <Clock size={14} className="text-[#005BAC]" />
+                                    <span>Tổng số ngày đăng ký nghỉ:</span>
+                                  </div>
+                                  <span className="text-sm font-black text-[#005BAC]">{days} ngày</span>
+                                </div>
+
+                                {isConcurrentWarning && (
+                                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-700 flex items-start gap-2">
+                                    <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                                    <span>
+                                      <strong>Lưu ý:</strong> Nhân sự này là nhân sự kiêm nhiệm/hỗ trợ, không được cấp phép năm. Việc duyệt phép năm có thể dẫn đến số phép âm.
+                                    </span>
+                                  </div>
+                                )}
+
+                                {isOverLimit && !isConcurrentWarning && (
+                                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-700 flex items-start gap-2">
+                                    <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                                    <span>
+                                      <strong>Cảnh báo hạn mức:</strong> Số ngày đăng ký ({days} ngày) vượt quá số phép năm còn lại khả dụng ({empLeave.remainingLeave} ngày).
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
+
+                          {/* Lý do nghỉ */}
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Lý do xin nghỉ</label>
+                            <textarea
+                              value={leaveForm.reason}
+                              onChange={(e) => setLeaveForm(prev => ({ ...prev, reason: e.target.value }))}
+                              rows={2}
+                              placeholder="Mô tả lý do xin nghỉ phép..."
+                              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none transition-all resize-none"
+                            />
+                          </div>
+
+                          {/* Buttons */}
+                          <div className="flex justify-end gap-2 pt-2">
+                            <button
+                              type="button"
+                              onClick={() => setShowCreateLeaveModal(false)}
+                              className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 font-bold rounded-xl active:scale-95 transition-all cursor-pointer"
+                            >
+                              Hủy bỏ
+                            </button>
+                            <button
+                              type="submit"
+                              className="px-5 py-2 bg-[#005BAC] hover:bg-blue-700 text-white font-bold rounded-xl active:scale-95 transition-all cursor-pointer shadow-premium"
+                            >
+                              Đăng ký phép
+                            </button>
+                          </div>
+                        </form>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
