@@ -374,6 +374,8 @@ export default function CBPage() {
   const [showCreateClaimModal, setShowCreateClaimModal] = useState(false);
   const [selectedHolidayId, setSelectedHolidayId] = useState("national_day_2026");
   const [selectedBirthdayMonth, setSelectedBirthdayMonth] = useState<number>(new Date().getMonth() + 1);
+  const [showBirthdayPreviewModal, setShowBirthdayPreviewModal] = useState(false);
+  const [isExportingBirthday, setIsExportingBirthday] = useState(false);
   const [claimForm, setClaimForm] = useState({
     employeeId: "",
     category: "Sinh nhật" as any,
@@ -1128,6 +1130,65 @@ export default function CBPage() {
     XLSX.writeFile(workbook, `Bang_thuong_le_${holidayName.replace(/\s+/g, "_")}.xlsx`);
   };
 
+  const handleExportBirthdayReport = async () => {
+    try {
+      setIsExportingBirthday(true);
+      const totalAmount = filteredBirthdays.reduce((sum, b) => sum + (b.giftAmount || 0), 0);
+      const today = new Date();
+      const currentYear = today.getFullYear();
+      
+      const dayStr = String(today.getDate()).padStart(2, '0');
+      const monthStr = String(today.getMonth() + 1).padStart(2, '0');
+      const yearStr = String(currentYear);
+
+      const items = filteredBirthdays.map(b => ({
+        name: b.name,
+        role: b.role,
+        department: b.dept,
+        benefit: "Sinh nhật",
+        amount: b.giftAmount || 0,
+        tenure: b.tenure || "",
+        notes: ""
+      }));
+
+      const payload = {
+        monthYear: `${selectedBirthdayMonth}/${currentYear}`,
+        day: dayStr,
+        month: monthStr,
+        year: yearStr,
+        totalAmount: totalAmount,
+        items: items
+      };
+
+      const response = await fetch("/api/export-benefits-report", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        throw new Error("Không thể xuất file word báo cáo phúc lợi");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Bang_theo_doi_phuc_loi_thang_${selectedBirthdayMonth}_${currentYear}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error: any) {
+      console.error("Lỗi xuất báo cáo sinh nhật:", error);
+      alert("Đã xảy ra lỗi khi tải file word: " + error.message);
+    } finally {
+      setIsExportingBirthday(false);
+    }
+  };
+
   const handleTabChange = (tabId: string) => {
     setActiveTab(tabId);
     if (tabId === "employee_profile") setActiveSubTab("personal");
@@ -1387,6 +1448,8 @@ export default function CBPage() {
         const level = getEmployeeLevel(emp.role);
         const giftVal = BENEFIT_POLICY["Sinh nhật"][level];
         const giftStr = giftVal === "Theo phê duyệt" ? "Theo phê duyệt" : `Hộp quà & ${giftVal.toLocaleString("vi-VN")}đ`;
+        const giftAmount = typeof giftVal === "number" ? giftVal : 0;
+        const tenure = getEmployeeTenureStr(emp);
         
         return {
           id: emp.id,
@@ -1398,6 +1461,8 @@ export default function CBPage() {
           dept: emp.department,
           role: emp.role,
           gift: giftStr,
+          giftAmount,
+          tenure,
           status: "Chờ gửi"
         };
       })
@@ -1527,7 +1592,7 @@ export default function CBPage() {
                   onClick={() => handleTabChange(tab.id)}
                   className={`flex items-center gap-2 px-5 py-2.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
                     activeTab === tab.id
-                      ? "bg-[#005BAC] text-white shadow-md shadow-blue-500/10"
+                      ? "bg-gradient-to-r from-[#005BAC] to-[#00AEEF] text-white shadow-md shadow-blue-500/15 scale-102"
                       : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"
                   }`}
                 >
@@ -1540,7 +1605,7 @@ export default function CBPage() {
 
           {/* ─── SUB-TABS NAVIGATOR BASED ON ACTIVE MAIN TAB (NON-PROFILE TABS ONLY) ─── */}
           {activeTab !== "employee_profile" && (
-            <div className="flex flex-wrap gap-2 text-xs font-bold bg-slate-100 p-1.5 rounded-xl shrink-0">
+            <div className="flex flex-wrap gap-1.5 text-xs font-bold bg-[#005BAC]/5 p-1.5 rounded-xl shrink-0 border border-blue-100/20">
               {activeTab === "attendance" && [
                 { id: "machine", label: "Lấy ngày công máy chấm công" },
                 { id: "explanation", label: "Thông tin giải trình" },
@@ -1552,8 +1617,10 @@ export default function CBPage() {
                 <button
                   key={sub.id}
                   onClick={() => setActiveSubTab(sub.id)}
-                  className={`px-4 py-1.5 rounded-lg transition-all cursor-pointer ${
-                    activeSubTab === sub.id ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-800"
+                  className={`px-4 py-1.5 rounded-lg transition-all cursor-pointer border ${
+                    activeSubTab === sub.id 
+                      ? "bg-white text-[#005BAC] border-blue-100/60 shadow-sm scale-102" 
+                      : "bg-transparent border-transparent text-slate-555 hover:text-[#005BAC] hover:bg-white/40"
                   }`}
                 >
                   {sub.label}
@@ -1567,8 +1634,10 @@ export default function CBPage() {
                 <button
                   key={sub.id}
                   onClick={() => setActiveSubTab(sub.id)}
-                  className={`px-4 py-1.5 rounded-lg transition-all cursor-pointer ${
-                    activeSubTab === sub.id ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-800"
+                  className={`px-4 py-1.5 rounded-lg transition-all cursor-pointer border ${
+                    activeSubTab === sub.id 
+                      ? "bg-white text-[#005BAC] border-blue-100/60 shadow-sm scale-102" 
+                      : "bg-transparent border-transparent text-slate-555 hover:text-[#005BAC] hover:bg-white/40"
                   }`}
                 >
                   {sub.label}
@@ -1584,8 +1653,10 @@ export default function CBPage() {
                 <button
                   key={sub.id}
                   onClick={() => setActiveSubTab(sub.id)}
-                  className={`px-4 py-1.5 rounded-lg transition-all cursor-pointer ${
-                    activeSubTab === sub.id ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-800"
+                  className={`px-4 py-1.5 rounded-lg transition-all cursor-pointer border ${
+                    activeSubTab === sub.id 
+                      ? "bg-white text-[#005BAC] border-blue-100/60 shadow-sm scale-102" 
+                      : "bg-transparent border-transparent text-slate-555 hover:text-[#005BAC] hover:bg-white/40"
                   }`}
                 >
                   {sub.label}
@@ -3010,36 +3081,47 @@ export default function CBPage() {
                   {/* Header & Month Navigator */}
                   <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-100 pb-4 gap-4">
                     <div className="flex items-center gap-2">
-                      <span className="p-2 bg-pink-50 text-pink-600 rounded-xl animate-pulse"><Cake size={16} /></span>
+                      <span className="p-2 bg-blue-50 text-[#005BAC] rounded-xl"><Cake size={16} /></span>
                       <div>
                         <h3 className="font-heading font-extrabold text-slate-800 text-sm">LỊCH VÀ DANH SÁCH SINH NHẬT NHÂN SỰ</h3>
                         <p className="text-slate-400 text-[10px] font-semibold">Đối chiếu danh sách thâm niên và tính toán quà thưởng tự động theo phòng ban & chức vụ</p>
                       </div>
                     </div>
 
-                    {/* Month Quick Select */}
-                    <div className="flex flex-wrap gap-1 text-[10px] font-bold bg-slate-100 p-1 rounded-xl shrink-0">
-                      {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
-                        <button
-                          key={m}
-                          type="button"
-                          onClick={() => setSelectedBirthdayMonth(m)}
-                          className={`px-2 py-1 rounded-lg transition-all cursor-pointer ${
-                            selectedBirthdayMonth === m 
-                              ? "bg-[#005BAC] text-white shadow-sm" 
-                              : "text-slate-500 hover:text-slate-800 hover:bg-slate-200/50"
-                          }`}
-                        >
-                          T{m}
-                        </button>
-                      ))}
+                    <div className="flex items-center gap-3 self-end md:self-auto flex-wrap md:flex-nowrap">
+                      {/* Nút Danh sách CBNV trong tháng */}
+                      <button
+                        type="button"
+                        onClick={() => setShowBirthdayPreviewModal(true)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-[#005BAC] hover:bg-[#004b90] text-white font-bold rounded-lg cursor-pointer text-[10px] transition-all shadow-md shadow-blue-500/10 active:scale-95"
+                      >
+                        <FileText size={12} /> Danh sách CBNV trong tháng
+                      </button>
+
+                      {/* Month Quick Select */}
+                      <div className="flex flex-wrap gap-1 text-[10px] font-bold bg-slate-100 p-1 rounded-xl shrink-0">
+                        {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
+                          <button
+                            key={m}
+                            type="button"
+                            onClick={() => setSelectedBirthdayMonth(m)}
+                            className={`px-2 py-1 rounded-lg transition-all cursor-pointer ${
+                              selectedBirthdayMonth === m 
+                                ? "bg-[#005BAC] text-white shadow-sm" 
+                                : "text-slate-500 hover:text-slate-800 hover:bg-slate-200/50"
+                            }`}
+                          >
+                            T{m}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
 
                   {/* Lịch sinh nhật trong tháng (Calendar Highlight Grid) */}
                   <div className="space-y-2.5">
                     <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-                      <span className="w-1.5 h-3.5 bg-pink-500 rounded-full inline-block"></span>
+                      <span className="w-1.5 h-3.5 bg-[#005BAC] rounded-full inline-block"></span>
                       Lịch Sinh Nhật Tháng {selectedBirthdayMonth} (Có highlight ngày có sự kiện)
                     </h4>
                     
@@ -3050,18 +3132,18 @@ export default function CBPage() {
                         return (
                           <div
                             key={dayNum}
-                            className={`h-14 flex flex-col items-center justify-center rounded-xl border transition-all ${
+                            className={`h-14 flex flex-col items-center justify-center rounded-xl border transition-all cursor-pointer ${
                               hasBirthdays
-                                ? "bg-gradient-to-br from-pink-50 to-pink-100/50 border-pink-300 text-pink-700 shadow-md ring-2 ring-pink-500/10 scale-105"
-                                : "bg-slate-50/40 border-slate-100 text-slate-400 hover:bg-slate-50"
+                                ? "bg-gradient-to-br from-blue-50 to-indigo-50/70 border-blue-400/80 text-blue-700 shadow-sm shadow-blue-500/5 scale-105 border-2 relative overflow-hidden"
+                                : "bg-slate-50/45 border-slate-100 text-slate-400 hover:bg-white hover:text-slate-700 hover:shadow-premium hover:border-blue-200 hover:scale-105 active:scale-95"
                             }`}
                             title={hasBirthdays ? `Sinh nhật: ${dayBirthdays.map(b => b.name).join(", ")}` : `Ngày ${dayNum}`}
                           >
-                            <span className={`text-[11px] font-black ${hasBirthdays ? "text-pink-600" : "text-slate-400"}`}>
+                            <span className={`text-[11px] font-black ${hasBirthdays ? "text-blue-600" : "text-slate-400"}`}>
                               {dayNum}
                             </span>
                             {hasBirthdays ? (
-                              <span className="p-0.5 bg-pink-500 rounded-full text-white animate-bounce mt-1">
+                              <span className="p-0.5 bg-gradient-to-tr from-[#005BAC] to-cyan-400 rounded-full text-white animate-bounce mt-1 shadow-sm">
                                 <Cake size={7} />
                               </span>
                             ) : (
@@ -3089,16 +3171,16 @@ export default function CBPage() {
                         {filteredBirthdays.map((b) => (
                           <div 
                             key={b.id} 
-                            className="flex items-center justify-between p-4 bg-gradient-to-r from-pink-50/20 to-indigo-50/10 rounded-2xl border border-pink-100/50 hover-elevate transition-all"
+                            className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-150 shadow-md shadow-slate-100/40 hover:shadow-xl hover:shadow-blue-500/5 hover:border-blue-200/70 transition-all hover-elevate duration-300"
                           >
                             <div className="flex items-center gap-3">
-                              <div className="w-12 h-12 rounded-full bg-pink-100 text-pink-600 border-2 border-white shadow-premium flex items-center justify-center font-bold text-sm">
+                              <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-[#005BAC] to-cyan-500 text-white border-2 border-white shadow-premium flex items-center justify-center font-black text-sm">
                                 {b.name.slice(0, 2).toUpperCase()}
                               </div>
                               <div>
-                                <h4 className="font-heading font-extrabold text-slate-850 text-xs flex items-center gap-1.5">
+                                <h4 className="font-heading font-extrabold text-slate-800 text-xs flex items-center gap-2">
                                   {b.name}
-                                  <span className="px-1.5 py-0.5 bg-pink-100 text-pink-850 font-black rounded text-[8px] uppercase">
+                                  <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-100 font-bold rounded-full text-[8px] uppercase tracking-wider">
                                     Ngày {b.day}
                                   </span>
                                 </h4>
@@ -3107,10 +3189,10 @@ export default function CBPage() {
                               </div>
                             </div>
                             <div className="text-right flex flex-col items-end gap-1.5">
-                              <span className="text-[10px] font-black text-[#005BAC] bg-blue-50 px-2 py-0.5 rounded-full flex items-center gap-1 border border-blue-100">
+                              <span className="text-[10px] font-black text-[#005BAC] bg-blue-50/70 px-2.5 py-1 rounded-full flex items-center gap-1 border border-blue-100/60 shadow-sm shadow-blue-500/5">
                                 <Gift size={10} className="text-blue-500" /> {b.gift}
                               </span>
-                              <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                              <span className="px-2.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/10 text-amber-600 border border-amber-500/25 shadow-sm shadow-amber-500/5">
                                 {b.status}
                               </span>
                             </div>
@@ -3803,6 +3885,147 @@ export default function CBPage() {
                     <Send size={12} /> Gửi email báo cáo
                   </button>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* ─── MODAL XEM TRƯỚC VÀ XUẤT BÁO CÁO SINH NHẬT WORD ─── */}
+          {showBirthdayPreviewModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 overflow-y-auto">
+              <div className="bg-slate-900/40 backdrop-blur-md rounded-2xl max-w-4xl w-full border border-white/10 shadow-2xl flex flex-col my-8 overflow-hidden transform transition-all animate-scale-up">
+                
+                {/* Header điều khiển */}
+                <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 bg-slate-800 text-white shrink-0">
+                  <h3 className="font-heading font-black text-sm flex items-center gap-2">
+                    <FileText size={16} className="text-pink-400 animate-pulse" /> Xem trước bảng đề nghị phúc lợi sinh nhật
+                  </h3>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleExportBirthdayReport}
+                      disabled={isExportingBirthday}
+                      className="flex items-center gap-1.5 px-4 py-2 bg-pink-600 hover:bg-pink-700 text-white font-bold rounded-xl cursor-pointer text-xs transition-all shadow-md shadow-pink-500/20 active:scale-95 disabled:opacity-50"
+                    >
+                      {isExportingBirthday ? (
+                        <>
+                          <Loader2 size={12} className="animate-spin" /> Đang tạo file...
+                        </>
+                      ) : (
+                        <>
+                          <Download size={12} /> Tải file Word (.docx)
+                        </>
+                      )}
+                    </button>
+                    <button
+                      onClick={() => setShowBirthdayPreviewModal(false)}
+                      className="text-slate-400 hover:text-white transition-all cursor-pointer p-2 rounded-lg hover:bg-white/10"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Khung xem trước A4 */}
+                <div className="p-6 overflow-y-auto bg-slate-100/50 flex justify-center max-h-[70vh]">
+                  <div className="bg-white w-[210mm] min-h-[297mm] p-12 shadow-xl border border-slate-200/50 text-black flex flex-col justify-between font-serif relative" style={{ fontFamily: '"Times New Roman", Times, serif' }}>
+                    
+                    <div>
+                      {/* Document Header (Logo & Company Name) */}
+                      <div className="flex justify-between items-start mb-6 border-b border-black pb-4 text-xs font-normal">
+                        <div className="flex gap-2">
+                          <div className="flex flex-col items-center justify-center border-2 border-[#005BAC] p-1 w-14 h-14 shrink-0 bg-white">
+                            <span className="text-[10px] font-black text-[#005BAC] leading-none">TRUNG</span>
+                            <span className="text-[10px] font-black text-red-600 leading-none mt-0.5">NAM</span>
+                            <span className="text-[7px] font-bold text-slate-500 leading-none mt-1">E&C</span>
+                          </div>
+                          <div>
+                            <div className="font-extrabold text-[10px] uppercase text-[#005BAC] tracking-wide">Công ty CP Xây dựng và Lắp máy Trung Nam</div>
+                            <div className="text-[8px] text-slate-600 mt-1 leading-normal">
+                              A: Tầng trệt tòa nhà văn phòng Safomec, 7/1 Thành Thái, P14, Q10, TPHCM<br/>
+                              T: (+84) 834 70 75 79 | E: info.tnec@trungnamgroup.com.vn<br/>
+                              W: trungnamec.com.vn
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="text-right flex flex-col items-end">
+                          <h2 className="font-black text-sm uppercase tracking-wide text-black m-0">Bảng theo dõi phúc lợi</h2>
+                          <div className="font-black text-[10px] underline mt-0.5">HCNS/BM/048</div>
+                        </div>
+                      </div>
+
+                      {/* Main Title */}
+                      <div className="text-center my-6">
+                        <h1 className="text-base font-black uppercase text-[#005BAC] tracking-wider m-0">
+                          DANH SÁCH SINH NHẬT THÁNG {selectedBirthdayMonth}/{new Date().getFullYear()}
+                        </h1>
+                      </div>
+
+                      {/* Document Table */}
+                      <div className="overflow-x-auto my-4">
+                        <table className="w-full text-xs text-left border border-black border-collapse" style={{ borderWidth: '1px' }}>
+                          <thead>
+                            <tr className="bg-[#D68F5A]/20 text-black font-extrabold text-[10px] uppercase border-b border-black">
+                              <th className="py-2.5 px-1.5 border-r border-black text-center font-bold" style={{ width: '40px' }}>STT</th>
+                              <th className="py-2.5 px-2 border-r border-black font-bold">Họ và tên</th>
+                              <th className="py-2.5 px-2 border-r border-black font-bold">Chức vụ</th>
+                              <th className="py-2.5 px-2 border-r border-black font-bold">Phòng ban</th>
+                              <th className="py-2.5 px-2 border-r border-black text-center font-bold" style={{ width: '80px' }}>Phúc lợi</th>
+                              <th className="py-2.5 px-2 border-r border-black text-right font-bold" style={{ width: '90px' }}>Số tiền</th>
+                              <th className="py-2.5 px-2 border-r border-black text-center font-bold" style={{ width: '100px' }}>Thâm niên</th>
+                              <th className="py-2.5 px-2 font-bold" style={{ width: '90px' }}>Ghi chú</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-black text-[11px]">
+                            {filteredBirthdays.length === 0 ? (
+                              <tr>
+                                <td colSpan={8} className="py-4 text-center italic text-slate-500 border border-black">
+                                  Không có dữ liệu sinh nhật trong tháng {selectedBirthdayMonth}
+                                </td>
+                              </tr>
+                            ) : (
+                              filteredBirthdays.map((b, idx) => (
+                                <tr key={b.id} className="hover:bg-slate-50">
+                                  <td className="py-2 px-1.5 border-r border-black text-center font-medium">{idx + 1}</td>
+                                  <td className="py-2 px-2 border-r border-black font-bold">{b.name}</td>
+                                  <td className="py-2 px-2 border-r border-black text-[#A0522D] font-bold">{b.role}</td>
+                                  <td className="py-2 px-2 border-r border-black text-[#A0522D] font-bold">{b.dept}</td>
+                                  <td className="py-2 px-2 border-r border-black text-[#005BAC] text-center font-bold">Sinh nhật</td>
+                                  <td className="py-2 px-2 border-r border-black text-right font-bold">
+                                    {b.giftAmount ? b.giftAmount.toLocaleString("vi-VN") : "0"}
+                                  </td>
+                                  <td className="py-2 px-2 border-r border-black text-[#005BAC] text-center font-bold">{b.tenure || ""}</td>
+                                  <td className="py-2 px-2 border-black"></td>
+                                </tr>
+                              ))
+                            )}
+                            
+                            <tr className="bg-slate-50/50 border-t border-black font-bold">
+                              <td colSpan={5} className="py-2 px-2 border-r border-black text-center uppercase tracking-wider font-extrabold">TỔNG CỘNG</td>
+                              <td className="py-2 px-2 border-r border-black text-right text-[#005BAC] font-extrabold">
+                                {filteredBirthdays.reduce((sum, b) => sum + (b.giftAmount || 0), 0).toLocaleString("vi-VN")}
+                              </td>
+                              <td className="py-2 px-2 border-r border-black"></td>
+                              <td className="py-2 px-2 border-black"></td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* Date & Signatures Section */}
+                      <div className="mt-8 text-xs font-normal">
+                        <div className="text-right italic mb-4">
+                          Tp. HCM, ngày {new Date().getDate()} tháng {new Date().getMonth() + 1} năm {new Date().getFullYear()}
+                        </div>
+                        <div className="grid grid-cols-2 text-center font-bold">
+                          <div className="italic uppercase font-bold text-slate-800">BLĐ DUYỆT</div>
+                          <div className="italic uppercase font-bold text-slate-800">PHÒNG HCNS</div>
+                        </div>
+                      </div>
+                    </div>
+
+                  </div>
+                </div>
+
               </div>
             </div>
           )}

@@ -62,8 +62,8 @@ function SidebarLinks({ isApprover, pathname, setSidebarOpen }: { isApprover: bo
             onClick={() => setSidebarOpen(false)}
             className={`flex items-center gap-3 px-5 py-2.5 rounded-full text-xs font-bold transition-all duration-200 active:scale-[0.97] hover:translate-x-1 border ${
               isActive
-                ? "bg-[#1D1D1F] border-[#1D1D1F] text-white shadow-sm"
-                : "bg-[#EBEBEB]/70 border-slate-200/40 text-[#1D1D1F] hover:bg-slate-200/90"
+                ? "bg-gradient-to-r from-[#005BAC] to-[#00AEEF] border-transparent text-white shadow-md shadow-blue-500/15"
+                : "bg-slate-50/50 border-slate-100 text-slate-600 hover:bg-slate-100 hover:text-slate-900"
             }`}
           >
             <Icon size={15} className={isActive ? "text-white" : "text-slate-500"} />
