@@ -1339,6 +1339,29 @@ export default function AdministrationPage() {
     }
   };
 
+  const handleUpdatePaymentProject = async (paymentId: string, projectName: string) => {
+    const updated = pendingPayments.map(p => p.id === paymentId ? { ...p, project_name: projectName } : p);
+    setPendingPayments(updated);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("tnec_pending_payments", JSON.stringify(updated));
+    }
+
+    try {
+      if (!paymentId.startsWith("PAY-") && !paymentId.startsWith("INV-")) {
+        const { error } = await supabase
+          .from("invoices")
+          .update({ project_name: projectName })
+          .eq("id", paymentId);
+        if (error) throw error;
+      }
+    } catch (err: any) {
+      console.warn("Could not sync project update to Supabase:", err.message || err);
+    }
+
+    // Trigger silent auto sync with updated lists
+    handleAutoFillReport(invoices, updated, true);
+  };
+
   const handleExportDeNghiChuyenTien = async () => {
     const currentMonthPayments = pendingPayments.filter(p => p.month === payMonth);
     if (currentMonthPayments.length === 0) {
@@ -2156,7 +2179,7 @@ export default function AdministrationPage() {
           employeeName,
           employeeDept,
           mission: p.content,
-          projectName: "Văn phòng HCM",
+          projectName: p.project_name || "Văn phòng HCM",
           supplierName: p.supplierName,
           bankAccount: p.account,
           bankNameBranch: p.bank,
@@ -5956,6 +5979,7 @@ export default function AdministrationPage() {
                                 <th className="py-2.5 px-3">Tên Nhà Cung Cấp</th>
                                 <th className="py-2.5 px-3">Tài khoản & Ngân hàng</th>
                                 <th className="py-2.5 px-3">Nội dung</th>
+                                <th className="py-2.5 px-3">Ban điều hành</th>
                                 <th className="py-2.5 px-3 text-right">Số tiền (đ)</th>
                                 <th className="py-2.5 px-3 text-center">File gốc</th>
                                 <th className="py-2.5 px-3 w-20 text-center">Thao tác</th>
@@ -5977,6 +6001,18 @@ export default function AdministrationPage() {
                                       <div className="text-slate-450 text-[10px] font-semibold">{p.bank}</div>
                                     </td>
                                     <td className="py-3 px-3 text-slate-500 text-[11.5px] leading-snug font-medium">{p.content}</td>
+                                    <td className="py-3 px-3" onClick={(e) => e.stopPropagation()}>
+                                      <select
+                                        value={p.project_name || "Văn phòng HCM"}
+                                        onChange={(e) => handleUpdatePaymentProject(p.id, e.target.value)}
+                                        className="px-2 py-1 border border-slate-200 rounded-xl bg-slate-50 text-[11px] font-bold text-slate-700 outline-none cursor-pointer focus:bg-white transition-all shadow-sm"
+                                      >
+                                        <option value="Văn phòng HCM">Văn phòng HCM</option>
+                                        {PROJECTS.map(proj => (
+                                          <option key={proj} value={proj}>{proj}</option>
+                                        ))}
+                                      </select>
+                                    </td>
                                     <td className="py-3 px-3 text-right font-black text-slate-800 group-hover:text-blue-700">{p.amount.toLocaleString("vi-VN")}</td>
                                     <td className="py-3 px-3 text-center animate-in fade-in" onClick={(e) => e.stopPropagation()}>
                                       {uploadingPaymentId === p.id ? (
@@ -7137,7 +7173,7 @@ CREATE POLICY "Allow public delete for invoices" ON public.invoices FOR DELETE U
                     <span className="underline">Lý do xin đề nghị chuyển tiền</span>: <span>{p.content}</span>
                   </div>
                   <div>
-                    <span className="underline">Tên dự án</span>: <span className="font-bold">Văn phòng HCM</span>
+                    <span className="underline">Tên dự án</span>: <span className="font-bold">{p.project_name || "Văn phòng HCM"}</span>
                   </div>
                   <div>
                     <span className="underline">Tên đơn vị thụ hưởng</span>: <span className="font-bold">{p.supplierName}</span>

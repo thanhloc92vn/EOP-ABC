@@ -60,6 +60,8 @@ interface Employee {
   completed_tasks: number;
   pending_tasks: number;
   created_at: string;
+  date_of_birth?: string;
+  gender?: string;
 }
 
 interface Contract {
@@ -134,20 +136,196 @@ const MOCK_BHXH_LOGS = [
   { name: "Trần Nghiệp Quang", code: "0123456792", base: 22000000, SI: 1760000, HI: 330000, UI: 220000, company_total: 4730000, booklet: "Công ty giữ" }
 ];
 
-const MOCK_BIRTHDAYS = [
-  { name: "Nguyễn Bích Như Quỳnh", dob: "1996-06-15", age: 30, dept: "Phòng HCNS", gift: "Hộp quà & 500.000đ", status: "Đã chuẩn bị" },
-  { name: "Trần Nghiệp Quang", dob: "1992-06-28", age: 34, dept: "Khối Dự án", gift: "Hộp quà & 500.000đ", status: "Chờ gửi" }
+const BENEFIT_POLICY: Record<string, Record<string, number | string>> = {
+  "Sinh nhật": {
+    "Điều hành cao cấp": "Theo phê duyệt",
+    "Quản lý cấp cao": 1000000,
+    "Quản lý cấp trung": 500000,
+    "Quản lý sơ cấp": 400000,
+    "CBNV": 300000
+  },
+  "Kết hôn": {
+    "Điều hành cao cấp": "Theo phê duyệt",
+    "Quản lý cấp cao": 2000000,
+    "Quản lý cấp trung": 1000000,
+    "Quản lý sơ cấp": 700000,
+    "CBNV": 500000
+  },
+  "Sinh con": {
+    "Điều hành cao cấp": "Theo phê duyệt",
+    "Quản lý cấp cao": 2000000,
+    "Quản lý cấp trung": 1000000,
+    "Quản lý sơ cấp": 500000,
+    "CBNV": 500000
+  },
+  "Ốm đau": {
+    "Điều hành cao cấp": "Theo phê duyệt",
+    "Quản lý cấp cao": 1000000,
+    "Quản lý cấp trung": 500000,
+    "Quản lý sơ cấp": 400000,
+    "CBNV": 300000
+  },
+  "Tử tuất": {
+    "Điều hành cao cấp": "Theo phê duyệt",
+    "Quản lý cấp cao": 2000000,
+    "Quản lý cấp trung": 1000000,
+    "Quản lý sơ cấp": 700000,
+    "CBNV": 500000
+  }
+};
+
+const getEmployeeLevel = (role: string): string => {
+  if (!role) return "CBNV";
+  
+  // Normalize: lowercase, remove accents, change 'đ' -> 'd'
+  let r = role.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[đĐ]/g, "d");
+  
+  // Replace symbols/punctuation with spaces to make word boundaries clear
+  r = r.replace(/[\.\,\/\\\#\!\$\%\^\&\*\;\:\{\}\=\-\_\`\~\(\)]/g, " ").replace(/\s+/g, " ").trim();
+  
+  const words = r.split(" ");
+  const hasWord = (w: string) => words.includes(w);
+  const hasPhrase = (p: string) => r.includes(p);
+  
+  // Exclude staff titles from matching director/manager levels:
+  // e.g. "Trợ lý Giám đốc" or "Thư ký GD" are staff roles (CBNV)
+  const isStaffTitle = r.includes("tro ly") || r.includes("thu ky") || r.includes("chuyen vien") || r.includes("nhan vien") || r.includes("ky su") || r.includes("chuyên viên") || r.includes("nhân viên") || r.includes("kỹ sư");
+
+  // 1. Điều hành cao cấp: Tổng Giám đốc, Phó Tổng Giám đốc, Ban giám đốc
+  if (hasPhrase("tong giam doc") || hasPhrase("pho tong giam doc") || hasPhrase("ban giam doc") || hasWord("tgd") || hasWord("ptgd")) {
+    return "Điều hành cao cấp";
+  }
+  
+  // 2. Quản lý cấp trung: Trưởng phòng, phó phòng, Giám đốc BĐH, PGĐ BĐH, Chỉ huy trưởng, CHT, TP, PP
+  if (
+    hasPhrase("giam doc bdh") || hasPhrase("pgd bdh") || 
+    hasPhrase("giam doc ban dieu hanh") || hasPhrase("pho giam doc ban dieu hanh") ||
+    hasPhrase("chi huy truong") || hasWord("cht") ||
+    (!isStaffTitle && (
+      hasPhrase("truong phong") || hasWord("tp") || 
+      hasPhrase("pho phong") || hasWord("pp")
+    ))
+  ) {
+    return "Quản lý cấp trung";
+  }
+
+  // 3. Quản lý cấp cao: Giám đốc (GĐ), Phó Giám đốc (PGĐ) của tổng công ty/khối
+  if (!isStaffTitle) {
+    if (hasPhrase("giam doc") || hasWord("gd") || hasPhrase("pho giam doc") || hasWord("pgd")) {
+      return "Quản lý cấp cao";
+    }
+  }
+
+  // 4. Quản lý sơ cấp (Cấp sơ): Tổ trưởng, Chỉ huy phó, CHP, Tổ trưởng
+  if (hasPhrase("to truong") || hasWord("to truong") || hasPhrase("chi huy pho") || hasWord("chp")) {
+    return "Quản lý sơ cấp";
+  }
+
+  return "CBNV";
+};
+
+const getEmployeeTenureYears = (emp: any): number => {
+  if (!emp || !emp.created_at) return 1.5;
+  const joinDate = new Date(emp.created_at);
+  const now = new Date("2026-06-19");
+  const diffTime = Math.max(0, now.getTime() - joinDate.getTime());
+  const diffDays = diffTime / (1000 * 60 * 60 * 24);
+  return diffDays / 365.25;
+};
+
+const getEmployeeTenureStr = (emp: any): string => {
+  if (!emp || !emp.created_at) return "1 năm 6 tháng";
+  const joinDate = new Date(emp.created_at);
+  const now = new Date("2026-06-19");
+  let years = now.getFullYear() - joinDate.getFullYear();
+  let months = now.getMonth() - joinDate.getMonth();
+  if (months < 0) {
+    years--;
+    months += 12;
+  }
+  if (years === 0 && months === 0) {
+    return "Mới gia nhập";
+  }
+  return `${years > 0 ? `${years} năm ` : ""}${months > 0 ? `${months} tháng` : ""}`.trim();
+};
+
+const getProposedHolidayBonus = (years: number): number => {
+  if (years < 1) return 300000;
+  if (years < 3) return 500000;
+  if (years < 5) return 1000000;
+  return 2000000;
+};
+
+const INITIAL_BENEFIT_CLAIMS = [
+  {
+    id: "claim-1",
+    name: "Nguyễn Ngọc Thanh Hằng",
+    role: "Nhân viên C&B bậc 2",
+    department: "Phòng Hành Chính Nhân Sự",
+    level: "CBNV",
+    category: "Kết hôn",
+    amount: 500000,
+    date: "2026-06-02",
+    status: "Đã chi",
+    notes: "Đám cưới nhân viên Nguyễn Ngọc Thanh Hằng"
+  },
+  {
+    id: "claim-2",
+    name: "Phạm Thành Lộc",
+    role: "Trưởng nhóm Marketing",
+    department: "Phòng Hành Chính Nhân Sự",
+    level: "CBNV",
+    category: "Ốm đau",
+    amount: 300000,
+    date: "2026-05-20",
+    status: "Đã chi",
+    notes: "Nghỉ nằm viện 3 ngày do sốt xuất huyết"
+  },
+  {
+    id: "claim-3",
+    name: "Trần Nghiệp Quang",
+    role: "Chỉ huy phó",
+    department: "Ban Điều Hành Dự Án Vàm Lẽo",
+    level: "Quản lý sơ cấp",
+    category: "Sinh con",
+    amount: 500000,
+    date: "2026-05-12",
+    status: "Đã chi",
+    notes: "Vợ sinh con, gửi chế độ chúc mừng"
+  },
+  {
+    id: "claim-4",
+    name: "Nguyễn Bích Như Quỳnh",
+    role: "Nhân viên C&B bậc 1",
+    department: "Phòng Hành Chính Nhân Sự",
+    level: "CBNV",
+    category: "Sinh nhật",
+    amount: 300000,
+    date: "2026-06-15",
+    status: "Đã duyệt",
+    notes: "Quà sinh nhật CBNV tháng 6"
+  },
+  {
+    id: "claim-5",
+    name: "Nguyễn Nam Hải",
+    role: "Tổng Giám Đốc",
+    department: "Hội Đồng Quản Trị",
+    level: "Điều hành cao cấp",
+    category: "Sinh nhật",
+    amount: "Theo phê duyệt",
+    date: "2026-06-12",
+    status: "Đã duyệt",
+    notes: "Sinh nhật Tổng Giám Đốc"
+  }
 ];
 
-const MOCK_FUNERALS_WEDDINGS = [
-  { name: "Nguyễn Ngọc Thanh Hằng", event: "Kết hôn (Kết hôn nhân viên)", amount: 2000000, date: "2026-06-02", status: "Đã chi" },
-  { name: "Phạm Thành Lộc", event: "Tứ thân phụ mẫu qua đời (Hiếu)", amount: 2000000, date: "2026-05-20", status: "Đã chi" }
-];
-
-const MOCK_HOLIDAYS = [
-  { holiday: "Quốc khánh 2/9", amount: "1.000.000 đ/nhân viên", budget: "145.000.000 đ", date: "2026-09-02", status: "Kế hoạch" },
-  { holiday: "Giải phóng miền Nam 30/4 & Quốc tế lao động 1/5", amount: "1.000.000 đ/nhân viên", budget: "143.000.000 đ", date: "2026-04-30", status: "Đã chi trả" },
-  { holiday: "Tết Dương Lịch", amount: "1.500.000 đ/nhân viên", budget: "214.500.000 đ", date: "2026-01-01", status: "Đã chi trả" }
+const TNEC_HOLIDAYS = [
+  { id: "national_day_2026", holiday: "Quốc khánh 2/9", date: "2026-09-02", status: "Kế hoạch", desc: "Thưởng lễ Quốc Khánh theo thâm niên" },
+  { id: "liberation_day_2026", holiday: "30/4 & 1/5", date: "2026-04-30", status: "Đã chi trả", desc: "Thưởng ngày Giải phóng & Quốc tế Lao động" },
+  { id: "new_year_2026", holiday: "Tết Dương Lịch", date: "2026-01-01", status: "Đã chi trả", desc: "Thưởng Tết Dương Lịch" },
+  { id: "womens_day_2026", holiday: "Quốc tế Phụ nữ 8/3", date: "2026-03-08", status: "Đã chi trả", desc: "Thưởng ngày Quốc tế Phụ nữ" },
+  { id: "company_anniversary_2026", holiday: "Sinh nhật công ty 23/5", date: "2026-05-23", status: "Đã chi trả", desc: "Thưởng ngày thành lập công ty" },
+  { id: "vn_womens_day_2026", holiday: "Ngày Phụ nữ VN 20/10", date: "2026-10-20", status: "Kế hoạch", desc: "Thưởng ngày Phụ nữ Việt Nam" }
 ];
 
 const HISTORICAL_SALARY_TREND = [
@@ -190,6 +368,21 @@ export default function CBPage() {
   const [activeTab, setActiveTab] = useState("employee_profile");
   const [activeSubTab, setActiveSubTab] = useState("personal");
 
+  // --- BENEFIT CLAIMS & HOLIDAY BONUS STATES ---
+  const [benefitClaims, setBenefitClaims] = useState<any[]>([]);
+  const [holidayBonusAdjustments, setHolidayBonusAdjustments] = useState<Record<string, number>>({});
+  const [showCreateClaimModal, setShowCreateClaimModal] = useState(false);
+  const [selectedHolidayId, setSelectedHolidayId] = useState("national_day_2026");
+  const [selectedBirthdayMonth, setSelectedBirthdayMonth] = useState<number>(new Date().getMonth() + 1);
+  const [claimForm, setClaimForm] = useState({
+    employeeId: "",
+    category: "Sinh nhật" as any,
+    date: new Date().toISOString().split("T")[0],
+    status: "Chờ phê duyệt",
+    notes: "",
+    customAmount: ""
+  });
+
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loadingEmployees, setLoadingEmployees] = useState(false);
   const [selectedEmp, setSelectedEmp] = useState<Employee | null>(null);
@@ -209,6 +402,15 @@ export default function CBPage() {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [hasFullAccess, setHasFullAccess] = useState(false);
   const [loadingAuth, setLoadingAuth] = useState(true);
+
+  // Filter employees for Women's Day (8/3 and 20/10)
+  const holidayFilteredEmployees = useMemo(() => {
+    const isWomensDay = selectedHolidayId === "womens_day_2026" || selectedHolidayId === "vn_womens_day_2026";
+    if (isWomensDay) {
+      return employees.filter(emp => emp.gender === "Nữ");
+    }
+    return employees;
+  }, [employees, selectedHolidayId]);
 
   // --- STATE FOR EXCEL TIMESHEET & EMAIL ROUTING ---
   interface ParsedEmployeeAttendance {
@@ -294,6 +496,26 @@ export default function CBPage() {
         port: savedPort,
         secure: savedSecure
       });
+
+      const savedClaims = localStorage.getItem("tnec_cb_benefit_claims");
+      if (savedClaims) {
+        try {
+          setBenefitClaims(JSON.parse(savedClaims));
+        } catch (e) {
+          console.error("Error parsing saved benefit claims", e);
+        }
+      } else {
+        setBenefitClaims(INITIAL_BENEFIT_CLAIMS);
+      }
+
+      const savedAdjustments = localStorage.getItem("tnec_cb_holiday_bonus_adjustments");
+      if (savedAdjustments) {
+        try {
+          setHolidayBonusAdjustments(JSON.parse(savedAdjustments));
+        } catch (e) {
+          console.error("Error parsing saved holiday bonus adjustments", e);
+        }
+      }
     }
     fetchImportedTimesheets();
   }, []);
@@ -779,12 +1001,139 @@ export default function CBPage() {
     alert("Đã hoàn thành tiến trình gửi email chấm công hàng loạt!");
   };
 
+  const handleCreateClaim = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!claimForm.employeeId) {
+      alert("Vui lòng chọn nhân viên!");
+      return;
+    }
+    const emp = employees.find(e => e.id === claimForm.employeeId);
+    if (!emp) return;
+
+    const level = getEmployeeLevel(emp.role);
+    let amount: number | string = BENEFIT_POLICY[claimForm.category][level];
+    if (claimForm.customAmount) {
+      amount = isNaN(Number(claimForm.customAmount)) ? claimForm.customAmount : Number(claimForm.customAmount);
+    }
+
+    const newClaim = {
+      id: `claim-${Date.now()}`,
+      employee_id: emp.id,
+      name: emp.name,
+      role: emp.role,
+      department: emp.department,
+      level,
+      category: claimForm.category,
+      amount,
+      date: claimForm.date,
+      status: claimForm.status,
+      notes: claimForm.notes
+    };
+
+    const updatedClaims = [newClaim, ...benefitClaims];
+    setBenefitClaims(updatedClaims);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("tnec_cb_benefit_claims", JSON.stringify(updatedClaims));
+    }
+    setShowCreateClaimModal(false);
+    setClaimForm({
+      employeeId: "",
+      category: "Sinh nhật" as any,
+      date: new Date().toISOString().split("T")[0],
+      status: "Chờ phê duyệt",
+      notes: "",
+      customAmount: ""
+    });
+    alert("Đã thêm yêu cầu trợ cấp mới thành công!");
+  };
+
+  const handleDeleteClaim = (claimId: string) => {
+    if (!confirm("Bạn có chắc chắn muốn xóa yêu cầu trợ cấp này không?")) return;
+    const updatedClaims = benefitClaims.filter(c => c.id !== claimId);
+    setBenefitClaims(updatedClaims);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("tnec_cb_benefit_claims", JSON.stringify(updatedClaims));
+    }
+  };
+
+  const handleUpdateHolidayAdjustment = (empId: string, amount: number) => {
+    const updatedAdjustments = { ...holidayBonusAdjustments, [empId]: amount };
+    setHolidayBonusAdjustments(updatedAdjustments);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("tnec_cb_holiday_bonus_adjustments", JSON.stringify(updatedAdjustments));
+    }
+  };
+
+  const handleApproveAllHolidayBonuses = () => {
+    if (!confirm("Bạn có chắc chắn muốn phê duyệt mức đề xuất cho toàn bộ nhân sự chưa được duyệt trong danh sách đang hiển thị?")) return;
+    const updatedAdjustments = { ...holidayBonusAdjustments };
+    holidayFilteredEmployees.forEach(emp => {
+      if (updatedAdjustments[emp.id] === undefined) {
+        const tenureYears = getEmployeeTenureYears(emp);
+        updatedAdjustments[emp.id] = getProposedHolidayBonus(tenureYears);
+      }
+    });
+    setHolidayBonusAdjustments(updatedAdjustments);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("tnec_cb_holiday_bonus_adjustments", JSON.stringify(updatedAdjustments));
+    }
+    alert("Đã phê duyệt hàng loạt thành công!");
+  };
+
+  const handleExportBenefitClaims = () => {
+    const dataToExport = filteredBenefitClaims.map((claim, idx) => ({
+      "STT": idx + 1,
+      "Họ và Tên": claim.name,
+      "Phòng ban": claim.department,
+      "Chức vụ": claim.role,
+      "Cấp quản lý": claim.level,
+      "Loại trợ cấp": claim.category,
+      "Số tiền hỗ trợ": typeof claim.amount === "number" ? claim.amount.toLocaleString("vi-VN") + " đ" : claim.amount,
+      "Ngày sự kiện": new Date(claim.date).toLocaleDateString("vi-VN"),
+      "Trạng thái": claim.status,
+      "Ghi chú": claim.notes || ""
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Tro_Cap_Phuc_Loi");
+    XLSX.writeFile(workbook, "Bao_cao_tro_cap_phuc_loi.xlsx");
+  };
+
+  const handleExportHolidayBonus = (holidayName: string) => {
+    const dataToExport = holidayFilteredEmployees.map((emp, idx) => {
+      const level = getEmployeeLevel(emp.role);
+      const tenureYears = getEmployeeTenureYears(emp);
+      const tenureStr = getEmployeeTenureStr(emp);
+      const proposed = getProposedHolidayBonus(tenureYears);
+      const approved = holidayBonusAdjustments[emp.id] ?? proposed;
+      return {
+        "STT": idx + 1,
+        "Họ và Tên": emp.name,
+        "Phòng ban": emp.department,
+        "Chức vụ": emp.role,
+        "Cấp quản lý": level,
+        "Ngày vào làm": emp.created_at ? new Date(emp.created_at).toLocaleDateString("vi-VN") : "19/06/2026",
+        "Giới tính": emp.gender || "",
+        "Thâm niên": tenureStr,
+        "Mức thưởng đề xuất (đ)": proposed,
+        "Mức thưởng phê duyệt (đ)": approved,
+        "Trạng thái": "Đã duyệt"
+      };
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Thuong_Le_Nhan_Su");
+    XLSX.writeFile(workbook, `Bang_thuong_le_${holidayName.replace(/\s+/g, "_")}.xlsx`);
+  };
+
   const handleTabChange = (tabId: string) => {
     setActiveTab(tabId);
     if (tabId === "employee_profile") setActiveSubTab("personal");
     else if (tabId === "attendance") setActiveSubTab("machine");
     else if (tabId === "payroll_insurance") setActiveSubTab("calculation");
-    else if (tabId === "benefits") setActiveSubTab("birthday");
+    else if (tabId === "benefits") setActiveSubTab("policy_rates");
     else if (tabId === "org_chart") setActiveSubTab("chart");
   };
 
@@ -882,7 +1231,8 @@ export default function CBPage() {
               kpi: 100,
               completed_tasks: 0,
               pending_tasks: 0,
-              created_at: empRecord?.created_at || new Date().toISOString()
+              created_at: empRecord?.created_at || new Date().toISOString(),
+              gender: empRecord?.gender || ""
             };
             finalEmployees = [dummyEmp];
           }
@@ -988,13 +1338,83 @@ export default function CBPage() {
     return MOCK_BHXH_LOGS.filter(b => hasFullAccess || b.name === currentUser?.name);
   }, [hasFullAccess, currentUser]);
 
-  const filteredBirthdays = useMemo(() => {
-    return MOCK_BIRTHDAYS.filter(b => hasFullAccess || b.name === currentUser?.name);
-  }, [hasFullAccess, currentUser]);
+  const parseBirthdate = (dateStr: string) => {
+    if (!dateStr) return null;
+    
+    // Normalize delimiters: replace hyphens, slashes, or dots with spaces
+    const cleanStr = dateStr.replace(/[\-\.\/]/g, " ").trim();
+    const parts = cleanStr.split(/\s+/);
+    
+    if (parts.length === 3) {
+      const p0 = parseInt(parts[0], 10);
+      const p1 = parseInt(parts[1], 10);
+      const p2 = parseInt(parts[2], 10);
+      
+      if (!isNaN(p0) && !isNaN(p1) && !isNaN(p2)) {
+        // Check if the first part is a 4-digit year (YYYY MM DD)
+        if (p0 > 1900) {
+          return { day: p2, month: p1, year: p0 };
+        }
+        // Check if the last part is a 4-digit year (DD MM YYYY or MM DD YYYY)
+        else if (p2 > 1900) {
+          return { day: p0, month: p1, year: p2 };
+        }
+        // Otherwise fallback to default order (DD MM YY)
+        else {
+          return { day: p0, month: p1, year: p2 };
+        }
+      }
+    }
+    
+    const parsedDate = new Date(dateStr);
+    if (!isNaN(parsedDate.getTime())) {
+      return {
+        day: parsedDate.getDate(),
+        month: parsedDate.getMonth() + 1,
+        year: parsedDate.getFullYear()
+      };
+    }
+    
+    return null;
+  };
 
-  const filteredFuneralsWeddings = useMemo(() => {
-    return MOCK_FUNERALS_WEDDINGS.filter(fw => hasFullAccess || fw.name === currentUser?.name);
-  }, [hasFullAccess, currentUser]);
+  const filteredBirthdays = useMemo(() => {
+    return employees
+      .map(emp => {
+        const parsed = parseBirthdate(emp.date_of_birth || "");
+        if (!parsed) return null;
+        
+        const level = getEmployeeLevel(emp.role);
+        const giftVal = BENEFIT_POLICY["Sinh nhật"][level];
+        const giftStr = giftVal === "Theo phê duyệt" ? "Theo phê duyệt" : `Hộp quà & ${giftVal.toLocaleString("vi-VN")}đ`;
+        
+        return {
+          id: emp.id,
+          name: emp.name,
+          dob: emp.date_of_birth || "",
+          day: parsed.day,
+          month: parsed.month,
+          year: parsed.year,
+          dept: emp.department,
+          role: emp.role,
+          gift: giftStr,
+          status: "Chờ gửi"
+        };
+      })
+      .filter((b): b is NonNullable<typeof b> => b !== null && b.month === selectedBirthdayMonth)
+      .filter(b => hasFullAccess || b.name === currentUser?.name)
+      .sort((a, b) => a.day - b.day);
+  }, [employees, selectedBirthdayMonth, hasFullAccess, currentUser]);
+
+  const daysInMonth = useMemo(() => {
+    const year = new Date().getFullYear();
+    const totalDays = new Date(year, selectedBirthdayMonth, 0).getDate();
+    return Array.from({ length: totalDays }, (_, i) => i + 1);
+  }, [selectedBirthdayMonth]);
+
+  const filteredBenefitClaims = useMemo(() => {
+    return benefitClaims.filter(c => hasFullAccess || c.name === currentUser?.name);
+  }, [benefitClaims, hasFullAccess, currentUser]);
 
   // --- HELPER FUNCTIONS FOR PREMIUM EMPLOYEE PROFILE VIEW ---
   const calculateTenure = (emp: Employee) => {
@@ -1156,8 +1576,9 @@ export default function CBPage() {
               ))}
 
               {activeTab === "benefits" && [
+                { id: "policy_rates", label: "Định mức phúc lợi" },
                 { id: "birthday", label: "Sinh nhật" },
-                { id: "funeral_wedding", label: "Hiếu hỷ" },
+                { id: "funeral_wedding", label: "Hiếu hỷ & Trợ cấp" },
                 { id: "holiday_bonus", label: "Tiền thưởng lễ" }
               ].map(sub => (
                 <button
@@ -2449,106 +2870,650 @@ export default function CBPage() {
           {/* ─── TAB 4: PHÚC LỢI ─── */}
           {activeTab === "benefits" && (
             <div className="space-y-6">
-              {activeSubTab === "birthday" && (
-                <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium space-y-5">
-                  <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-                    <span className="p-2 bg-pink-50 text-pink-600 rounded-xl"><Cake size={16} /></span>
-                    <div>
-                      <h3 className="font-heading font-extrabold text-slate-800 text-sm">CHÚC MỪNG SINH NHẬT NHÂN SỰ THÁNG 6</h3>
-                      <p className="text-slate-400 text-[10px] font-semibold">Gửi lời chúc mừng và theo dõi phần quà tặng sinh nhật của CBNV trong tháng</p>
+              {/* ─── SUB-TAB 1: ĐỊNH MỨC PHÚC LỢI ─── */}
+              {activeSubTab === "policy_rates" && (
+                <div className="space-y-6">
+                  {/* Bảng Định mức Trợ cấp */}
+                  <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium space-y-4">
+                    <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                      <span className="p-2 bg-blue-50 text-blue-600 rounded-xl"><Award size={16} /></span>
+                      <div>
+                        <h3 className="font-heading font-extrabold text-slate-800 text-sm">2.1 ĐỊNH MỨC TRỢ CẤP PHÚC LỢI ĐÃ ĐƯỢC DUYỆT</h3>
+                        <p className="text-slate-400 text-[10px] font-semibold">Chính sách trợ cấp phúc lợi áp dụng thống nhất cho các cấp nhân sự công ty</p>
+                      </div>
+                    </div>
+                    
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs text-left border-collapse">
+                        <thead>
+                          <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 font-extrabold uppercase tracking-wider text-[10px]">
+                            <th className="py-3 px-3 w-12 text-center">Stt</th>
+                            <th className="py-3 px-3 w-40">Nội dung</th>
+                            <th className="py-3 px-3 text-center bg-blue-50/30 text-blue-800">Điều hành cao cấp</th>
+                            <th className="py-3 px-3 text-center text-slate-700">Quản lý cấp cao</th>
+                            <th className="py-3 px-3 text-center text-slate-700">Quản lý cấp trung</th>
+                            <th className="py-3 px-3 text-center text-slate-700">Quản lý sơ cấp</th>
+                            <th className="py-3 px-3 text-center text-slate-700">CBNV</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
+                          {Object.entries(BENEFIT_POLICY).map(([category, levels], idx) => (
+                            <tr key={category} className="hover:bg-slate-50/50 transition-colors">
+                              <td className="py-3.5 px-3 text-center text-slate-400 font-bold">{idx + 1}</td>
+                              <td className="py-3.5 px-3 text-slate-800 font-bold">{category}</td>
+                              <td className="py-3.5 px-3 text-center font-bold bg-blue-50/20 text-blue-700 italic">
+                                {levels["Điều hành cao cấp"]}
+                              </td>
+                              <td className="py-3.5 px-3 text-center font-bold text-slate-800">
+                                {typeof levels["Quản lý cấp cao"] === "number" 
+                                  ? levels["Quản lý cấp cao"].toLocaleString("vi-VN") + " đ" 
+                                  : levels["Quản lý cấp cao"]}
+                              </td>
+                              <td className="py-3.5 px-3 text-center text-slate-600">
+                                {typeof levels["Quản lý cấp trung"] === "number" 
+                                  ? levels["Quản lý cấp trung"].toLocaleString("vi-VN") + " đ" 
+                                  : levels["Quản lý cấp trung"]}
+                              </td>
+                              <td className="py-3.5 px-3 text-center text-slate-600">
+                                {typeof levels["Quản lý sơ cấp"] === "number" 
+                                  ? levels["Quản lý sơ cấp"].toLocaleString("vi-VN") + " đ" 
+                                  : levels["Quản lý sơ cấp"]}
+                              </td>
+                              <td className="py-3.5 px-3 text-center text-slate-600">
+                                {typeof levels["CBNV"] === "number" 
+                                  ? levels["CBNV"].toLocaleString("vi-VN") + " đ" 
+                                  : levels["CBNV"]}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {filteredBirthdays.map((b, idx) => (
-                      <div key={idx} className="flex items-center justify-between p-4 bg-gradient-to-r from-pink-50/20 to-indigo-50/10 rounded-2xl border border-pink-100/50 hover-elevate transition-all">
-                        <div className="flex items-center gap-3">
-                          <div className="w-11 h-11 rounded-full bg-pink-100 text-pink-600 flex items-center justify-center font-bold text-sm">
-                            {b.name.slice(0, 2).toUpperCase()}
-                          </div>
+                  {/* Diễn giải chức danh & Thưởng lễ */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {/* Phân nhóm chức danh */}
+                    <div className="glass bg-white rounded-2xl p-5 border border-slate-200/50 shadow-premium space-y-3.5">
+                      <h4 className="font-heading font-black text-slate-800 text-xs uppercase tracking-wider flex items-center gap-1.5">
+                        <span className="w-1.5 h-3.5 bg-blue-600 rounded-full inline-block"></span>
+                        Quy định Phân cấp Chức danh Quản lý
+                      </h4>
+                      <div className="space-y-2 text-[11px] leading-relaxed text-slate-600">
+                        <div className="flex items-start gap-2 p-2 bg-slate-50 rounded-lg">
+                          <span className="px-2 py-0.5 rounded bg-indigo-100 text-indigo-800 font-bold text-[9px] uppercase shrink-0">Quản lý cấp cao</span>
                           <div>
-                            <h4 className="font-heading font-extrabold text-slate-850 text-xs">{b.name}</h4>
-                            <p className="text-[10px] text-slate-500 font-semibold">{b.dept} | Sinh nhật: {new Date(b.dob).toLocaleDateString("vi-VN")}</p>
+                            <strong className="text-slate-700">Quản lý cấp cao:</strong> Giám đốc (GĐ), Phó Giám đốc (PGĐ).
                           </div>
                         </div>
-                        <div className="text-right">
-                          <span className="text-[9px] font-black text-pink-600 bg-pink-50 px-2 py-0.5 rounded-full flex items-center gap-1"><Gift size={10} /> {b.gift}</span>
-                          <p className="text-[10px] text-slate-400 font-bold mt-1.5">{b.status}</p>
+                        <div className="flex items-start gap-2 p-2 bg-slate-50 rounded-lg">
+                          <span className="px-2 py-0.5 rounded bg-purple-100 text-purple-800 font-bold text-[9px] uppercase shrink-0">Quản lý cấp trung</span>
+                          <div>
+                            <strong className="text-slate-700">Quản lý cấp trung:</strong> Trưởng phòng, Phó phòng, Giám đốc BĐH, PGĐ BĐH, Chỉ huy trưởng.
+                          </div>
+                        </div>
+                        <div className="flex items-start gap-2 p-2 bg-slate-50 rounded-lg">
+                          <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-bold text-[9px] uppercase shrink-0">Quản lý cấp sơ</span>
+                          <div>
+                            <strong className="text-slate-700">Quản lý sơ cấp:</strong> Tổ trưởng, Chỉ huy phó.
+                          </div>
+                        </div>
+                        <div className="flex items-start gap-2 p-2 bg-slate-50 rounded-lg">
+                          <span className="px-2 py-0.5 rounded bg-slate-200 text-slate-800 font-bold text-[9px] uppercase shrink-0">CBNV thường</span>
+                          <div>
+                            <strong className="text-slate-700">CBNV:</strong> Các nhân viên, chuyên viên, kỹ sư khác trong hệ thống.
+                          </div>
                         </div>
                       </div>
-                    ))}
+                    </div>
+
+                    {/* Quy tắc thưởng lễ thâm niên */}
+                    <div className="glass bg-white rounded-2xl p-5 border border-slate-200/50 shadow-premium space-y-3.5">
+                      <h4 className="font-heading font-black text-slate-800 text-xs uppercase tracking-wider flex items-center gap-1.5">
+                        <span className="w-1.5 h-3.5 bg-emerald-600 rounded-full inline-block"></span>
+                        Quy tắc Thưởng Lễ lớn theo Thâm niên
+                      </h4>
+                      <p className="text-slate-500 text-[10px] font-semibold leading-relaxed">
+                        Thưởng lễ lớn (2/9, 30/4, Tết Dương Lịch...) gồm 4 mức phân phối dựa trên thâm niên làm việc thực tế, hỗ trợ điều chỉnh tay linh hoạt để trình Giám đốc phê duyệt:
+                      </p>
+                      
+                      <div className="grid grid-cols-2 gap-2.5">
+                        <div className="p-3 bg-gradient-to-br from-emerald-50/40 to-teal-50/20 border border-emerald-100 rounded-xl text-center">
+                          <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Dưới 1 năm</span>
+                          <div className="text-sm font-black text-emerald-700 mt-0.5">300.000 đ</div>
+                        </div>
+                        <div className="p-3 bg-gradient-to-br from-emerald-50/40 to-teal-50/20 border border-emerald-100 rounded-xl text-center">
+                          <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Từ 1 đến dưới 3 năm</span>
+                          <div className="text-sm font-black text-emerald-700 mt-0.5">500.000 đ</div>
+                        </div>
+                        <div className="p-3 bg-gradient-to-br from-emerald-50/40 to-teal-50/20 border border-emerald-100 rounded-xl text-center">
+                          <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Từ 3 đến dưới 5 năm</span>
+                          <div className="text-sm font-black text-emerald-700 mt-0.5">1.000.000 đ</div>
+                        </div>
+                        <div className="p-3 bg-gradient-to-br from-emerald-50/40 to-teal-50/20 border border-emerald-100 rounded-xl text-center">
+                          <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Từ 5 năm trở lên</span>
+                          <div className="text-sm font-black text-emerald-700 mt-0.5">2.000.000 đ</div>
+                        </div>
+                      </div>
+                      
+                      <div className="bg-amber-50 border border-amber-150 p-2.5 rounded-lg text-amber-800 text-[10px] leading-relaxed">
+                        <strong>Chú ý:</strong> Hệ thống tự động gợi ý theo thâm niên. Người dùng có quyền thay đổi mức thưởng cho từng cá nhân (dropdown/nhập số) trực tiếp tại bảng thưởng trước khi phê duyệt.
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
 
+              {/* ─── SUB-TAB 2: SINH NHẬT ─── */}
+              {activeSubTab === "birthday" && (
+                <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium space-y-6">
+                  {/* Header & Month Navigator */}
+                  <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-100 pb-4 gap-4">
+                    <div className="flex items-center gap-2">
+                      <span className="p-2 bg-pink-50 text-pink-600 rounded-xl animate-pulse"><Cake size={16} /></span>
+                      <div>
+                        <h3 className="font-heading font-extrabold text-slate-800 text-sm">LỊCH VÀ DANH SÁCH SINH NHẬT NHÂN SỰ</h3>
+                        <p className="text-slate-400 text-[10px] font-semibold">Đối chiếu danh sách thâm niên và tính toán quà thưởng tự động theo phòng ban & chức vụ</p>
+                      </div>
+                    </div>
+
+                    {/* Month Quick Select */}
+                    <div className="flex flex-wrap gap-1 text-[10px] font-bold bg-slate-100 p-1 rounded-xl shrink-0">
+                      {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => setSelectedBirthdayMonth(m)}
+                          className={`px-2 py-1 rounded-lg transition-all cursor-pointer ${
+                            selectedBirthdayMonth === m 
+                              ? "bg-[#005BAC] text-white shadow-sm" 
+                              : "text-slate-500 hover:text-slate-800 hover:bg-slate-200/50"
+                          }`}
+                        >
+                          T{m}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Lịch sinh nhật trong tháng (Calendar Highlight Grid) */}
+                  <div className="space-y-2.5">
+                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                      <span className="w-1.5 h-3.5 bg-pink-500 rounded-full inline-block"></span>
+                      Lịch Sinh Nhật Tháng {selectedBirthdayMonth} (Có highlight ngày có sự kiện)
+                    </h4>
+                    
+                    <div className="grid grid-cols-7 sm:grid-cols-10 md:grid-cols-12 lg:grid-cols-16 gap-2">
+                      {daysInMonth.map(dayNum => {
+                        const dayBirthdays = filteredBirthdays.filter(b => b.day === dayNum);
+                        const hasBirthdays = dayBirthdays.length > 0;
+                        return (
+                          <div
+                            key={dayNum}
+                            className={`h-14 flex flex-col items-center justify-center rounded-xl border transition-all ${
+                              hasBirthdays
+                                ? "bg-gradient-to-br from-pink-50 to-pink-100/50 border-pink-300 text-pink-700 shadow-md ring-2 ring-pink-500/10 scale-105"
+                                : "bg-slate-50/40 border-slate-100 text-slate-400 hover:bg-slate-50"
+                            }`}
+                            title={hasBirthdays ? `Sinh nhật: ${dayBirthdays.map(b => b.name).join(", ")}` : `Ngày ${dayNum}`}
+                          >
+                            <span className={`text-[11px] font-black ${hasBirthdays ? "text-pink-600" : "text-slate-400"}`}>
+                              {dayNum}
+                            </span>
+                            {hasBirthdays ? (
+                              <span className="p-0.5 bg-pink-500 rounded-full text-white animate-bounce mt-1">
+                                <Cake size={7} />
+                              </span>
+                            ) : (
+                              <span className="w-1.5 h-1.5 bg-slate-200 rounded-full mt-1.5"></span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Danh sách chi tiết nhân sự */}
+                  <div className="space-y-3.5 pt-2">
+                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                      <span className="w-1.5 h-3.5 bg-blue-600 rounded-full inline-block"></span>
+                      Danh Sách Chi Trợ Cấp Sinh Nhật ({filteredBirthdays.length} Nhân Sự)
+                    </h4>
+
+                    {filteredBirthdays.length === 0 ? (
+                      <div className="py-12 border border-dashed border-slate-200 rounded-2xl text-center text-slate-400 font-bold italic bg-slate-50/20 text-xs">
+                        Không ghi nhận nhân viên nào có ngày sinh trong Tháng {selectedBirthdayMonth}
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {filteredBirthdays.map((b) => (
+                          <div 
+                            key={b.id} 
+                            className="flex items-center justify-between p-4 bg-gradient-to-r from-pink-50/20 to-indigo-50/10 rounded-2xl border border-pink-100/50 hover-elevate transition-all"
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className="w-12 h-12 rounded-full bg-pink-100 text-pink-600 border-2 border-white shadow-premium flex items-center justify-center font-bold text-sm">
+                                {b.name.slice(0, 2).toUpperCase()}
+                              </div>
+                              <div>
+                                <h4 className="font-heading font-extrabold text-slate-850 text-xs flex items-center gap-1.5">
+                                  {b.name}
+                                  <span className="px-1.5 py-0.5 bg-pink-100 text-pink-850 font-black rounded text-[8px] uppercase">
+                                    Ngày {b.day}
+                                  </span>
+                                </h4>
+                                <p className="text-[10px] text-slate-500 font-semibold">{b.dept} | {b.role}</p>
+                                <p className="text-[9px] text-slate-400 mt-0.5">Ngày sinh: {String(b.day).padStart(2, '0')}/{String(b.month).padStart(2, '0')}/{b.year}</p>
+                              </div>
+                            </div>
+                            <div className="text-right flex flex-col items-end gap-1.5">
+                              <span className="text-[10px] font-black text-[#005BAC] bg-blue-50 px-2 py-0.5 rounded-full flex items-center gap-1 border border-blue-100">
+                                <Gift size={10} className="text-blue-500" /> {b.gift}
+                              </span>
+                              <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                                {b.status}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* ─── SUB-TAB 3: HIẾU HỶ & TRỢ CẤP ─── */}
               {activeSubTab === "funeral_wedding" && (
                 <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium space-y-4">
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                    <h3 className="font-heading font-extrabold text-slate-800 text-sm">DANH SÁCH CHI TRỢ CẤP HIẾU HỶ</h3>
-                    <span className="text-[10px] text-slate-400 font-bold">Quản lý quỹ hỗ trợ việc cưới hỏi, phúng viếng nhân thân và ốm đau bệnh tật</span>
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3 flex-wrap gap-3">
+                    <div>
+                      <h3 className="font-heading font-extrabold text-slate-800 text-sm">DANH SÁCH CHI TRỢ CẤP HIẾU HỶ & BIẾN CỐ</h3>
+                      <p className="text-slate-400 text-[10px] font-semibold mt-0.5">Theo dõi quỹ hỗ trợ việc cưới hỏi, sinh con, ốm đau nằm viện và tử tuất của cán bộ nhân viên</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleExportBenefitClaims}
+                        className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 hover:bg-slate-50 text-slate-600 font-bold rounded-lg cursor-pointer text-[10px] transition-all"
+                      >
+                        <Download size={12} /> Xuất báo cáo
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (employees.length > 0) {
+                            setClaimForm(prev => ({ ...prev, employeeId: employees[0].id }));
+                          }
+                          setShowCreateClaimModal(true);
+                        }}
+                        className="flex items-center gap-1 px-3 py-1.5 bg-[#005BAC] hover:bg-blue-700 text-white font-bold rounded-lg cursor-pointer text-[10px] transition-all shadow-md shadow-blue-500/10"
+                      >
+                        <Plus size={12} /> Tạo yêu cầu trợ cấp
+                      </button>
+                    </div>
                   </div>
+                  
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs text-left border-collapse">
                       <thead>
                         <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 font-extrabold uppercase tracking-wider text-[10px]">
                           <th className="py-3 px-3">Nhân viên</th>
-                          <th className="py-3 px-3">Nội dung hiếu/hỷ</th>
-                          <th className="py-3 px-3">Mức hỗ trợ quy định</th>
-                          <th className="py-3 px-3">Ngày chi trả</th>
-                          <th className="py-3 px-3 w-32 text-center">Trạng thái quỹ</th>
+                          <th className="py-3 px-3">Chức vụ & Phòng ban</th>
+                          <th className="py-3 px-3 text-center">Cấp quản lý</th>
+                          <th className="py-3 px-3">Nội dung trợ cấp</th>
+                          <th className="py-3 px-3 text-right">Mức hỗ trợ</th>
+                          <th className="py-3 px-3 text-center">Ngày sự kiện</th>
+                          <th className="py-3 px-3 text-center">Trạng thái</th>
+                          <th className="py-3 px-3 w-16 text-center">Thao tác</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
-                        {filteredFuneralsWeddings.map((fw, idx) => (
-                          <tr key={idx} className="hover:bg-slate-50/50">
-                            <td className="py-3.5 px-3 text-slate-800 font-bold">{fw.name}</td>
-                            <td className="py-3.5 px-3 text-[#005BAC] font-bold">{fw.event}</td>
-                            <td className="py-3.5 px-3 text-emerald-600 font-black">+{fw.amount.toLocaleString("vi-VN")} đ</td>
-                            <td className="py-3.5 px-3">{new Date(fw.date).toLocaleDateString("vi-VN")}</td>
-                            <td className="py-3.5 px-3 text-center">
-                              <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-100 text-emerald-800">{fw.status}</span>
-                            </td>
+                        {filteredBenefitClaims.length === 0 ? (
+                          <tr>
+                            <td colSpan={8} className="py-8 text-center text-slate-400 font-bold italic">Không có bản ghi yêu cầu trợ cấp nào</td>
                           </tr>
-                        ))}
+                        ) : (
+                          filteredBenefitClaims.map((claim) => (
+                            <tr key={claim.id} className="hover:bg-slate-50/50 transition-colors">
+                              <td className="py-3.5 px-3 text-slate-800 font-bold">{claim.name}</td>
+                              <td className="py-3.5 px-3 text-slate-500 font-medium">
+                                <div>{claim.role}</div>
+                                <div className="text-[10px] text-slate-400">{claim.department}</div>
+                              </td>
+                              <td className="py-3.5 px-3 text-center">
+                                <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${
+                                  claim.level === "Điều hành cao cấp" ? "bg-red-50 text-red-700" :
+                                  claim.level === "Quản lý cấp cao" ? "bg-indigo-50 text-indigo-700" :
+                                  claim.level === "Quản lý cấp trung" ? "bg-purple-50 text-purple-700" :
+                                  claim.level === "Quản lý sơ cấp" ? "bg-amber-50 text-amber-700" :
+                                  "bg-slate-50 text-slate-700"
+                                }`}>
+                                  {claim.level}
+                                </span>
+                              </td>
+                              <td className="py-3.5 px-3 text-blue-700 font-bold">{claim.category}</td>
+                              <td className="py-3.5 px-3 text-right text-emerald-600 font-black">
+                                {typeof claim.amount === "number"
+                                  ? `+${claim.amount.toLocaleString("vi-VN")} đ`
+                                  : claim.amount}
+                              </td>
+                              <td className="py-3.5 px-3 text-center font-mono font-medium text-slate-500">
+                                {new Date(claim.date).toLocaleDateString("vi-VN")}
+                              </td>
+                              <td className="py-3.5 px-3 text-center">
+                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                                  claim.status === "Đã chi" || claim.status === "Đã thanh toán"
+                                    ? "bg-emerald-100 text-emerald-800"
+                                    : claim.status === "Đã duyệt"
+                                    ? "bg-blue-100 text-blue-800"
+                                    : claim.status === "Từ chối"
+                                    ? "bg-rose-100 text-rose-800"
+                                    : "bg-amber-100 text-amber-800"
+                                }`}>{claim.status}</span>
+                              </td>
+                              <td className="py-3.5 px-3 text-center">
+                                <button
+                                  onClick={() => handleDeleteClaim(claim.id)}
+                                  className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition-all cursor-pointer inline-block"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
                       </tbody>
                     </table>
                   </div>
                 </div>
               )}
 
+              {/* ─── SUB-TAB 4: TIỀN THƯỞNG LỄ ─── */}
               {activeSubTab === "holiday_bonus" && (
-                <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium space-y-4">
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                    <h3 className="font-heading font-extrabold text-slate-800 text-sm">TIỀN THƯỞNG LỄ QUY ĐỊNH</h3>
-                    <span className="text-[10px] text-slate-400 font-bold">Quản lý quỹ phúc lợi thưởng Tết và các ngày lễ quốc gia lớn trong năm</span>
+                <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium space-y-5">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3 flex-wrap gap-3">
+                    <div className="flex items-center gap-3">
+                      <span className="p-2 bg-emerald-50 text-emerald-600 rounded-xl"><DollarSign size={16} /></span>
+                      <div>
+                        <h3 className="font-heading font-extrabold text-slate-800 text-sm">CHI TIẾT PHÂN BỔ THƯỞNG LỄ THEO THÂM NIÊN</h3>
+                        <p className="text-slate-400 text-[10px] font-semibold">Tự động tính thâm niên và đề xuất 4 mức thưởng (300k/500k/1M/2M) - Cho phép sửa tay trực tiếp</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1 text-[11px] font-bold text-slate-600">
+                        <span>Đợt lễ:</span>
+                        <select
+                          value={selectedHolidayId}
+                          onChange={(e) => setSelectedHolidayId(e.target.value)}
+                          className="px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg outline-none cursor-pointer focus:bg-white text-xs font-semibold text-slate-700"
+                        >
+                          {TNEC_HOLIDAYS.map(h => (
+                            <option key={h.id} value={h.id}>{h.holiday} ({new Date(h.date).getFullYear()})</option>
+                          ))}
+                        </select>
+                      </div>
+                      
+                      <button
+                        onClick={handleApproveAllHolidayBonuses}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg cursor-pointer text-[10px] transition-all shadow-md shadow-emerald-500/10"
+                      >
+                        Phê duyệt hàng loạt
+                      </button>
+                      <button
+                        onClick={() => {
+                          const hol = TNEC_HOLIDAYS.find(h => h.id === selectedHolidayId);
+                          handleExportHolidayBonus(hol?.holiday || "Thuong_Le");
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 hover:bg-slate-50 text-slate-600 font-bold rounded-lg cursor-pointer text-[10px] transition-all"
+                      >
+                        <Download size={12} /> Xuất bảng thưởng
+                      </button>
+                    </div>
                   </div>
+
+                  {/* Summary Bar */}
+                  {(() => {
+                    let totalProposed = 0;
+                    let totalApproved = 0;
+                    holidayFilteredEmployees.forEach(emp => {
+                      const tenureYears = getEmployeeTenureYears(emp);
+                      const proposed = getProposedHolidayBonus(tenureYears);
+                      const approved = holidayBonusAdjustments[emp.id] ?? proposed;
+                      totalProposed += proposed;
+                      totalApproved += approved;
+                    });
+                    
+                    return (
+                       <div className="grid grid-cols-3 gap-4 bg-slate-50/50 p-4 rounded-xl border border-slate-100 text-center">
+                        <div className="space-y-0.5">
+                           <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Tổng nhân sự chi thưởng</div>
+                           <div className="text-base font-black text-slate-800">{holidayFilteredEmployees.length} nhân viên</div>
+                        </div>
+                        <div className="space-y-0.5">
+                          <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Tổng ngân sách thâm niên đề xuất</div>
+                          <div className="text-base font-black text-slate-600">{totalProposed.toLocaleString("vi-VN")} đ</div>
+                        </div>
+                        <div className="space-y-0.5">
+                          <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Tổng ngân sách duyệt thực tế</div>
+                          <div className="text-base font-black text-blue-700">{totalApproved.toLocaleString("vi-VN")} đ</div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Employee Bonuses List */}
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs text-left border-collapse">
                       <thead>
                         <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 font-extrabold uppercase tracking-wider text-[10px]">
-                          <th className="py-3 px-3">Dịp lễ/Tết</th>
-                          <th className="py-3 px-3">Mức thưởng tiêu chuẩn</th>
-                          <th className="py-3 px-3">Tổng ngân sách chi trả</th>
-                          <th className="py-3 px-3">Dự kiến chi trả</th>
-                          <th className="py-3 px-3 w-32 text-center">Trạng thái</th>
+                          <th className="py-3 px-3 w-12 text-center">Stt</th>
+                          <th className="py-3 px-3">Nhân viên</th>
+                          <th className="py-3 px-3">Phòng ban & Chức vụ</th>
+                          <th className="py-3 px-3 text-center">Ngày vào làm</th>
+                          <th className="py-3 px-3 text-center">Giới tính</th>
+                          <th className="py-3 px-3 text-center">Thâm niên</th>
+                          <th className="py-3 px-3 text-right">Mức thưởng đề xuất</th>
+                          <th className="py-3 px-3 text-center w-52">Mức thưởng phê duyệt (Sửa tay)</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
-                        {MOCK_HOLIDAYS.map((h, idx) => (
-                          <tr key={idx} className="hover:bg-slate-50/50">
-                            <td className="py-3.5 px-3 text-slate-800 font-bold">{h.holiday}</td>
-                            <td className="py-3.5 px-3 text-blue-600 font-bold">{h.amount}</td>
-                            <td className="py-3.5 px-3 text-[#005BAC] font-black">{h.budget}</td>
-                            <td className="py-3.5 px-3">{new Date(h.date).toLocaleDateString("vi-VN")}</td>
-                            <td className="py-3.5 px-3 text-center">
-                              <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
-                                h.status === "Đã chi trả" ? "bg-emerald-100 text-emerald-800" : "bg-blue-100 text-blue-800"
-                              }`}>{h.status}</span>
-                            </td>
-                          </tr>
-                        ))}
+                        {holidayFilteredEmployees.map((emp, idx) => {
+                          const level = getEmployeeLevel(emp.role);
+                          const tenureYears = getEmployeeTenureYears(emp);
+                          const tenureStr = getEmployeeTenureStr(emp);
+                          const proposed = getProposedHolidayBonus(tenureYears);
+                          const approved = holidayBonusAdjustments[emp.id] ?? proposed;
+                          
+                          return (
+                            <tr key={emp.id} className="hover:bg-slate-50/50 transition-colors">
+                              <td className="py-3 px-3 text-center text-slate-400">{idx + 1}</td>
+                              <td className="py-3 px-3 text-slate-800 font-bold">{emp.name}</td>
+                              <td className="py-3 px-3 text-slate-500 font-medium">
+                                <div>{emp.role}</div>
+                                <div className="text-[10px] text-slate-400">{emp.department}</div>
+                              </td>
+                              <td className="py-3 px-3 text-center font-mono text-slate-500">
+                                {emp.created_at ? new Date(emp.created_at).toLocaleDateString("vi-VN") : "19/06/2026"}
+                              </td>
+                              <td className="py-3 px-3 text-center text-slate-600 font-medium">
+                                {emp.gender || <span className="text-slate-300">—</span>}
+                              </td>
+                              <td className="py-3 px-3 text-center text-slate-600 font-medium">{tenureStr}</td>
+                              <td className="py-3 px-3 text-right text-slate-500 font-mono">
+                                {proposed.toLocaleString("vi-VN")} đ
+                              </td>
+                              <td className="py-3.5 px-3 text-center">
+                                <div className="flex items-center gap-1.5 justify-center">
+                                  {/* Input nhập tay trực tiếp */}
+                                  <input
+                                    type="number"
+                                    value={approved}
+                                    onChange={(e) => handleUpdateHolidayAdjustment(emp.id, Number(e.target.value) || 0)}
+                                    placeholder="Nhập số tiền..."
+                                    className="w-28 px-2 py-1 border border-slate-200 rounded-lg text-right font-mono font-bold text-blue-700 focus:border-blue-500 outline-none text-xs"
+                                  />
+                                  
+                                  {/* Dropdown để chọn nhanh 4 mức */}
+                                  <select
+                                    value={approved}
+                                    onChange={(e) => handleUpdateHolidayAdjustment(emp.id, Number(e.target.value))}
+                                    className="px-1.5 py-1 border border-slate-200 rounded-lg bg-slate-50 text-[10px] font-bold text-slate-600 outline-none cursor-pointer"
+                                  >
+                                    <option value={300000}>300k</option>
+                                    <option value={500000}>500k</option>
+                                    <option value={1000000}>1M</option>
+                                    <option value={2000000}>2M</option>
+                                    <option value={approved}>Khác</option>
+                                  </select>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
+                  </div>
+                </div>
+              )}
+
+              {/* ─── MODAL TẠO MỚI YÊU CẦU TRỢ CẤP PHÚC LỢI ─── */}
+              {showCreateClaimModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fade-in">
+                  <div className="bg-white w-full max-w-lg rounded-2xl shadow-premium border border-slate-100 overflow-hidden transform transition-all animate-scale-up">
+                    <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-[#005BAC] text-white">
+                      <h3 className="font-heading font-black text-sm flex items-center gap-2">
+                        <Award size={16} /> Tạo yêu cầu chi trợ cấp phúc lợi
+                      </h3>
+                      <button
+                        onClick={() => setShowCreateClaimModal(false)}
+                        className="text-white/80 hover:text-white transition-all cursor-pointer p-1 rounded-lg hover:bg-white/10"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+
+                    <form onSubmit={handleCreateClaim} className="p-6 space-y-4 text-xs font-semibold text-slate-700">
+                      {/* Chọn nhân viên */}
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Chọn cán bộ nhân viên</label>
+                        <select
+                          value={claimForm.employeeId}
+                          onChange={(e) => setClaimForm(prev => ({ ...prev, employeeId: e.target.value }))}
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none transition-all cursor-pointer"
+                        >
+                          <option value="">-- Chọn nhân viên --</option>
+                          {employees.map(e => (
+                            <option key={e.id} value={e.id}>{e.name} - {e.role} ({e.department})</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Thông tin chức vụ và cấp quản lý tự động */}
+                      {claimForm.employeeId && (() => {
+                        const emp = employees.find(e => e.id === claimForm.employeeId);
+                        if (!emp) return null;
+                        const level = getEmployeeLevel(emp.role);
+                        const stdAmount = BENEFIT_POLICY[claimForm.category][level];
+                        
+                        return (
+                          <div className="grid grid-cols-2 gap-3 p-3.5 bg-slate-50 border border-slate-150 rounded-xl">
+                            <div>
+                              <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Cấp quản lý nhận diện:</div>
+                              <div className="text-xs font-black text-slate-800 mt-0.5">{level}</div>
+                            </div>
+                            <div>
+                              <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Mức hỗ trợ quy định:</div>
+                              <div className="text-xs font-black text-emerald-600 mt-0.5">
+                                {typeof stdAmount === "number" ? `${stdAmount.toLocaleString("vi-VN")} đ` : stdAmount}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      {/* Loại trợ cấp & Ngày sự kiện */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Loại trợ cấp</label>
+                          <select
+                            value={claimForm.category}
+                            onChange={(e) => setClaimForm(prev => ({ ...prev, category: e.target.value as any }))}
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none transition-all cursor-pointer"
+                          >
+                            <option value="Sinh nhật">Sinh nhật</option>
+                            <option value="Kết hôn">Kết hôn</option>
+                            <option value="Sinh con">Sinh con</option>
+                            <option value="Ốm đau">Ốm đau</option>
+                            <option value="Tử tuất">Tử tuất</option>
+                          </select>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Ngày xảy ra sự kiện</label>
+                          <input
+                            type="date"
+                            value={claimForm.date}
+                            onChange={(e) => setClaimForm(prev => ({ ...prev, date: e.target.value }))}
+                            required
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none transition-all"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Số tiền tùy chỉnh & Trạng thái */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Số tiền tùy chỉnh (nếu có)</label>
+                          <input
+                            type="text"
+                            value={claimForm.customAmount}
+                            onChange={(e) => setClaimForm(prev => ({ ...prev, customAmount: e.target.value }))}
+                            placeholder="Nhập số tiền khác nếu có..."
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none transition-all"
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Trạng thái phê duyệt</label>
+                          <select
+                            value={claimForm.status}
+                            onChange={(e) => setClaimForm(prev => ({ ...prev, status: e.target.value }))}
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none transition-all cursor-pointer"
+                          >
+                            <option value="Chờ phê duyệt">Chờ phê duyệt</option>
+                            <option value="Đã duyệt">Đã duyệt (Chờ chi)</option>
+                            <option value="Đã chi">Đã chi trả hoàn tất</option>
+                            <option value="Từ chối">Từ chối chi</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Ghi chú */}
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Ghi chú sự vụ</label>
+                        <textarea
+                          value={claimForm.notes}
+                          onChange={(e) => setClaimForm(prev => ({ ...prev, notes: e.target.value }))}
+                          rows={2}
+                          placeholder="Mô tả cụ thể sự việc (ví dụ: Nằm viện 3 ngày, Kết hôn nhân sự, ...)"
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none transition-all resize-none"
+                        />
+                      </div>
+
+                      <div className="flex justify-end gap-2 pt-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowCreateClaimModal(false)}
+                          className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 font-bold rounded-xl active:scale-95 transition-all cursor-pointer"
+                        >
+                          Hủy bỏ
+                        </button>
+                        <button
+                          type="submit"
+                          className="px-5 py-2 bg-[#005BAC] hover:bg-blue-700 text-white font-bold rounded-xl active:scale-95 transition-all cursor-pointer shadow-premium"
+                        >
+                          Lưu yêu cầu
+                        </button>
+                      </div>
+                    </form>
                   </div>
                 </div>
               )}

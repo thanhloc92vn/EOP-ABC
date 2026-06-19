@@ -530,11 +530,17 @@ export default function EmployeeManagementPage() {
       setEmployees(prev => prev.map(emp => emp.id === id ? { ...emp, [field]: value } : emp));
 
       // Map field name to database column name
-      const dbField = field === "position" ? "role" : field;
+      let dbField = field === "position" ? "role" : field;
+      let dbValue: any = value;
+
+      if (field === "start") {
+        dbField = "created_at";
+        dbValue = value ? new Date(value).toISOString() : null;
+      }
 
       const { error } = await supabase
         .from("employees")
-        .update({ [dbField]: value })
+        .update({ [dbField]: dbValue })
         .eq("id", id);
 
       if (error) throw error;
@@ -748,10 +754,22 @@ export default function EmployeeManagementPage() {
                         <td className="px-4 py-3 text-xs text-slate-500 font-medium">{emp.gender || <span className="text-slate-300">—</span>}</td>
 
                         {/* Ngày nhận việc */}
-                        <td className="px-4 py-3 text-xs text-slate-500 font-medium whitespace-nowrap">{emp.start}</td>
+                        <td className="px-4 py-1 text-xs text-slate-500 font-medium whitespace-nowrap">
+                          <EditableDateCell
+                            value={emp.start}
+                            onSave={(val) => handleUpdateEmployeeField(emp.id, "start", val)}
+                            readOnly={!canEdit}
+                          />
+                        </td>
 
                         {/* Ngày sinh */}
-                        <td className="px-4 py-3 text-xs text-slate-500 font-medium whitespace-nowrap">{emp.date_of_birth || <span className="text-slate-300">—</span>}</td>
+                        <td className="px-4 py-1 text-xs text-slate-500 font-medium whitespace-nowrap">
+                          <EditableDateCell
+                            value={emp.date_of_birth}
+                            onSave={(val) => handleUpdateEmployeeField(emp.id, "date_of_birth", val)}
+                            readOnly={!canEdit}
+                          />
+                        </td>
 
                         {/* Số ĐT */}
                         <td className="px-4 py-1 text-xs text-slate-500 font-medium whitespace-nowrap">
@@ -1035,8 +1053,8 @@ export default function EmployeeManagementPage() {
                         </td>
                         <td className="py-3 px-3 text-slate-500 font-medium">{emp.position}</td>
                         <td className="py-3 px-3 text-slate-500">{emp.gender || "—"}</td>
-                        <td className="py-3 px-3 font-mono text-[10px]">{emp.start || "—"}</td>
-                        <td className="py-3 px-3 font-mono text-[10px]">{emp.date_of_birth || "—"}</td>
+                        <td className="py-3 px-3 font-mono text-[10px]">{formatDateDisplay(emp.start) || "—"}</td>
+                        <td className="py-3 px-3 font-mono text-[10px]">{formatDateDisplay(emp.date_of_birth) || "—"}</td>
                         <td className="py-3 px-3 text-slate-500 whitespace-nowrap">{emp.phone || "—"}</td>
                         <td className="py-3 px-3 text-slate-500 font-mono text-[10px]">{emp.cccd || "—"}</td>
                         <td className="py-3 px-3 text-slate-500">{emp.degree || "—"}</td>
@@ -1164,6 +1182,80 @@ export default function EmployeeManagementPage() {
         </div>
       )}
     </div>
+  );
+}
+
+const formatDateDisplay = (dateStr?: string) => {
+  if (!dateStr) return "";
+  const parts = dateStr.split("T")[0].split("-");
+  if (parts.length === 3 && parts[0].length === 4) {
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+  return dateStr;
+};
+
+interface EditableDateCellProps {
+  value: string;
+  onSave: (value: string) => void;
+  readOnly?: boolean;
+}
+
+function EditableDateCell({ value, onSave, readOnly = false }: EditableDateCellProps) {
+  const [val, setVal] = useState(value);
+  const [isEditing, setIsEditing] = useState(false);
+
+  useEffect(() => {
+    const formattedVal = value ? value.split("T")[0] : "";
+    setVal(formattedVal);
+  }, [value]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setVal(e.target.value);
+  };
+
+  const handleBlur = () => {
+    setIsEditing(false);
+    const originalVal = value ? value.split("T")[0] : "";
+    if (val !== originalVal) {
+      onSave(val);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.currentTarget.blur();
+    }
+  };
+
+  if (readOnly) {
+    return (
+      <span className="text-xs text-slate-600 block w-full whitespace-nowrap overflow-hidden text-ellipsis px-2 py-1">
+        {formatDateDisplay(value) || <span className="text-slate-300">—</span>}
+      </span>
+    );
+  }
+
+  if (!isEditing) {
+    return (
+      <div
+        onClick={() => setIsEditing(true)}
+        className="w-full cursor-pointer px-2 py-1 border border-transparent hover:bg-slate-100/50 hover:border-slate-200 rounded-lg transition-all text-xs font-semibold text-slate-700 block whitespace-nowrap overflow-hidden text-ellipsis min-h-[24px]"
+      >
+        {formatDateDisplay(value) || <span className="text-slate-300">—</span>}
+      </div>
+    );
+  }
+
+  return (
+    <input
+      type="date"
+      value={val || ""}
+      onChange={handleChange}
+      onBlur={handleBlur}
+      onKeyDown={handleKeyDown}
+      autoFocus
+      className="w-full bg-white px-1.5 py-1 outline-none border border-blue-500 rounded-lg text-xs font-semibold text-slate-700 shadow-sm"
+    />
   );
 }
 
