@@ -3000,7 +3000,8 @@ export default function AdministrationPage() {
             amount: Number(row.amount),
             content: row.description || "",
             month: monthStr,
-            fileUrl: row.file_url || ""
+            fileUrl: row.file_url || "",
+            project_name: row.project_name || ""
           };
         });
         setPendingPayments(mappedPayments);
