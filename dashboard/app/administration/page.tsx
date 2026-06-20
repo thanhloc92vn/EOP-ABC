@@ -1690,7 +1690,7 @@ export default function AdministrationPage() {
     };
 
     const officeMonthlySubtotals = getMonthlySubtotals(officeRows);
-    const projectMonthlySubtotals = getMonthlySubtotals(projectRows);
+    const projectMonthlySubtotals = getMonthlySubtotals(projectRows.filter(r => !r.stt.includes(".")));
 
     const officeAnnualSubtotal = Object.values(officeMonthlySubtotals).reduce((a, b) => a + b, 0);
     const projectAnnualSubtotal = Object.values(projectMonthlySubtotals).reduce((a, b) => a + b, 0);
@@ -1969,6 +1969,11 @@ export default function AdministrationPage() {
         m7: number; m8: number; m9: number; m10: number; m11: number; m12: number;
       }> = {};
 
+      const projectGroups: Record<string, Record<string, {
+        m1: number; m2: number; m3: number; m4: number; m5: number; m6: number;
+        m7: number; m8: number; m9: number; m10: number; m11: number; m12: number;
+      }>> = {};
+
       unpackedItems.forEach(item => {
         if (!item.date) return;
         // Check 2026
@@ -1985,23 +1990,65 @@ export default function AdministrationPage() {
         if (monthNum < 1 || monthNum > 12) return;
 
         const projName = getStandardProjectName(item.project_name, item.desc, item.supplier);
-        const categoryType = projName ? "project" : "office";
-        const contentName = projName ? `${cleanInvoiceDesc(item.desc)} - ${projName}` : cleanInvoiceDesc(item.desc);
-        const key = `${categoryType}::${contentName}`;
-
-        if (!groups[key]) {
-          groups[key] = {
-            content: contentName,
-            category_type: categoryType,
-            m1: 0, m2: 0, m3: 0, m4: 0, m5: 0, m6: 0, m7: 0, m8: 0, m9: 0, m10: 0, m11: 0, m12: 0
-          };
+        
+        if (projName) {
+          // Project expense
+          const cleanDesc = cleanInvoiceDesc(item.desc);
+          if (!projectGroups[projName]) {
+            projectGroups[projName] = {};
+          }
+          if (!projectGroups[projName][cleanDesc]) {
+            projectGroups[projName][cleanDesc] = {
+              m1: 0, m2: 0, m3: 0, m4: 0, m5: 0, m6: 0, m7: 0, m8: 0, m9: 0, m10: 0, m11: 0, m12: 0
+            };
+          }
+          const mKey = `m${monthNum}` as "m1" | "m2" | "m3" | "m4" | "m5" | "m6" | "m7" | "m8" | "m9" | "m10" | "m11" | "m12";
+          projectGroups[projName][cleanDesc][mKey] += item.amount;
+        } else {
+          // Office expense
+          const contentName = cleanInvoiceDesc(item.desc);
+          const key = `office::${contentName}`;
+          if (!groups[key]) {
+            groups[key] = {
+              content: contentName,
+              category_type: "office",
+              m1: 0, m2: 0, m3: 0, m4: 0, m5: 0, m6: 0, m7: 0, m8: 0, m9: 0, m10: 0, m11: 0, m12: 0
+            };
+          }
+          const mKey = `m${monthNum}` as "m1" | "m2" | "m3" | "m4" | "m5" | "m6" | "m7" | "m8" | "m9" | "m10" | "m11" | "m12";
+          groups[key][mKey] += item.amount;
         }
-        const mKey = `m${monthNum}` as "m1" | "m2" | "m3" | "m4" | "m5" | "m6" | "m7" | "m8" | "m9" | "m10" | "m11" | "m12";
-        groups[key][mKey] += item.amount;
+      });
+
+      // Populate project parents and children into groups
+      Object.keys(projectGroups).forEach(projName => {
+        const parentKey = `project::${projName}`;
+        groups[parentKey] = {
+          content: projName,
+          category_type: "project",
+          m1: 0, m2: 0, m3: 0, m4: 0, m5: 0, m6: 0, m7: 0, m8: 0, m9: 0, m10: 0, m11: 0, m12: 0
+        };
+
+        Object.keys(projectGroups[projName]).forEach(cleanDesc => {
+          const childKey = `project::${cleanDesc} - ${projName}`;
+          const childM = projectGroups[projName][cleanDesc];
+          
+          groups[childKey] = {
+            content: `${cleanDesc} - ${projName}`,
+            category_type: "project",
+            ...childM
+          };
+
+          // Sum up to parent
+          for (let i = 1; i <= 12; i++) {
+            const mKey = `m${i}` as "m1" | "m2" | "m3" | "m4" | "m5" | "m6" | "m7" | "m8" | "m9" | "m10" | "m11" | "m12";
+            groups[parentKey][mKey] += childM[mKey];
+          }
+        });
       });
 
       // 4. Merge with existing reportRows (preserving user custom edits & notes)
-      const finalRows: AdminMonthlyReport[] = [];
+      let finalRows: AdminMonthlyReport[] = [];
       const usedIds = new Set<string>();
 
       // Load latest report rows from DB first to get fresh state
@@ -2061,7 +2108,40 @@ export default function AdministrationPage() {
       officeRows.forEach((r, idx) => { r.stt = String(idx + 1); });
 
       const projectRows = finalRows.filter(r => r.category_type === "project");
-      projectRows.forEach((r, idx) => { r.stt = String(idx + 1); });
+      
+      const parents = projectRows.filter(r => !r.content.includes(" - BĐH "));
+      const children = projectRows.filter(r => r.content.includes(" - BĐH "));
+      
+      const sortedProjectRows: AdminMonthlyReport[] = [];
+      let parentIdx = 1;
+      
+      parents.forEach(p => {
+        p.stt = String(parentIdx);
+        sortedProjectRows.push(p);
+        
+        const parentProjSuffix = ` - ${p.content}`;
+        const pChildren = children.filter(c => c.content.endsWith(parentProjSuffix));
+        
+        pChildren.forEach((c, cIdx) => {
+          c.stt = `${parentIdx}.${cIdx + 1}`;
+          sortedProjectRows.push(c);
+        });
+        
+        parentIdx++;
+      });
+      
+      const addedIds = new Set(sortedProjectRows.map(r => r.id));
+      projectRows.forEach(r => {
+        if (!addedIds.has(r.id)) {
+          r.stt = String(parentIdx++);
+          sortedProjectRows.push(r);
+        }
+      });
+
+      finalRows = [
+        ...officeRows,
+        ...sortedProjectRows
+      ];
 
       // 5. Sync updates, inserts, and deletes back to Supabase
       const toUpdate = finalRows.filter(r => !r.id.startsWith("new-"));
@@ -2138,8 +2218,21 @@ export default function AdministrationPage() {
         csvContent += `"II","Danh mục chi phí Dự án","${computedStats.projectAnnualSubtotal}","${computedStats.projectMonthlySubtotals.m1}","${computedStats.projectMonthlySubtotals.m2}","${computedStats.projectMonthlySubtotals.m3}","${computedStats.projectMonthlySubtotals.m4}","${computedStats.projectMonthlySubtotals.m5}","${computedStats.projectMonthlySubtotals.m6}","${computedStats.projectMonthlySubtotals.m7}","${computedStats.projectMonthlySubtotals.m8}","${computedStats.projectMonthlySubtotals.m9}","${computedStats.projectMonthlySubtotals.m10}","${computedStats.projectMonthlySubtotals.m11}","${computedStats.projectMonthlySubtotals.m12}",""\n`;
         
         computedStats.projectRows.forEach(row => {
+          const isChild = row.stt.includes(".");
+          let displayContent = row.content;
+          if (isChild && row.category_type === "project") {
+            const parts = displayContent.split(" - BĐH dự án ");
+            if (parts.length > 1) {
+              displayContent = parts[0];
+            } else {
+              const partsAlt = displayContent.split(" - BĐH ");
+              if (partsAlt.length > 1) {
+                displayContent = partsAlt[0];
+              }
+            }
+          }
           const rowTotal = Array.from({ length: 12 }, (_, idx) => Number(row[`m${idx + 1}` as keyof typeof row]) || 0).reduce((a, b) => a + b, 0);
-          csvContent += `"${row.stt}","${row.content.replace(/"/g, '""')}","${rowTotal}","${row.m1}","${row.m2}","${row.m3}","${row.m4}","${row.m5}","${row.m6}","${row.m7}","${row.m8}","${row.m9}","${row.m10}","${row.m11}","${row.m12}","${(row.notes || "").replace(/"/g, '""')}"\n`;
+          csvContent += `"${row.stt}","${displayContent.replace(/"/g, '""')}","${rowTotal}","${row.m1}","${row.m2}","${row.m3}","${row.m4}","${row.m5}","${row.m6}","${row.m7}","${row.m8}","${row.m9}","${row.m10}","${row.m11}","${row.m12}","${(row.notes || "").replace(/"/g, '""')}"\n`;
         });
         
         csvContent += `"","TỔNG CỘNG CPQL PHÁT SINH","${computedStats.grandAnnualTotal}","${computedStats.grandMonthlyTotals.m1}","${computedStats.grandMonthlyTotals.m2}","${computedStats.grandMonthlyTotals.m3}","${computedStats.grandMonthlyTotals.m4}","${computedStats.grandMonthlyTotals.m5}","${computedStats.grandMonthlyTotals.m6}","${computedStats.grandMonthlyTotals.m7}","${computedStats.grandMonthlyTotals.m8}","${computedStats.grandMonthlyTotals.m9}","${computedStats.grandMonthlyTotals.m10}","${computedStats.grandMonthlyTotals.m11}","${computedStats.grandMonthlyTotals.m12}",""\n`;
@@ -6191,13 +6284,26 @@ export default function AdministrationPage() {
                   const rowTotal = Array.from({ length: 12 }, (_, idx) => Number(row[`m${idx + 1}` as keyof typeof row]) || 0).reduce((a, b) => a + b, 0);
                   const isChild = row.stt.includes(".");
                   
+                  let displayContent = row.content;
+                  if (isChild && row.category_type === "project") {
+                    const parts = displayContent.split(" - BĐH dự án ");
+                    if (parts.length > 1) {
+                      displayContent = parts[0];
+                    } else {
+                      const partsAlt = displayContent.split(" - BĐH ");
+                      if (partsAlt.length > 1) {
+                        displayContent = partsAlt[0];
+                      }
+                    }
+                  }
+                  
                   return (
                     <tr key={row.id} className="hover:bg-slate-50/50 transition-colors border-b border-slate-100">
                       <td className="py-2 px-3 text-center text-slate-400 sticky left-0 bg-white z-10 border-r border-slate-200 font-mono text-[10px]">
                         {row.is_custom ? renderEditableCell(row, "stt", row.stt, "text") : row.stt}
                       </td>
                       <td className={`py-2 px-3 sticky left-[60px] bg-white z-10 border-r border-slate-200 text-[11px] max-w-[280px] truncate ${isChild ? "pl-6 text-slate-500 font-medium" : "text-slate-800 font-bold"}`}>
-                        {row.is_custom ? renderEditableCell(row, "content", row.content, "text") : row.content}
+                        {row.is_custom ? renderEditableCell(row, "content", row.content, "text") : displayContent}
                       </td>
                       <td className="py-2 px-3 text-right bg-slate-50/40 border-r border-slate-200 font-mono text-slate-800 font-extrabold text-[11px]">
                         {rowTotal > 0 ? rowTotal.toLocaleString("vi-VN") : "-"}

@@ -155,6 +155,7 @@ async function main() {
   };
 
   const groups = {};
+  const projectGroups = {};
 
   unpackedItems.forEach(item => {
     if (!item.date) return;
@@ -168,18 +169,56 @@ async function main() {
     if (monthNum < 1 || monthNum > 12) return;
 
     const projName = getStandardProjectName(item.project_name, item.desc, item.supplier);
-    const categoryType = projName ? "project" : "office";
-    const contentName = projName ? `${cleanInvoiceDesc(item.desc)} - ${projName}` : cleanInvoiceDesc(item.desc);
-    const key = `${categoryType}::${contentName}`;
-
-    if (!groups[key]) {
-      groups[key] = {
-        content: contentName,
-        category_type: categoryType,
-        m1: 0, m2: 0, m3: 0, m4: 0, m5: 0, m6: 0, m7: 0, m8: 0, m9: 0, m10: 0, m11: 0, m12: 0
-      };
+    
+    if (projName) {
+      const cleanDesc = cleanInvoiceDesc(item.desc);
+      if (!projectGroups[projName]) {
+        projectGroups[projName] = {};
+      }
+      if (!projectGroups[projName][cleanDesc]) {
+        projectGroups[projName][cleanDesc] = {
+          m1: 0, m2: 0, m3: 0, m4: 0, m5: 0, m6: 0, m7: 0, m8: 0, m9: 0, m10: 0, m11: 0, m12: 0
+        };
+      }
+      projectGroups[projName][cleanDesc][`m${monthNum}`] += item.amount;
+    } else {
+      const contentName = cleanInvoiceDesc(item.desc);
+      const key = `office::${contentName}`;
+      if (!groups[key]) {
+        groups[key] = {
+          content: contentName,
+          category_type: "office",
+          m1: 0, m2: 0, m3: 0, m4: 0, m5: 0, m6: 0, m7: 0, m8: 0, m9: 0, m10: 0, m11: 0, m12: 0
+        };
+      }
+      groups[key][`m${monthNum}`] += item.amount;
     }
-    groups[key][`m${monthNum}`] += item.amount;
+  });
+
+  // Populate project parents and children into groups
+  Object.keys(projectGroups).forEach(projName => {
+    const parentKey = `project::${projName}`;
+    groups[parentKey] = {
+      content: projName,
+      category_type: "project",
+      m1: 0, m2: 0, m3: 0, m4: 0, m5: 0, m6: 0, m7: 0, m8: 0, m9: 0, m10: 0, m11: 0, m12: 0
+    };
+
+    Object.keys(projectGroups[projName]).forEach(cleanDesc => {
+      const childKey = `project::${cleanDesc} - ${projName}`;
+      const childM = projectGroups[projName][cleanDesc];
+      
+      groups[childKey] = {
+        content: `${cleanDesc} - ${projName}`,
+        category_type: "project",
+        ...childM
+      };
+
+      // Sum up to parent
+      for (let i = 1; i <= 12; i++) {
+        groups[parentKey][`m${i}`] += childM[`m${i}`];
+      }
+    });
   });
 
   console.log("\nMerging and syncing with admin_monthly_reports table...");
@@ -187,7 +226,7 @@ async function main() {
   if (fetchErr) throw fetchErr;
 
   const currentDbRows = dbRows || [];
-  const finalRows = [];
+  let finalRows = [];
   const usedIds = new Set();
 
   Object.values(groups).forEach(g => {
@@ -232,7 +271,39 @@ async function main() {
   officeRows.forEach((r, idx) => { r.stt = String(idx + 1); });
 
   const projectRows = finalRows.filter(r => r.category_type === "project");
-  projectRows.forEach((r, idx) => { r.stt = String(idx + 1); });
+  const parents = projectRows.filter(r => !r.content.includes(" - BĐH "));
+  const children = projectRows.filter(r => r.content.includes(" - BĐH "));
+  
+  const sortedProjectRows = [];
+  let parentIdx = 1;
+  
+  parents.forEach(p => {
+    p.stt = String(parentIdx);
+    sortedProjectRows.push(p);
+    
+    const parentProjSuffix = ` - ${p.content}`;
+    const pChildren = children.filter(c => c.content.endsWith(parentProjSuffix));
+    
+    pChildren.forEach((c, cIdx) => {
+      c.stt = `${parentIdx}.${cIdx + 1}`;
+      sortedProjectRows.push(c);
+    });
+    
+    parentIdx++;
+  });
+  
+  const addedIds = new Set(sortedProjectRows.map(r => r.id));
+  projectRows.forEach(r => {
+    if (!addedIds.has(r.id)) {
+      r.stt = String(parentIdx++);
+      sortedProjectRows.push(r);
+    }
+  });
+
+  finalRows = [
+    ...officeRows,
+    ...sortedProjectRows
+  ];
 
   const toUpdate = finalRows.filter(r => !r.id.startsWith("new-"));
   const toInsert = finalRows.filter(r => r.id.startsWith("new-"));
