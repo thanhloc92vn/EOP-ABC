@@ -169,7 +169,7 @@ async function main() {
 
     const projName = getStandardProjectName(item.project_name, item.desc, item.supplier);
     const categoryType = projName ? "project" : "office";
-    const contentName = projName || cleanInvoiceDesc(item.desc);
+    const contentName = projName ? `${cleanInvoiceDesc(item.desc)} - ${projName}` : cleanInvoiceDesc(item.desc);
     const key = `${categoryType}::${contentName}`;
 
     if (!groups[key]) {
