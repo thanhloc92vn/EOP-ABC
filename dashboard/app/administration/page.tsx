@@ -93,6 +93,7 @@ interface Invoice {
   beneficiary_name?: string;
   bank_account?: string;
   bank_name_branch?: string;
+  project_name?: string;
 }
 
 interface RecurringPayment {
@@ -1258,7 +1259,8 @@ export default function AdministrationPage() {
           file_url: data[0].file_url || "",
           beneficiary_name: data[0].beneficiary_name || "",
           bank_account: data[0].bank_account || "",
-          bank_name_branch: data[0].bank_name_branch || ""
+          bank_name_branch: data[0].bank_name_branch || "",
+          project_name: data[0].project_name || ""
         };
         addedInv = savedInv;
         setInvoices(prev => [savedInv, ...prev]);
@@ -1275,7 +1277,8 @@ export default function AdministrationPage() {
         amount: Number(payAmount),
         beneficiary_name: supp.name,
         bank_account: supp.account,
-        bank_name_branch: supp.bank
+        bank_name_branch: supp.bank,
+        project_name: supp.project_name || "Văn phòng HCM"
       };
       addedInv = newInv;
       setInvoices(prev => [newInv, ...prev]);
@@ -1835,6 +1838,7 @@ export default function AdministrationPage() {
         desc: string;
         amount: number;
         supplier: string;
+        project_name?: string;
       }> = [];
 
       activeInvoices.filter(inv => !inv.number?.startsWith("HD-DK-")).forEach(inv => {
@@ -1848,7 +1852,8 @@ export default function AdministrationPage() {
                 date: item.date || inv.date || "",
                 desc: item.desc || "",
                 amount: Number(item.amount) || 0,
-                supplier: inv.beneficiary_name || ""
+                supplier: inv.beneficiary_name || "",
+                project_name: inv.project_name || (item as any).project_name
               });
             });
           } catch (e) {
@@ -1856,7 +1861,8 @@ export default function AdministrationPage() {
               date: inv.date || "",
               desc: desc,
               amount: Number(inv.amount) || 0,
-              supplier: inv.beneficiary_name || ""
+              supplier: inv.beneficiary_name || "",
+              project_name: inv.project_name
             });
           }
         } else {
@@ -1864,7 +1870,8 @@ export default function AdministrationPage() {
             date: inv.date || "",
             desc: desc,
             amount: Number(inv.amount) || 0,
-            supplier: inv.beneficiary_name || ""
+            supplier: inv.beneficiary_name || "",
+            project_name: inv.project_name
           });
         }
       });
@@ -1883,7 +1890,8 @@ export default function AdministrationPage() {
           date: dateStr,
           desc: p.content || "",
           amount: Number(p.amount) || 0,
-          supplier: p.supplierName || ""
+          supplier: p.supplierName || "",
+          project_name: p.project_name
         });
       });
 
@@ -1929,6 +1937,30 @@ export default function AdministrationPage() {
         return null;
       };
 
+      const getStandardProjectName = (projName: string | undefined, description: string, supplier: string) => {
+        const name = (projName || "").trim();
+        if (name) {
+          const lowerNormalized = name.toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/[đĐ]/g, "d");
+          
+          if (lowerNormalized === "van phong hcm") {
+            return null;
+          }
+          
+          if (lowerNormalized.includes("vam leo")) return "BĐH dự án Vàm Lẽo";
+          if (lowerNormalized.includes("tinh lo 8")) return "BĐH dự án Tỉnh Lộ 8";
+          if (lowerNormalized.includes("rach xuyen tam")) return "BĐH dự án Rạch Xuyên Tâm";
+          if (lowerNormalized.includes("tay ninh")) return "BĐH dự án Tây Ninh";
+          if (lowerNormalized.includes("ca na")) return "BĐH dự án Cà Ná";
+          if (lowerNormalized.includes("tra vinh")) return "BĐH dự án Trà Vinh";
+          if (name.startsWith("BĐH ")) return name;
+          return `BĐH dự án ${name}`;
+        }
+        return getProjectName(description, supplier);
+      };
+
       // 3. Group and compute monthly totals
       const groups: Record<string, {
         content: string;
@@ -1952,7 +1984,7 @@ export default function AdministrationPage() {
         }
         if (monthNum < 1 || monthNum > 12) return;
 
-        const projName = getProjectName(item.desc, item.supplier);
+        const projName = getStandardProjectName(item.project_name, item.desc, item.supplier);
         const categoryType = projName ? "project" : "office";
         const contentName = projName || cleanInvoiceDesc(item.desc);
         const key = `${categoryType}::${contentName}`;
@@ -2975,7 +3007,8 @@ export default function AdministrationPage() {
           file_url: row.file_url || "",
           beneficiary_name: row.beneficiary_name || "",
           bank_account: row.bank_account || "",
-          bank_name_branch: row.bank_name_branch || ""
+          bank_name_branch: row.bank_name_branch || "",
+          project_name: row.project_name || ""
         }));
         setInvoices(loadedInvs);
 
@@ -3051,7 +3084,8 @@ export default function AdministrationPage() {
         file_url: combinedFileUrls,
         beneficiary_name: supplierName || firstItem.beneficiaryName || "",
         bank_account: bankAccount || firstItem.bankAccount || "",
-        bank_name_branch: bankNameBranch || firstItem.bankNameBranch || ""
+        bank_name_branch: bankNameBranch || firstItem.bankNameBranch || "",
+        project_name: projectName || "Văn phòng HCM"
       }];
 
       const { data, error } = await supabase
@@ -3097,7 +3131,8 @@ export default function AdministrationPage() {
         file_url: combinedFileUrls,
         beneficiary_name: supplierName || firstItem.beneficiaryName || "",
         bank_account: bankAccount || firstItem.bankAccount || "",
-        bank_name_branch: bankNameBranch || firstItem.bankNameBranch || ""
+        bank_name_branch: bankNameBranch || firstItem.bankNameBranch || "",
+        project_name: projectName || "Văn phòng HCM"
       }];
 
       const updatedInvs = [...newInvs, ...invoices];
@@ -5467,19 +5502,19 @@ export default function AdministrationPage() {
                                   />
                                 </div>
 
+                                <div className="space-y-1">
+                                  <label className="text-[9px] font-bold text-slate-400 uppercase">Tên dự án</label>
+                                  <input
+                                    type="text"
+                                    value={projectName}
+                                    onChange={(e) => setProjectName(e.target.value)}
+                                    placeholder="Ví dụ: Văn phòng HCM"
+                                    className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 bg-white outline-none focus:ring-1 focus:ring-blue-500/30"
+                                  />
+                                </div>
+
                                 {documentType === "transfer" && (
                                   <>
-                                    <div className="space-y-1">
-                                      <label className="text-[9px] font-bold text-slate-400 uppercase">Tên dự án</label>
-                                      <input
-                                        type="text"
-                                        value={projectName}
-                                        onChange={(e) => setProjectName(e.target.value)}
-                                        placeholder="Ví dụ: Văn phòng HCM"
-                                        className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 bg-white outline-none focus:ring-1 focus:ring-blue-500/30"
-                                      />
-                                    </div>
-
                                     <div className="space-y-1">
                                       <label className="text-[9px] font-bold text-slate-400 uppercase">Tên đơn vị thụ hưởng (Nhà cung cấp)</label>
                                       <input
