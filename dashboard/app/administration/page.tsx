@@ -364,6 +364,7 @@ export default function AdministrationPage() {
   const [autoFillLoading, setAutoFillLoading] = useState(false);
   const [editingCell, setEditingCell] = useState<{ rowId: string; field: string } | null>(null);
   const [editingInvoiceNumberId, setEditingInvoiceNumberId] = useState<string | null>(null);
+  const [isExportingReport, setIsExportingReport] = useState(false);
 
   // State Management
   const [supplies, setSupplies] = useState<SupplyItem[]>(() => {
@@ -1513,6 +1514,16 @@ export default function AdministrationPage() {
     const invoiceCount = filteredInvoices.length;
     const recurringCount = filteredPayments.length;
 
+    const officeInvoices = filteredInvoices.filter(inv => !inv.project_name || inv.project_name === "Văn phòng HCM");
+    const officePayments = filteredPayments.filter(p => !p.project_name || p.project_name === "Văn phòng HCM");
+    const officeTotalSum = officeInvoices.reduce((sum, item) => sum + (item.amount || 0), 0) + 
+                           officePayments.reduce((sum, item) => sum + (item.amount || 0), 0);
+
+    const projectInvoices = filteredInvoices.filter(inv => inv.project_name && inv.project_name !== "Văn phòng HCM");
+    const projectPayments = filteredPayments.filter(p => p.project_name && p.project_name !== "Văn phòng HCM");
+    const projectTotalSum = projectInvoices.reduce((sum, item) => sum + (item.amount || 0), 0) + 
+                            projectPayments.reduce((sum, item) => sum + (item.amount || 0), 0);
+
     const categoriesMap: Record<string, number> = {
       "Văn phòng phẩm": 0,
       "Điện nước văn phòng": 0,
@@ -1535,6 +1546,8 @@ export default function AdministrationPage() {
       totalAmount,
       invoiceCount,
       recurringCount,
+      officeTotalSum,
+      projectTotalSum,
       categoriesMap
     };
   };
@@ -2219,54 +2232,53 @@ export default function AdministrationPage() {
     }
   };
 
-  const handleExportReportExcel = (startDate?: string, endDate?: string) => {
+  const handleExportReportExcel = async (startDate?: string, endDate?: string) => {
     try {
       if (!startDate || !endDate) {
-        let csvContent = "\uFEFF";
-        
-        csvContent += `"BẢNG TỔNG HỢP CHI PHÍ QUẢN LÝ HÀNH CHÍNH NĂM 2026 - TRUNGNAM E&C"\n`;
-        csvContent += `"Ngày xuất báo cáo:","${new Date().toLocaleDateString("vi-VN")}"\n\n`;
-        
-        csvContent += `"STT","Nội dung","Tổng CP 2026","Tháng 1","Tháng 2","Tháng 3","Tháng 4","Tháng 5","Tháng 6","Tháng 7","Tháng 8","Tháng 9","Tháng 10","Tháng 11","Tháng 12","Ghi chú"\n`;
-        
-        csvContent += `"I","Danh mục chi phí Văn phòng","${computedStats.officeAnnualSubtotal}","${computedStats.officeMonthlySubtotals.m1}","${computedStats.officeMonthlySubtotals.m2}","${computedStats.officeMonthlySubtotals.m3}","${computedStats.officeMonthlySubtotals.m4}","${computedStats.officeMonthlySubtotals.m5}","${computedStats.officeMonthlySubtotals.m6}","${computedStats.officeMonthlySubtotals.m7}","${computedStats.officeMonthlySubtotals.m8}","${computedStats.officeMonthlySubtotals.m9}","${computedStats.officeMonthlySubtotals.m10}","${computedStats.officeMonthlySubtotals.m11}","${computedStats.officeMonthlySubtotals.m12}",""\n`;
-        
-        computedStats.officeRows.forEach(row => {
-          const rowTotal = Array.from({ length: 12 }, (_, idx) => Number(row[`m${idx + 1}` as keyof typeof row]) || 0).reduce((a, b) => a + b, 0);
-          csvContent += `"${row.stt}","${row.content.replace(/"/g, '""')}","${rowTotal}","${row.m1}","${row.m2}","${row.m3}","${row.m4}","${row.m5}","${row.m6}","${row.m7}","${row.m8}","${row.m9}","${row.m10}","${row.m11}","${row.m12}","${(row.notes || "").replace(/"/g, '""')}"\n`;
-        });
-        
-        csvContent += `"II","Danh mục chi phí Dự án","${computedStats.projectAnnualSubtotal}","${computedStats.projectMonthlySubtotals.m1}","${computedStats.projectMonthlySubtotals.m2}","${computedStats.projectMonthlySubtotals.m3}","${computedStats.projectMonthlySubtotals.m4}","${computedStats.projectMonthlySubtotals.m5}","${computedStats.projectMonthlySubtotals.m6}","${computedStats.projectMonthlySubtotals.m7}","${computedStats.projectMonthlySubtotals.m8}","${computedStats.projectMonthlySubtotals.m9}","${computedStats.projectMonthlySubtotals.m10}","${computedStats.projectMonthlySubtotals.m11}","${computedStats.projectMonthlySubtotals.m12}",""\n`;
-        
-        computedStats.projectRows.forEach(row => {
-          const isChild = row.stt.includes(".");
-          let displayContent = row.content;
-          if (isChild && row.category_type === "project") {
-            const parts = displayContent.split(" - BĐH dự án ");
-            if (parts.length > 1) {
-              displayContent = parts[0];
-            } else {
-              const partsAlt = displayContent.split(" - BĐH ");
-              if (partsAlt.length > 1) {
-                displayContent = partsAlt[0];
-              }
-            }
+        setIsExportingReport(true);
+        try {
+          const now = new Date();
+          const payload = {
+            year: 2026,
+            day: String(now.getDate()).padStart(2, "0"),
+            month: String(now.getMonth() + 1).padStart(2, "0"),
+            officeRows: computedStats.officeRows,
+            projectRows: computedStats.projectRows,
+            officeMonthlySubtotals: computedStats.officeMonthlySubtotals,
+            projectMonthlySubtotals: computedStats.projectMonthlySubtotals,
+            officeAnnualSubtotal: computedStats.officeAnnualSubtotal,
+            projectAnnualSubtotal: computedStats.projectAnnualSubtotal,
+            grandMonthlyTotals: computedStats.grandMonthlyTotals,
+            grandAnnualTotal: computedStats.grandAnnualTotal,
+          };
+
+          const response = await fetch("/api/export-admin-report", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+          });
+
+          if (!response.ok) {
+            throw new Error("Không thể xuất báo cáo chi phí quản lý hành chính");
           }
-          const rowTotal = Array.from({ length: 12 }, (_, idx) => Number(row[`m${idx + 1}` as keyof typeof row]) || 0).reduce((a, b) => a + b, 0);
-          csvContent += `"${row.stt}","${displayContent.replace(/"/g, '""')}","${rowTotal}","${row.m1}","${row.m2}","${row.m3}","${row.m4}","${row.m5}","${row.m6}","${row.m7}","${row.m8}","${row.m9}","${row.m10}","${row.m11}","${row.m12}","${(row.notes || "").replace(/"/g, '""')}"\n`;
-        });
-        
-        csvContent += `"","TỔNG CỘNG CPQL PHÁT SINH","${computedStats.grandAnnualTotal}","${computedStats.grandMonthlyTotals.m1}","${computedStats.grandMonthlyTotals.m2}","${computedStats.grandMonthlyTotals.m3}","${computedStats.grandMonthlyTotals.m4}","${computedStats.grandMonthlyTotals.m5}","${computedStats.grandMonthlyTotals.m6}","${computedStats.grandMonthlyTotals.m7}","${computedStats.grandMonthlyTotals.m8}","${computedStats.grandMonthlyTotals.m9}","${computedStats.grandMonthlyTotals.m10}","${computedStats.grandMonthlyTotals.m11}","${computedStats.grandMonthlyTotals.m12}",""\n`;
-        
-        const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `Chi_phi_quan_ly_hanh_chinh_nam_2026.csv`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        window.URL.revokeObjectURL(url);
+
+          const blob = await response.blob();
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `Bang_tinh_chi_phi_hanh_chinh_nam_2026.docx`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          window.URL.revokeObjectURL(url);
+        } catch (error: any) {
+          console.error("Lỗi xuất báo cáo:", error);
+          alert("Đã xảy ra lỗi khi tải báo cáo: " + error.message);
+        } finally {
+          setIsExportingReport(false);
+        }
         return;
       }
       
@@ -6251,7 +6263,7 @@ export default function AdministrationPage() {
 
               {/* ─── TAB 4: Báo cáo chi phí tháng ─── */}
               {activeTab === "report" && (() => {
-                const { combinedItems, totalAmount, invoiceCount, recurringCount } = getReportData(reportStartDate, reportEndDate);
+                const { combinedItems, invoiceCount, recurringCount } = getReportData(reportStartDate, reportEndDate);
                 
                 const renderEditableCell = (row: AdminMonthlyReport, field: string, value: any, type: "number" | "text") => {
                   const isEditing = editingCell?.rowId === row.id && editingCell?.field === field;
@@ -6403,9 +6415,19 @@ export default function AdministrationPage() {
 
                           <button
                             onClick={() => handleExportReportExcel()}
-                            className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-900 text-white text-[11px] font-bold px-3.5 py-2 rounded-xl shadow-md transition-all active:scale-95 cursor-pointer"
+                            disabled={isExportingReport}
+                            className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-900 disabled:bg-slate-400 text-white text-[11px] font-bold px-3.5 py-2 rounded-xl shadow-md transition-all active:scale-95 cursor-pointer"
                           >
-                            <FileSpreadsheet size={12} /> Xuất Excel
+                            {isExportingReport ? (
+                              <>
+                                <Loader2 size={12} className="animate-spin" />
+                                Đang xuất...
+                              </>
+                            ) : (
+                              <>
+                                <FileText size={12} /> Xuất Báo cáo
+                              </>
+                            )}
                           </button>
                         </div>
                       </div>
@@ -6624,9 +6646,9 @@ export default function AdministrationPage() {
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                       <div className="glass bg-gradient-to-br from-blue-50/50 to-indigo-50/20 rounded-2xl p-5 border border-blue-100/60 shadow-premium flex items-center justify-between">
                         <div className="space-y-1.5">
-                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Chi phí trong kỳ lọc</span>
-                          <h3 className="text-lg font-black text-[#005BAC] tracking-tight">{totalAmount.toLocaleString("vi-VN")} đ</h3>
-                          <p className="text-[9px] text-slate-400 font-semibold">Cộng dồn từ hóa đơn & định kỳ trong kỳ lọc</p>
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Tổng cộng CPQL phát sinh 2026</span>
+                          <h3 className="text-lg font-black text-[#005BAC] tracking-tight">{computedStats.grandAnnualTotal.toLocaleString("vi-VN")} đ</h3>
+                          <p className="text-[9px] text-slate-400 font-semibold">Khớp dòng tổng cộng phát sinh cả năm 2026</p>
                         </div>
                         <div className="bg-blue-500/10 text-[#005BAC] p-3 rounded-2xl">
                           <Receipt size={22} />
@@ -6635,9 +6657,9 @@ export default function AdministrationPage() {
 
                       <div className="glass bg-gradient-to-br from-emerald-50/50 to-teal-50/20 rounded-2xl p-5 border border-emerald-100/60 shadow-premium flex items-center justify-between">
                         <div className="space-y-1.5">
-                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Hóa đơn trong kỳ lọc</span>
-                          <h3 className="text-lg font-black text-emerald-600 tracking-tight">{invoiceCount} Hồ sơ</h3>
-                          <p className="text-[9px] text-slate-400 font-semibold">Hóa đơn quét AI trong kỳ lọc</p>
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Chi phí Văn phòng HCM</span>
+                          <h3 className="text-lg font-black text-emerald-600 tracking-tight">{computedStats.officeAnnualSubtotal.toLocaleString("vi-VN")} đ</h3>
+                          <p className="text-[9px] text-slate-400 font-semibold">Khối Văn phòng cả năm ({invoiceCount} chứng từ trong kỳ lọc)</p>
                         </div>
                         <div className="bg-emerald-500/10 text-emerald-600 p-3 rounded-2xl">
                           <FileText size={22} />
@@ -6646,9 +6668,9 @@ export default function AdministrationPage() {
 
                       <div className="glass bg-gradient-to-br from-purple-50/50 to-pink-50/20 rounded-2xl p-5 border border-purple-100/60 shadow-premium flex items-center justify-between">
                         <div className="space-y-1.5">
-                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Thanh toán định kỳ kỳ lọc</span>
-                          <h3 className="text-lg font-black text-purple-600 tracking-tight">{recurringCount} Hồ sơ</h3>
-                          <p className="text-[9px] text-slate-400 font-semibold">Các khoản chi cố định trong kỳ lọc</p>
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Chi phí BĐH dự án</span>
+                          <h3 className="text-lg font-black text-purple-600 tracking-tight">{computedStats.projectAnnualSubtotal.toLocaleString("vi-VN")} đ</h3>
+                          <p className="text-[9px] text-slate-400 font-semibold">Các Ban điều hành cả năm ({recurringCount} chứng từ trong kỳ lọc)</p>
                         </div>
                         <div className="bg-purple-500/10 text-purple-600 p-3 rounded-2xl">
                           <RefreshCw size={22} />
