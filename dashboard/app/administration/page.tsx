@@ -1677,8 +1677,29 @@ export default function AdministrationPage() {
   };
 
   const computedStats = useMemo(() => {
-    const officeRows = reportRows.filter(r => r.category_type === "office");
-    const projectRows = reportRows.filter(r => r.category_type === "project");
+    const compareStt = (a: string, b: string) => {
+      const partsA = a.split(".");
+      const partsB = b.split(".");
+      const majorA = parseInt(partsA[0]);
+      const majorB = parseInt(partsB[0]);
+      if (isNaN(majorA) || isNaN(majorB)) {
+        return a.localeCompare(b);
+      }
+      if (majorA !== majorB) {
+        return majorA - majorB;
+      }
+      const minorA = parseInt(partsA[1]) || 0;
+      const minorB = parseInt(partsB[1]) || 0;
+      return minorA - minorB;
+    };
+
+    const officeRows = [...reportRows]
+      .filter(r => r.category_type === "office")
+      .sort((a, b) => compareStt(a.stt, b.stt));
+
+    const projectRows = [...reportRows]
+      .filter(r => r.category_type === "project")
+      .sort((a, b) => compareStt(a.stt, b.stt));
 
     const getMonthlySubtotals = (rows: AdminMonthlyReport[]) => {
       const subtotals: Record<string, number> = {};
