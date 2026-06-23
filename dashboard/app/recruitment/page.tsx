@@ -781,20 +781,49 @@ export default function RecruitmentPage() {
     "ĐMT Trà Vinh": 2
   });
 
+  // Load initial state from localStorage on mount
+  useEffect(() => {
+    const savedOffice = localStorage.getItem("officeManualNeeds");
+    if (savedOffice) {
+      try {
+        setOfficeManualNeeds(JSON.parse(savedOffice));
+      } catch (e) {
+        console.error("Failed to load officeManualNeeds:", e);
+      }
+    }
+    const savedProject = localStorage.getItem("projectManualNeeds");
+    if (savedProject) {
+      try {
+        setProjectManualNeeds(JSON.parse(savedProject));
+      } catch (e) {
+        console.error("Failed to load projectManualNeeds:", e);
+      }
+    }
+  }, []);
+
   const handleOfficeNeedChange = (dept: string, val: number) => {
     if (val < 0) return;
-    setOfficeManualNeeds(prev => ({ ...prev, [dept]: val }));
+    setOfficeManualNeeds(prev => {
+      const next = { ...prev, [dept]: val };
+      localStorage.setItem("officeManualNeeds", JSON.stringify(next));
+      return next;
+    });
   };
 
   const handleProjectNeedChange = (proj: string, val: number) => {
     if (val < 0) return;
-    setProjectManualNeeds(prev => ({ ...prev, [proj]: val }));
+    setProjectManualNeeds(prev => {
+      const next = { ...prev, [proj]: val };
+      localStorage.setItem("projectManualNeeds", JSON.stringify(next));
+      return next;
+    });
   };
 
   const removeOfficeDept = (dept: string) => {
     setOfficeManualNeeds(prev => {
       const next = { ...prev };
       delete next[dept];
+      localStorage.setItem("officeManualNeeds", JSON.stringify(next));
       return next;
     });
   };
@@ -803,6 +832,7 @@ export default function RecruitmentPage() {
     setProjectManualNeeds(prev => {
       const next = { ...prev };
       delete next[proj];
+      localStorage.setItem("projectManualNeeds", JSON.stringify(next));
       return next;
     });
   };
@@ -812,13 +842,21 @@ export default function RecruitmentPage() {
 
   const addOfficeDept = () => {
     if (!newOfficeDept.trim()) return;
-    setOfficeManualNeeds(prev => ({ ...prev, [newOfficeDept.trim()]: 1 }));
+    setOfficeManualNeeds(prev => {
+      const next = { ...prev, [newOfficeDept.trim()]: 1 };
+      localStorage.setItem("officeManualNeeds", JSON.stringify(next));
+      return next;
+    });
     setNewOfficeDept("");
   };
 
   const addProjectDept = () => {
     if (!newProjectDept.trim()) return;
-    setProjectManualNeeds(prev => ({ ...prev, [newProjectDept.trim()]: 1 }));
+    setProjectManualNeeds(prev => {
+      const next = { ...prev, [newProjectDept.trim()]: 1 };
+      localStorage.setItem("projectManualNeeds", JSON.stringify(next));
+      return next;
+    });
     setNewProjectDept("");
   };
 
@@ -1884,12 +1922,19 @@ export default function RecruitmentPage() {
                           type="text"
                           value={newOfficeDept}
                           onChange={(e) => setNewOfficeDept(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              addOfficeDept();
+                            }
+                          }}
                           placeholder="Thêm bộ phận..."
                           className="flex-1 bg-white border border-amber-200 rounded-xl px-4 py-2 text-sm outline-none text-slate-700 placeholder-slate-400 focus:ring-1 focus:ring-amber-500/20 focus:border-amber-400/60"
                         />
                         <button
+                          type="button"
                           onClick={addOfficeDept}
-                          className="bg-amber-500 hover:bg-amber-600 text-white rounded-xl p-2 shadow-md shadow-amber-500/10 active:scale-95 transition-all"
+                          className="bg-amber-500 hover:bg-amber-600 text-white rounded-xl p-2 shadow-md shadow-amber-500/10 active:scale-95 transition-all cursor-pointer"
                         >
                           <Plus size={16} />
                         </button>
@@ -1950,12 +1995,19 @@ export default function RecruitmentPage() {
                           type="text"
                           value={newProjectDept}
                           onChange={(e) => setNewProjectDept(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              addProjectDept();
+                            }
+                          }}
                           placeholder="Thêm dự án..."
                           className="flex-1 bg-white border border-blue-200 rounded-xl px-4 py-2 text-sm outline-none text-slate-700 placeholder-slate-400 focus:ring-1 focus:ring-blue-500/20 focus:border-blue-400/60"
                         />
                         <button
+                          type="button"
                           onClick={addProjectDept}
-                          className="bg-blue-500 hover:bg-blue-600 text-white rounded-xl p-2 shadow-md shadow-blue-500/10 active:scale-95 transition-all"
+                          className="bg-blue-500 hover:bg-blue-600 text-white rounded-xl p-2 shadow-md shadow-blue-500/10 active:scale-95 transition-all cursor-pointer"
                         >
                           <Plus size={16} />
                         </button>
