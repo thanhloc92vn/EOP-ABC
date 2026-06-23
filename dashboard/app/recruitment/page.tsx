@@ -781,31 +781,79 @@ export default function RecruitmentPage() {
     "ĐMT Trà Vinh": 2
   });
 
-  // Load initial state from localStorage on mount
+  // Load initial state from Supabase / localStorage on mount
   useEffect(() => {
-    const savedOffice = localStorage.getItem("officeManualNeeds");
-    if (savedOffice) {
-      try {
-        setOfficeManualNeeds(JSON.parse(savedOffice));
-      } catch (e) {
-        console.error("Failed to load officeManualNeeds:", e);
+    const loadNeeds = async () => {
+      // 1. First try loading from localStorage as quick initial values
+      const savedOffice = localStorage.getItem("officeManualNeeds");
+      if (savedOffice) {
+        try {
+          setOfficeManualNeeds(JSON.parse(savedOffice));
+        } catch (e) {
+          console.error("Failed to parse local officeManualNeeds:", e);
+        }
       }
-    }
-    const savedProject = localStorage.getItem("projectManualNeeds");
-    if (savedProject) {
-      try {
-        setProjectManualNeeds(JSON.parse(savedProject));
-      } catch (e) {
-        console.error("Failed to load projectManualNeeds:", e);
+      const savedProject = localStorage.getItem("projectManualNeeds");
+      if (savedProject) {
+        try {
+          setProjectManualNeeds(JSON.parse(savedProject));
+        } catch (e) {
+          console.error("Failed to parse local projectManualNeeds:", e);
+        }
       }
-    }
+
+      // 2. Query from Supabase to sync with other users
+      try {
+        const { data, error } = await supabase
+          .from("recruitment_needs")
+          .select("id, data");
+
+        if (error) {
+          console.warn("Could not fetch recruitment needs from Supabase (table might not exist yet):", error.message);
+          return;
+        }
+
+        if (data && data.length > 0) {
+          const officeRow = data.find(r => r.id === "office_manual_needs");
+          if (officeRow && officeRow.data) {
+            setOfficeManualNeeds(officeRow.data);
+            localStorage.setItem("officeManualNeeds", JSON.stringify(officeRow.data));
+          }
+
+          const projectRow = data.find(r => r.id === "project_manual_needs");
+          if (projectRow && projectRow.data) {
+            setProjectManualNeeds(projectRow.data);
+            localStorage.setItem("projectManualNeeds", JSON.stringify(projectRow.data));
+          }
+        }
+      } catch (err) {
+        console.error("Error fetching recruitment needs from Supabase:", err);
+      }
+    };
+
+    loadNeeds();
   }, []);
+
+  const saveNeedsToSupabase = async (id: "office_manual_needs" | "project_manual_needs", data: Record<string, number>) => {
+    try {
+      const { error } = await supabase
+        .from("recruitment_needs")
+        .upsert({ id, data, updated_at: new Date().toISOString() });
+
+      if (error) {
+        console.warn(`Could not save ${id} to Supabase:`, error.message);
+      }
+    } catch (err) {
+      console.error(`Error saving ${id} to Supabase:`, err);
+    }
+  };
 
   const handleOfficeNeedChange = (dept: string, val: number) => {
     if (val < 0) return;
     const next = { ...officeManualNeeds, [dept]: val };
     setOfficeManualNeeds(next);
     localStorage.setItem("officeManualNeeds", JSON.stringify(next));
+    saveNeedsToSupabase("office_manual_needs", next);
   };
 
   const handleProjectNeedChange = (proj: string, val: number) => {
@@ -813,6 +861,7 @@ export default function RecruitmentPage() {
     const next = { ...projectManualNeeds, [proj]: val };
     setProjectManualNeeds(next);
     localStorage.setItem("projectManualNeeds", JSON.stringify(next));
+    saveNeedsToSupabase("project_manual_needs", next);
   };
 
   const removeOfficeDept = (dept: string) => {
@@ -820,6 +869,7 @@ export default function RecruitmentPage() {
     delete next[dept];
     setOfficeManualNeeds(next);
     localStorage.setItem("officeManualNeeds", JSON.stringify(next));
+    saveNeedsToSupabase("office_manual_needs", next);
   };
 
   const removeProjectDept = (proj: string) => {
@@ -827,6 +877,7 @@ export default function RecruitmentPage() {
     delete next[proj];
     setProjectManualNeeds(next);
     localStorage.setItem("projectManualNeeds", JSON.stringify(next));
+    saveNeedsToSupabase("project_manual_needs", next);
   };
 
   const [newOfficeDept, setNewOfficeDept] = useState("");
@@ -838,6 +889,7 @@ export default function RecruitmentPage() {
     const next = { ...officeManualNeeds, [val]: 1 };
     setOfficeManualNeeds(next);
     localStorage.setItem("officeManualNeeds", JSON.stringify(next));
+    saveNeedsToSupabase("office_manual_needs", next);
     setNewOfficeDept("");
   };
 
@@ -847,6 +899,7 @@ export default function RecruitmentPage() {
     const next = { ...projectManualNeeds, [val]: 1 };
     setProjectManualNeeds(next);
     localStorage.setItem("projectManualNeeds", JSON.stringify(next));
+    saveNeedsToSupabase("project_manual_needs", next);
     setNewProjectDept("");
   };
 
