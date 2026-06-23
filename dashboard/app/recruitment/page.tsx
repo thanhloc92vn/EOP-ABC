@@ -803,60 +803,50 @@ export default function RecruitmentPage() {
 
   const handleOfficeNeedChange = (dept: string, val: number) => {
     if (val < 0) return;
-    setOfficeManualNeeds(prev => {
-      const next = { ...prev, [dept]: val };
-      localStorage.setItem("officeManualNeeds", JSON.stringify(next));
-      return next;
-    });
+    const next = { ...officeManualNeeds, [dept]: val };
+    setOfficeManualNeeds(next);
+    localStorage.setItem("officeManualNeeds", JSON.stringify(next));
   };
 
   const handleProjectNeedChange = (proj: string, val: number) => {
     if (val < 0) return;
-    setProjectManualNeeds(prev => {
-      const next = { ...prev, [proj]: val };
-      localStorage.setItem("projectManualNeeds", JSON.stringify(next));
-      return next;
-    });
+    const next = { ...projectManualNeeds, [proj]: val };
+    setProjectManualNeeds(next);
+    localStorage.setItem("projectManualNeeds", JSON.stringify(next));
   };
 
   const removeOfficeDept = (dept: string) => {
-    setOfficeManualNeeds(prev => {
-      const next = { ...prev };
-      delete next[dept];
-      localStorage.setItem("officeManualNeeds", JSON.stringify(next));
-      return next;
-    });
+    const next = { ...officeManualNeeds };
+    delete next[dept];
+    setOfficeManualNeeds(next);
+    localStorage.setItem("officeManualNeeds", JSON.stringify(next));
   };
 
   const removeProjectDept = (proj: string) => {
-    setProjectManualNeeds(prev => {
-      const next = { ...prev };
-      delete next[proj];
-      localStorage.setItem("projectManualNeeds", JSON.stringify(next));
-      return next;
-    });
+    const next = { ...projectManualNeeds };
+    delete next[proj];
+    setProjectManualNeeds(next);
+    localStorage.setItem("projectManualNeeds", JSON.stringify(next));
   };
 
   const [newOfficeDept, setNewOfficeDept] = useState("");
   const [newProjectDept, setNewProjectDept] = useState("");
 
   const addOfficeDept = () => {
-    if (!newOfficeDept.trim()) return;
-    setOfficeManualNeeds(prev => {
-      const next = { ...prev, [newOfficeDept.trim()]: 1 };
-      localStorage.setItem("officeManualNeeds", JSON.stringify(next));
-      return next;
-    });
+    const val = newOfficeDept.trim();
+    if (!val) return;
+    const next = { ...officeManualNeeds, [val]: 1 };
+    setOfficeManualNeeds(next);
+    localStorage.setItem("officeManualNeeds", JSON.stringify(next));
     setNewOfficeDept("");
   };
 
   const addProjectDept = () => {
-    if (!newProjectDept.trim()) return;
-    setProjectManualNeeds(prev => {
-      const next = { ...prev, [newProjectDept.trim()]: 1 };
-      localStorage.setItem("projectManualNeeds", JSON.stringify(next));
-      return next;
-    });
+    const val = newProjectDept.trim();
+    if (!val) return;
+    const next = { ...projectManualNeeds, [val]: 1 };
+    setProjectManualNeeds(next);
+    localStorage.setItem("projectManualNeeds", JSON.stringify(next));
     setNewProjectDept("");
   };
 
