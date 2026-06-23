@@ -781,42 +781,20 @@ export default function RecruitmentPage() {
     "ĐMT Trà Vinh": 2
   });
 
-  // Load initial state from Supabase / localStorage on mount
+  // Load initial state from Supabase (single source of truth) with localStorage fallback
   useEffect(() => {
     const loadNeeds = async () => {
-      // 1. First try loading from localStorage as quick initial values
-      const savedOffice = localStorage.getItem("officeManualNeeds");
-      if (savedOffice) {
-        try {
-          setOfficeManualNeeds(JSON.parse(savedOffice));
-        } catch (e) {
-          console.error("Failed to parse local officeManualNeeds:", e);
-        }
-      }
-      const savedProject = localStorage.getItem("projectManualNeeds");
-      if (savedProject) {
-        try {
-          setProjectManualNeeds(JSON.parse(savedProject));
-        } catch (e) {
-          console.error("Failed to parse local projectManualNeeds:", e);
-        }
-      }
-
-      // 2. Query from Supabase to sync with other users
+      // Query Supabase first — this is the shared source of truth across all accounts
       try {
         const { data, error } = await supabase
           .from("recruitment_needs")
           .select("id, data");
 
-        if (error) {
-          console.warn("Could not fetch recruitment needs from Supabase (table might not exist yet):", error.message);
-          return;
-        }
-
-        if (data && data.length > 0) {
+        if (!error && data && data.length > 0) {
           const officeRow = data.find(r => r.id === "office_manual_needs");
           if (officeRow && officeRow.data) {
             setOfficeManualNeeds(officeRow.data);
+            // Keep localStorage in sync so offline fallback is fresh
             localStorage.setItem("officeManualNeeds", JSON.stringify(officeRow.data));
           }
 
@@ -825,9 +803,25 @@ export default function RecruitmentPage() {
             setProjectManualNeeds(projectRow.data);
             localStorage.setItem("projectManualNeeds", JSON.stringify(projectRow.data));
           }
+          // Supabase load succeeded — nothing more to do
+          return;
+        }
+
+        if (error) {
+          console.warn("Supabase fetch failed, falling back to localStorage:", error.message);
         }
       } catch (err) {
         console.error("Error fetching recruitment needs from Supabase:", err);
+      }
+
+      // Fallback: use localStorage only when Supabase is unreachable
+      const savedOffice = localStorage.getItem("officeManualNeeds");
+      if (savedOffice) {
+        try { setOfficeManualNeeds(JSON.parse(savedOffice)); } catch (e) { /* ignore */ }
+      }
+      const savedProject = localStorage.getItem("projectManualNeeds");
+      if (savedProject) {
+        try { setProjectManualNeeds(JSON.parse(savedProject)); } catch (e) { /* ignore */ }
       }
     };
 
