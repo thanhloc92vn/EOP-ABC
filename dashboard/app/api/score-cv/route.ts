@@ -340,68 +340,133 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: msg }, { status: 500 });
       }
     } else if (fileType.endsWith(".docx") || fileType.endsWith(".doc")) {
+      // Extract text with mammoth then call Responses API
       const mammoth = await import("mammoth");
       const result = await mammoth.extractRawText({ buffer: fileBuffer });
-      const cvText = result.value || "";
-      messages = [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: `--- MÔ TẢ CÔNG VIỆC (JD) ---\n${jdText}\n\n--- NỘI DUNG CV ---\n${cvText}\n\nTRÍCH XUẤT ĐẦY ĐỦ 16 TRƯỜNG VÀ CHẤM ĐIỂM. TRẢ VỀ JSON.` },
-      ];
+      const cvText = result.value?.trim() || "";
+
+      if (!cvText) {
+        return NextResponse.json({ error: "Không thể đọc nội dung file DOCX. File có thể bị lỗi hoặc được bảo vệ bằng mật khẩu." }, { status: 400 });
+      }
+
+      const cvModel = process.env.OPENAI_MODEL || "gpt-4o";
+      try {
+        const response = await openai.responses.create({
+          model: cvModel,
+          input: [{
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: `${SYSTEM_PROMPT}\n\n--- MÔ TẢ CÔNG VIỆC (JD) ---\n${jdText}\n\n--- NỘI DUNG CV ---\n${cvText}\n\nTRÍCH XUẤT ĐẦY ĐỦ 16 TRƯỜNG VÀ CHẤM ĐIỂM. TRẢ VỀ JSON.`,
+              },
+            ],
+          }],
+          text: { format: { type: "json_object" } },
+          temperature: 0,
+        });
+        const rawJson = response.output_text || "{}";
+        const data = JSON.parse(rawJson);
+
+        const viTri = data.extracted_info?.vi_tri || "";
+        const { phong_ban, nguoi_danh_gia } = classifyDept(jdText, viTri);
+        if (data.extracted_info) {
+          data.extracted_info.phong_ban = phong_ban;
+          data.extracted_info.nguoi_danh_gia = nguoi_danh_gia;
+          data.extracted_info.nguon = nguon;
+          data.extracted_info.ngay = today;
+          if (!viTri || viTri.toUpperCase() === "N/A") {
+            const cd = data.extracted_info.chuc_danh_gan_nhat || "";
+            data.extracted_info.vi_tri = cd && cd.toUpperCase() !== "N/A" ? cd : "N/A";
+          }
+        }
+        data.file_name = file.name;
+        return NextResponse.json(data);
+      } catch (docxErr: unknown) {
+        const msg = docxErr instanceof Error ? docxErr.message : String(docxErr);
+        return NextResponse.json({ error: msg }, { status: 500 });
+      }
     } else if (fileType.endsWith(".png") || fileType.endsWith(".jpg") || fileType.endsWith(".jpeg")) {
-      // Vision mode
+      // Vision mode via Responses API
       const base64 = fileBuffer.toString("base64");
       const mimeType = fileType.endsWith(".png") ? "image/png" : "image/jpeg";
-      messages = [
-        { role: "system", content: SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: `--- MÔ TẢ CÔNG VIỆC (JD) ---\n${jdText}\n\n--- ẢNH CHỤP CV ---` },
-            { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } },
-            { type: "text", text: "TRÍCH XUẤT ĐẦY ĐỦ 16 TRƯỜNG VÀ CHẤM ĐIỂM. TRẢ VỀ JSON." },
-          ],
-        },
-      ];
+      const cvModel = process.env.OPENAI_MODEL || "gpt-4o";
+      try {
+        const response = await openai.responses.create({
+          model: cvModel,
+          input: [{
+            role: "user",
+            content: [
+              { type: "input_text", text: `${SYSTEM_PROMPT}\n\n--- MÔ TẢ CÔNG VIỆC (JD) ---\n${jdText}\n\n--- ẢNH CHỤP CV ---\nTRÍCH XUẤT ĐẦY ĐỦ 16 TRƯỜNG VÀ CHẤM ĐIỂM. TRẢ VỀ JSON.` },
+              { type: "input_image", image_url: `data:${mimeType};base64,${base64}`, detail: "high" },
+            ],
+          }],
+          text: { format: { type: "json_object" } },
+          temperature: 0,
+        });
+        const rawJson = response.output_text || "{}";
+        const data = JSON.parse(rawJson);
+
+        const viTri = data.extracted_info?.vi_tri || "";
+        const { phong_ban, nguoi_danh_gia } = classifyDept(jdText, viTri);
+        if (data.extracted_info) {
+          data.extracted_info.phong_ban = phong_ban;
+          data.extracted_info.nguoi_danh_gia = nguoi_danh_gia;
+          data.extracted_info.nguon = nguon;
+          data.extracted_info.ngay = today;
+          if (!viTri || viTri.toUpperCase() === "N/A") {
+            const cd = data.extracted_info.chuc_danh_gan_nhat || "";
+            data.extracted_info.vi_tri = cd && cd.toUpperCase() !== "N/A" ? cd : "N/A";
+          }
+        }
+        data.file_name = file.name;
+        return NextResponse.json(data);
+      } catch (imgErr: unknown) {
+        const msg = imgErr instanceof Error ? imgErr.message : String(imgErr);
+        return NextResponse.json({ error: msg }, { status: 500 });
+      }
     } else if (fileType.endsWith(".txt")) {
       const cvText = fileBuffer.toString("utf-8");
-      messages = [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: `--- MÔ TẢ CÔNG VIỆC (JD) ---\n${jdText}\n\n--- NỘI DUNG CV ---\n${cvText}\n\nTRÍCH XUẤT ĐẦY ĐỦ 16 TRƯỜNG VÀ CHẤM ĐIỂM. TRẢ VỀ JSON.` },
-      ];
+      const cvModel = process.env.OPENAI_MODEL || "gpt-4o";
+      try {
+        const response = await openai.responses.create({
+          model: cvModel,
+          input: [{
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: `${SYSTEM_PROMPT}\n\n--- MÔ TẢ CÔNG VIỆC (JD) ---\n${jdText}\n\n--- NỘI DUNG CV ---\n${cvText}\n\nTRÍCH XUẤT ĐẦY ĐỦ 16 TRƯỜNG VÀ CHẤM ĐIỂM. TRẢ VỀ JSON.`,
+              },
+            ],
+          }],
+          text: { format: { type: "json_object" } },
+          temperature: 0,
+        });
+        const rawJson = response.output_text || "{}";
+        const data = JSON.parse(rawJson);
+
+        const viTri = data.extracted_info?.vi_tri || "";
+        const { phong_ban, nguoi_danh_gia } = classifyDept(jdText, viTri);
+        if (data.extracted_info) {
+          data.extracted_info.phong_ban = phong_ban;
+          data.extracted_info.nguoi_danh_gia = nguoi_danh_gia;
+          data.extracted_info.nguon = nguon;
+          data.extracted_info.ngay = today;
+          if (!viTri || viTri.toUpperCase() === "N/A") {
+            const cd = data.extracted_info.chuc_danh_gan_nhat || "";
+            data.extracted_info.vi_tri = cd && cd.toUpperCase() !== "N/A" ? cd : "N/A";
+          }
+        }
+        data.file_name = file.name;
+        return NextResponse.json(data);
+      } catch (txtErr: unknown) {
+        const msg = txtErr instanceof Error ? txtErr.message : String(txtErr);
+        return NextResponse.json({ error: msg }, { status: 500 });
+      }
     } else {
       return NextResponse.json({ error: "Định dạng file không hỗ trợ. Dùng PDF, DOCX, PNG, JPG, hoặc TXT." }, { status: 400 });
     }
-
-    // ── Call OpenAI ───────────────────────────────────────────────────────
-    const model = process.env.OPENAI_MODEL || "gpt-4o";
-    const completion = await openai.chat.completions.create({
-      model,
-      messages,
-      temperature: 0,
-      seed: 42,
-      response_format: { type: "json_object" },
-    });
-
-    const rawJson = completion.choices[0].message.content || "{}";
-    const data = JSON.parse(rawJson);
-
-    // ── Override phong_ban + nguoi_danh_gia ───────────────────────────────
-    const viTri = data.extracted_info?.vi_tri || "";
-    const { phong_ban, nguoi_danh_gia } = classifyDept(jdText, viTri);
-    if (data.extracted_info) {
-      data.extracted_info.phong_ban = phong_ban;
-      data.extracted_info.nguoi_danh_gia = nguoi_danh_gia;
-      data.extracted_info.nguon = nguon;
-      data.extracted_info.ngay = today;
-      // Fallback vi_tri
-      if (!viTri || viTri.toUpperCase() === "N/A") {
-        const cd = data.extracted_info.chuc_danh_gan_nhat || "";
-        data.extracted_info.vi_tri = cd && cd.toUpperCase() !== "N/A" ? cd : "N/A";
-      }
-    }
-    data.file_name = file.name;
-
-    return NextResponse.json(data);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: msg }, { status: 500 });
