@@ -1575,10 +1575,22 @@ export default function CBPage() {
         // Refresh the contract list from DB
         await fetchContracts();
 
+        const skippedCount = hydrated.length - savedCount - failCount;
+        let alertMsg = "";
         if (failCount === 0) {
-          alert(`✅ Đã lưu thành công ${savedCount} hợp đồng nhân sự vào hệ thống!\n\nCác ô trống do AI không đọc được, bạn có thể bấm vào bảng bên dưới để điền tay.`);
+          alertMsg = `✅ Đã lưu thành công ${savedCount} hợp đồng nhân sự vào hệ thống!\n`;
+          if (skippedCount > 0) {
+            alertMsg += `ℹ️ Đã bỏ qua ${skippedCount} dòng trống hoặc dòng tiêu đề phòng ban.\n\n`;
+          }
+          alertMsg += `Các ô trống do AI không đọc được, bạn có thể bấm vào bảng bên dưới để điền tay.`;
+          alert(alertMsg);
         } else {
-          alert(`⚠️ Đã lưu ${savedCount} hợp đồng. ${failCount} dòng bị lỗi.\n\nNguyên nhân: ${firstError || "không xác định"}\n\nCác ô trống do AI không đọc được, bạn có thể bấm vào bảng bên dưới để điền tay.`);
+          alertMsg = `⚠️ Đã lưu ${savedCount} hợp đồng. ${failCount} dòng bị lỗi.\n`;
+          if (skippedCount > 0) {
+            alertMsg += `ℹ️ Đã bỏ qua ${skippedCount} dòng trống hoặc dòng tiêu đề phòng ban.\n`;
+          }
+          alertMsg += `\nNguyên nhân lỗi: ${firstError || "không xác định"}\n\nCác ô trống do AI không đọc được, bạn có thể bấm vào bảng bên dưới để điền tay.`;
+          alert(alertMsg);
         }
       } else {
         alert("Không nhận diện được danh sách hợp đồng hợp lệ từ AI. Vui lòng thử lại!");
