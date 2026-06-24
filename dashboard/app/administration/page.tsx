@@ -3457,7 +3457,7 @@ export default function AdministrationPage() {
           mission: activePreviewInvoice 
             ? (activePreviewInvoice.desc.startsWith("{\"") ? JSON.parse(activePreviewInvoice.desc).mission : activePreviewInvoice.desc) 
             : paymentMission,
-          projectName,
+          projectName: activePreviewInvoice ? (activePreviewInvoice.project_name || "Văn phòng HCM") : projectName,
           supplierName: activePreviewInvoice ? (activePreviewInvoice.beneficiary_name || "") : supplierName,
           bankAccount: activePreviewInvoice ? (activePreviewInvoice.bank_account || "") : bankAccount,
           bankNameBranch: activePreviewInvoice ? (activePreviewInvoice.bank_name_branch || "") : bankNameBranch,
@@ -3683,6 +3683,31 @@ export default function AdministrationPage() {
       } catch (err: any) {
         console.error("Failed to update invoice number:", err);
         alert("Lỗi khi cập nhật số hóa đơn trên Supabase: " + err.message);
+      }
+    }
+
+    // Silent real-time synchronization to master cost report
+    handleAutoFillReport(updated, pendingPayments, true);
+  };
+
+  const handleUpdateInvoiceProject = async (id: string, projectName: string) => {
+    // 1. Update local state
+    const updated = invoices.map(inv => 
+      inv.id === id ? { ...inv, project_name: projectName } : inv
+    );
+    setInvoices(updated);
+
+    // 2. If it's a real database UUID, update in Supabase
+    if (!id.startsWith("INV-") && !id.startsWith("HD-DK-")) {
+      try {
+        const { error } = await supabase
+          .from("invoices")
+          .update({ project_name: projectName })
+          .eq("id", id);
+        if (error) throw error;
+      } catch (err: any) {
+        console.error("Failed to update invoice project:", err);
+        alert("Lỗi khi cập nhật Ban điều hành trên Supabase: " + err.message);
       }
     }
 
@@ -6101,6 +6126,7 @@ export default function AdministrationPage() {
                             <th className="p-3">Số hóa đơn</th>
                             <th className="p-3">Ngày nhận</th>
                             <th className="p-3">Nội dung hóa đơn</th>
+                            <th className="p-3">Ban điều hành</th>
                             <th className="p-3 text-right">Số tiền sau thuế</th>
                             <th className="p-3 text-center">Trạng thái</th>
                             <th className="p-3 text-center">File gốc</th>
@@ -6145,6 +6171,18 @@ export default function AdministrationPage() {
                               </td>
                               <td className="p-3 text-slate-500">{inv.date}</td>
                               <td className="p-3 text-slate-600 max-w-xs truncate">{getInvoiceDesc(inv.desc)}</td>
+                              <td className="p-3" onClick={(e) => e.stopPropagation()}>
+                                <select
+                                  value={inv.project_name || "Văn phòng HCM"}
+                                  onChange={(e) => handleUpdateInvoiceProject(inv.id, e.target.value)}
+                                  className="px-2 py-1 border border-slate-200 rounded-xl bg-slate-50 text-[11px] font-bold text-slate-700 outline-none cursor-pointer focus:bg-white transition-all shadow-sm max-w-[160px]"
+                                >
+                                  <option value="Văn phòng HCM">Văn phòng HCM</option>
+                                  {PROJECTS.map(proj => (
+                                    <option key={proj} value={proj}>{proj}</option>
+                                  ))}
+                                </select>
+                              </td>
                               <td className="p-3 text-right text-[#005BAC] font-mono font-bold">
                                 {inv.amount.toLocaleString("vi-VN")} đ
                               </td>
@@ -7215,7 +7253,7 @@ export default function AdministrationPage() {
                 {(documentType === "transfer" || activePreviewInvoice) && (
                   <>
                     <div>
-                      <span className="underline">Tên dự án</span>: <span className="font-bold">{projectName}</span>
+                      <span className="underline">Tên dự án</span>: <span className="font-bold">{activePreviewInvoice ? (activePreviewInvoice.project_name || "Văn phòng HCM") : projectName}</span>
                     </div>
                     <div>
                       <span className="underline">Tên đơn vị thụ hưởng</span>: <span className="font-bold">{activePreviewInvoice ? activePreviewInvoice.beneficiary_name : supplierName}</span>

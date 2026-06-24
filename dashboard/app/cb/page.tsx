@@ -38,7 +38,8 @@ import {
   Settings,
   UploadCloud,
   Trash2,
-  RefreshCw
+  RefreshCw,
+  Save
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import {
@@ -62,15 +63,37 @@ interface Employee {
   created_at: string;
   date_of_birth?: string;
   gender?: string;
+  employee_code?: string;
 }
 
 interface Contract {
   id: string;
+  employee_id?: string;
+  stt_ton?: string;
+  stt?: number | null;
+  employee_code?: string;
+  employee_name?: string;
+  onboard_date?: string;
+  probation_contract_number?: string;
+  probation_start_date?: string;
+  probation_end_date?: string;
   contract_number: string;
   type: string;
+  sign_date: string;
   expiration_date: string;
-  effective_date: string;
+  base_salary_insurance?: number | null;
+  performance_bonus?: number | null;
+  allowances?: number | null;
+  total_income?: number | null;
+  last_salary_adj_date?: string;
   status: string;
+  created_at?: string;
+  employees?: {
+    name: string;
+    department?: string;
+    role?: string;
+    employee_code?: string;
+  };
 }
 
 // --- MOCK DATA FOR C&B SUBSECTIONS ---
@@ -401,6 +424,35 @@ export default function CBPage() {
   // Real contract data from Supabase
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [loadingContracts, setLoadingContracts] = useState(false);
+
+  // States for Employee Contracts management
+  const [contractsSearchQuery, setContractsSearchQuery] = useState("");
+  const [tempContracts, setTempContracts] = useState<Contract[]>([]);
+  const [isExcelImporting, setIsExcelImporting] = useState(false);
+  const [excelImportStage, setExcelImportStage] = useState<"reading" | "sending" | "receiving" | "done">("reading");
+  const [isContractReading, setIsContractReading] = useState(false);
+  const [showExcelImportPreview, setShowExcelImportPreview] = useState(false);
+  const [excelImportedContracts, setExcelImportedContracts] = useState<Contract[]>([]);
+  const [showSingleContractModal, setShowSingleContractModal] = useState(false);
+  const [savingContracts, setSavingContracts] = useState(false);
+  const [singleContractForm, setSingleContractForm] = useState<Partial<Contract>>({
+    contract_number: "",
+    type: "Thử việc",
+    sign_date: new Date().toISOString().split("T")[0],
+    expiration_date: "",
+    status: "Hiệu lực",
+    employee_code: "",
+    employee_name: "",
+    onboard_date: "",
+    probation_contract_number: "",
+    probation_start_date: "",
+    probation_end_date: "",
+    base_salary_insurance: null,
+    performance_bonus: null,
+    allowances: null,
+    total_income: null,
+    last_salary_adj_date: "",
+  });
 
   // Biometric sync state
   const [isSyncingMachine, setIsSyncingMachine] = useState(false);
@@ -1256,6 +1308,497 @@ export default function CBPage() {
     }
   };
 
+  // --- HELPERS FOR EMPLOYEE CONTRACTS (AI PARSING & EDITING) ---
+
+  const handleExcelContractUpload = async (file: File) => {
+    try {
+      setIsExcelImporting(true);
+      setExcelImportStage("reading");
+      const customKey = localStorage.getItem("openai_api_key_hanh_chinh") || localStorage.getItem("openai_api_key") || "";
+      const customModel = localStorage.getItem("openai_model_hanh_chinh") || localStorage.getItem("openai_model_nhan_su") || "gpt-4o";
+
+      const formData = new FormData();
+      formData.append("excel_file", file);
+      formData.append("original_filename", file.name);
+
+      const headers: Record<string, string> = {};
+      if (customKey) {
+        headers["Authorization"] = `Bearer ${customKey}`;
+      }
+      headers["x-openai-model"] = customModel;
+
+      // Slight delay to show "reading" stage visually before network call
+      await new Promise(r => setTimeout(r, 400));
+      setExcelImportStage("sending");
+
+      const fetchPromise = fetch("/api/analyze-contract-excel", {
+        method: "POST",
+        headers,
+        body: formData,
+      });
+
+      // Switch to "receiving" stage shortly after the request is sent
+      setTimeout(() => setExcelImportStage("receiving"), 1200);
+
+      const res = await fetchPromise;
+
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || "Không thể phân tích file Excel hợp đồng.");
+      }
+
+      const result = await res.json();
+      if (result.contracts && Array.isArray(result.contracts)) {
+        // Hydrate imported contracts with matched employees where possible
+        const hydrated = result.contracts.map((c: any) => {
+          let empId = "";
+          let matched = null;
+          if (c.employee_name) {
+            matched = employees.find(e =>
+              e.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") ===
+              c.employee_name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+            );
+          }
+          if (!matched && c.employee_code) {
+            matched = employees.find(e => e.employee_code === String(c.employee_code));
+          }
+          if (matched) {
+            empId = matched.id;
+            return {
+              ...c,
+              id: "new-" + Math.random().toString(36).substr(2, 9),
+              employee_id: empId,
+              employee_name: matched.name,
+              employee_code: matched.employee_code || "",
+              employees: {
+                name: matched.name,
+                department: matched.department,
+                role: matched.role,
+                employee_code: matched.employee_code
+              }
+            };
+          }
+          return {
+            ...c,
+            id: "new-" + Math.random().toString(36).substr(2, 9),
+            employee_id: ""
+          };
+        });
+
+        // ── AUTO-SAVE to Supabase immediately, no preview modal required ──
+        setExcelImportStage("saving" as any);
+        let savedCount = 0;
+        let failCount = 0;
+        let firstError = "";
+        for (const item of hydrated) {
+          // Skip completely empty rows (no name and no contract number)
+          if (!item.employee_name && !item.contract_number && !item.employee_code) continue;
+
+          try {
+            let empId = item.employee_id;
+            if (!empId && item.employee_name) {
+              const emp = employees.find(e =>
+                e.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") ===
+                (item.employee_name as string).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+              );
+              if (emp) empId = emp.id;
+            }
+
+            // Generate a unique fallback contract_number to avoid duplicate key errors
+            const contractNum = (item.contract_number || "").trim();
+            const uniqueFallback = `IMPORT-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+            const finalContractNumber = contractNum || uniqueFallback;
+
+            const dbData: any = {
+              contract_number: finalContractNumber,
+              type: item.type || "Thử việc",
+              sign_date: item.sign_date || null,
+              expiration_date: item.expiration_date || null,
+              status: item.status || "Hiệu lực",
+              salary: item.total_income || null,
+              stt_ton: item.stt_ton || null,
+              stt: item.stt || null,
+              employee_code: item.employee_code || null,
+              employee_name: item.employee_name || null,
+              onboard_date: item.onboard_date || null,
+              probation_contract_number: item.probation_contract_number || null,
+              probation_start_date: item.probation_start_date || null,
+              probation_end_date: item.probation_end_date || null,
+              base_salary_insurance: item.base_salary_insurance || null,
+              performance_bonus: item.performance_bonus || null,
+              allowances: item.allowances || null,
+              total_income: item.total_income || null,
+              last_salary_adj_date: item.last_salary_adj_date || null,
+              department: item.department || null,
+            };
+            if (empId) dbData.employee_id = empId;
+
+            // Use upsert so re-importing the same file updates existing records
+            const { error } = await supabase
+              .from("contracts")
+              .upsert([dbData], { onConflict: "contract_number", ignoreDuplicates: false });
+
+            if (error) {
+              console.error("Lỗi lưu hợp đồng:", item.employee_name, error.message);
+              if (!firstError) firstError = error.message;
+              failCount++;
+            } else {
+              savedCount++;
+            }
+          } catch (e: any) {
+            console.error("Lỗi không xác định:", e);
+            failCount++;
+          }
+        }
+
+        // Refresh the contract list from DB
+        await fetchContracts();
+
+        if (failCount === 0) {
+          alert(`✅ Đã lưu thành công ${savedCount} hợp đồng nhân sự vào hệ thống!\n\nCác ô trống do AI không đọc được, bạn có thể bấm vào bảng bên dưới để điền tay.`);
+        } else {
+          alert(`⚠️ Đã lưu ${savedCount} hợp đồng. ${failCount} dòng bị lỗi.\n\nNguyên nhân: ${firstError || "không xác định"}\n\nCác ô trống do AI không đọc được, bạn có thể bấm vào bảng bên dưới để điền tay.`);
+        }
+      } else {
+        alert("Không nhận diện được danh sách hợp đồng hợp lệ từ AI. Vui lòng thử lại!");
+      }
+    } catch (err: any) {
+      console.error("Lỗi phân tích Excel:", err);
+      alert("Lỗi: " + err.message);
+    } finally {
+      setIsExcelImporting(false);
+    }
+  };
+
+  const handleIndividualContractReader = async (file: File) => {
+    try {
+      setIsContractReading(true);
+      const customKey = localStorage.getItem("openai_api_key_hanh_chinh") || localStorage.getItem("openai_api_key") || "";
+      const customModel = localStorage.getItem("openai_model_hanh_chinh") || localStorage.getItem("openai_model_nhan_su") || "gpt-4o-mini";
+
+      const formData = new FormData();
+      formData.append("contract_file", file);
+      formData.append("original_filename", file.name);
+
+      const headers: Record<string, string> = {};
+      if (customKey) {
+        headers["Authorization"] = `Bearer ${customKey}`;
+      }
+      headers["x-openai-model"] = customModel;
+
+      const res = await fetch("/api/analyze-employee-contract", {
+        method: "POST",
+        headers,
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || "Lỗi đọc hợp đồng lao động.");
+      }
+
+      const result = await res.json();
+      
+      let matchedEmpId = "";
+      if (result.employee_name) {
+        const matched = employees.find(e => 
+          e.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") === 
+          result.employee_name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+        );
+        if (matched) {
+          matchedEmpId = matched.id;
+        }
+      }
+
+      setSingleContractForm({
+        id: "new-" + Date.now(),
+        employee_id: matchedEmpId,
+        stt_ton: "",
+        stt: tempContracts.length + 1,
+        employee_code: result.employee_code || "",
+        employee_name: result.employee_name || "",
+        onboard_date: result.onboard_date || "",
+        probation_contract_number: result.probation_contract_number || "",
+        probation_start_date: result.probation_start_date || "",
+        probation_end_date: result.probation_end_date || "",
+        contract_number: result.contract_number || "",
+        type: result.type || "Thử việc",
+        sign_date: result.sign_date || new Date().toISOString().split("T")[0],
+        expiration_date: result.expiration_date || "",
+        base_salary_insurance: result.base_salary_insurance || null,
+        performance_bonus: result.performance_bonus || null,
+        allowances: result.allowances || null,
+        total_income: result.total_income || null,
+        last_salary_adj_date: result.last_salary_adj_date || "",
+        status: "Hiệu lực",
+      });
+      setShowSingleContractModal(true);
+    } catch (err: any) {
+      console.error("Lỗi đọc hợp đồng:", err);
+      alert("Lỗi: " + err.message);
+    } finally {
+      setIsContractReading(false);
+    }
+  };
+
+  const handleContractCellChange = (index: number, field: keyof Contract, value: any) => {
+    setTempContracts(prev => {
+      const copy = [...prev];
+      const updatedItem = { ...copy[index] };
+      
+      if (field === "employee_id") {
+        const emp = employees.find(e => e.id === value);
+        if (emp) {
+          updatedItem.employee_id = value;
+          updatedItem.employee_name = emp.name;
+          updatedItem.employee_code = emp.employee_code || "";
+          updatedItem.employees = {
+            name: emp.name,
+            department: emp.department,
+            role: emp.role,
+            employee_code: emp.employee_code
+          };
+        } else {
+          updatedItem.employee_id = "";
+        }
+      } else {
+        (updatedItem as any)[field] = value;
+      }
+      
+      copy[index] = updatedItem;
+      return copy;
+    });
+  };
+
+  const handleSaveContractRow = async (index: number) => {
+    try {
+      const contract = tempContracts[index];
+      
+      let empId = contract.employee_id;
+      if (!empId && contract.employee_name) {
+        const emp = employees.find(e => 
+          e.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") === 
+          contract.employee_name!.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+        );
+        if (emp) empId = emp.id;
+      }
+
+      if (!contract.contract_number) {
+        alert("Vui lòng nhập Số HĐLĐ!");
+        return;
+      }
+
+      const dbData: any = {
+        contract_number: contract.contract_number,
+        type: contract.type,
+        sign_date: contract.sign_date || null,
+        expiration_date: contract.expiration_date || null,
+        status: contract.status || "Hiệu lực",
+        salary: contract.total_income || null,
+        stt_ton: contract.stt_ton || null,
+        stt: contract.stt || null,
+        employee_code: contract.employee_code || null,
+        employee_name: contract.employee_name || null,
+        onboard_date: contract.onboard_date || null,
+        probation_contract_number: contract.probation_contract_number || null,
+        probation_start_date: contract.probation_start_date || null,
+        probation_end_date: contract.probation_end_date || null,
+        base_salary_insurance: contract.base_salary_insurance || null,
+        performance_bonus: contract.performance_bonus || null,
+        allowances: contract.allowances || null,
+        total_income: contract.total_income || null,
+        last_salary_adj_date: contract.last_salary_adj_date || null,
+      };
+
+      if (empId) {
+        dbData.employee_id = empId;
+      }
+
+      if (contract.id.startsWith("new-")) {
+        const { data, error } = await supabase
+          .from("contracts")
+          .insert([dbData])
+          .select("*, employees(name, department, role, employee_code)");
+          
+        if (error) throw error;
+        if (data && data[0]) {
+          setTempContracts(prev => {
+            const copy = [...prev];
+            copy[index] = data[0] as Contract;
+            return copy;
+          });
+          alert("Thêm hợp đồng lao động thành công!");
+        }
+      } else {
+        const { error } = await supabase
+          .from("contracts")
+          .update(dbData)
+          .eq("id", contract.id);
+          
+        if (error) throw error;
+        alert("Cập nhật thông tin hợp đồng thành công!");
+      }
+      
+      await fetchContracts();
+    } catch (err: any) {
+      console.error("Lỗi khi lưu dòng hợp đồng:", err);
+      alert("Lỗi lưu hợp đồng: " + err.message);
+    }
+  };
+
+  const handleBulkSaveContracts = async () => {
+    try {
+      setSavingContracts(true);
+      
+      const newItems = tempContracts.filter(c => c.id.startsWith("new-"));
+      const existingItems = tempContracts.filter(c => !c.id.startsWith("new-"));
+      
+      for (const item of newItems) {
+        let empId = item.employee_id;
+        if (!empId && item.employee_name) {
+          const emp = employees.find(e => 
+            e.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") === 
+            item.employee_name!.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+          );
+          if (emp) empId = emp.id;
+        }
+
+        const dbData: any = {
+          contract_number: item.contract_number || "CHƯA_CÓ",
+          type: item.type || "Thử việc",
+          sign_date: item.sign_date || null,
+          expiration_date: item.expiration_date || null,
+          status: item.status || "Hiệu lực",
+          salary: item.total_income || null,
+          stt_ton: item.stt_ton || null,
+          stt: item.stt || null,
+          employee_code: item.employee_code || null,
+          employee_name: item.employee_name || null,
+          onboard_date: item.onboard_date || null,
+          probation_contract_number: item.probation_contract_number || null,
+          probation_start_date: item.probation_start_date || null,
+          probation_end_date: item.probation_end_date || null,
+          base_salary_insurance: item.base_salary_insurance || null,
+          performance_bonus: item.performance_bonus || null,
+          allowances: item.allowances || null,
+          total_income: item.total_income || null,
+          last_salary_adj_date: item.last_salary_adj_date || null,
+        };
+        if (empId) dbData.employee_id = empId;
+
+        const { error } = await supabase.from("contracts").insert([dbData]);
+        if (error) throw error;
+      }
+
+      for (const item of existingItems) {
+        const original = contracts.find(c => c.id === item.id);
+        if (!original) continue;
+
+        const hasChanged = 
+          item.stt_ton !== original.stt_ton ||
+          item.stt !== original.stt ||
+          item.employee_code !== original.employee_code ||
+          item.employee_name !== original.employee_name ||
+          item.onboard_date !== original.onboard_date ||
+          item.probation_contract_number !== original.probation_contract_number ||
+          item.probation_start_date !== original.probation_start_date ||
+          item.probation_end_date !== original.probation_end_date ||
+          item.contract_number !== original.contract_number ||
+          item.type !== original.type ||
+          item.sign_date !== original.sign_date ||
+          item.expiration_date !== original.expiration_date ||
+          item.base_salary_insurance !== original.base_salary_insurance ||
+          item.performance_bonus !== original.performance_bonus ||
+          item.allowances !== original.allowances ||
+          item.total_income !== original.total_income ||
+          item.last_salary_adj_date !== original.last_salary_adj_date ||
+          item.status !== original.status ||
+          item.employee_id !== original.employee_id;
+
+        if (!hasChanged) continue;
+
+        const dbData: any = {
+          contract_number: item.contract_number,
+          type: item.type,
+          sign_date: item.sign_date || null,
+          expiration_date: item.expiration_date || null,
+          status: item.status || "Hiệu lực",
+          salary: item.total_income || null,
+          stt_ton: item.stt_ton || null,
+          stt: item.stt || null,
+          employee_code: item.employee_code || null,
+          employee_name: item.employee_name || null,
+          onboard_date: item.onboard_date || null,
+          probation_contract_number: item.probation_contract_number || null,
+          probation_start_date: item.probation_start_date || null,
+          probation_end_date: item.probation_end_date || null,
+          base_salary_insurance: item.base_salary_insurance || null,
+          performance_bonus: item.performance_bonus || null,
+          allowances: item.allowances || null,
+          total_income: item.total_income || null,
+          last_salary_adj_date: item.last_salary_adj_date || null,
+          employee_id: item.employee_id || null,
+        };
+
+        const { error } = await supabase.from("contracts").update(dbData).eq("id", item.id);
+        if (error) throw error;
+      }
+
+      alert("Lưu toàn bộ danh sách hợp đồng nhân sự thành công!");
+      await fetchContracts();
+    } catch (err: any) {
+      console.error("Lỗi khi lưu hàng loạt hợp đồng:", err);
+      alert("Lỗi lưu hợp đồng: " + err.message);
+    } finally {
+      setSavingContracts(false);
+    }
+  };
+
+  const handleDeleteContractRow = async (index: number) => {
+    const contract = tempContracts[index];
+    
+    if (confirm(`Bạn có chắc chắn muốn xoá hợp đồng số "${contract.contract_number || 'chưa nhập'}" của ${contract.employee_name || 'chưa rõ tên'}?`)) {
+      try {
+        if (!contract.id.startsWith("new-")) {
+          const { error } = await supabase.from("contracts").delete().eq("id", contract.id);
+          if (error) throw error;
+        }
+        
+        setTempContracts(prev => prev.filter((_, i) => i !== index));
+        setContracts(prev => prev.filter(c => c.id !== contract.id));
+        alert("Xoá hợp đồng thành công!");
+      } catch (err: any) {
+        console.error("Lỗi khi xoá hợp đồng:", err);
+        alert("Lỗi xoá hợp đồng: " + err.message);
+      }
+    }
+  };
+
+  const handleAddBlankContractRow = () => {
+    const newContract: Contract = {
+      id: "new-" + Date.now(),
+      stt_ton: "",
+      stt: tempContracts.length + 1,
+      employee_code: "",
+      employee_name: "",
+      onboard_date: "",
+      probation_contract_number: "",
+      probation_start_date: "",
+      probation_end_date: "",
+      contract_number: "",
+      type: "Thử việc",
+      sign_date: new Date().toISOString().split("T")[0],
+      expiration_date: "",
+      base_salary_insurance: null,
+      performance_bonus: null,
+      allowances: null,
+      total_income: null,
+      last_salary_adj_date: "",
+      status: "Hiệu lực",
+    };
+    setTempContracts(prev => [newContract, ...prev]);
+  };
+
   const handleTabChange = (tabId: string) => {
     setActiveTab(tabId);
     if (tabId === "employee_profile") setActiveSubTab("personal");
@@ -1455,17 +1998,17 @@ export default function CBPage() {
     await checkAccessAndLoad();
   };
 
-  // Fetch contracts from Supabase
   const fetchContracts = async () => {
     try {
       setLoadingContracts(true);
       const { data, error } = await supabase
         .from("contracts")
-        .select("*")
-        .order("effective_date", { ascending: false });
+        .select("*, employees(name, department, role, employee_code)")
+        .order("created_at", { ascending: false });
       if (error) throw error;
       if (data) {
         setContracts(data as Contract[]);
+        setTempContracts(data as Contract[]);
       }
     } catch (err) {
       console.error("Error fetching contracts in CB:", err);
@@ -1789,6 +2332,7 @@ export default function CBPage() {
               { id: "attendance", label: "Chấm công", icon: Clock },
               { id: "payroll_insurance", label: "Bảng lương & BHXH", icon: DollarSign },
               { id: "benefits", label: "Phúc lợi", icon: Award },
+              { id: "employee_contracts", label: "Hợp đồng nhân sự", icon: FileText },
             ].map((tab) => {
               const Icon = tab.icon;
               return (
@@ -1809,7 +2353,7 @@ export default function CBPage() {
           </div>
 
           {/* ─── SUB-TABS NAVIGATOR BASED ON ACTIVE MAIN TAB (NON-PROFILE TABS ONLY) ─── */}
-          {activeTab !== "employee_profile" && (
+          {activeTab !== "employee_profile" && activeTab !== "employee_contracts" && (
             <div className="flex flex-wrap gap-1.5 text-xs font-bold bg-[#005BAC]/5 p-1.5 rounded-xl shrink-0 border border-blue-100/20">
               {activeTab === "attendance" && [
                 { id: "machine", label: "Lấy ngày công máy chấm công" },
@@ -4176,6 +4720,816 @@ export default function CBPage() {
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ─── TAB 5: HỢP ĐỒNG NHÂN SỰ ─── */}
+          {activeTab === "employee_contracts" && (
+            <div className="space-y-6 animate-fade-in">
+              {/* Header and Control Bar */}
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-4 rounded-2xl shadow-sm border border-slate-200/50">
+                <div className="flex-1 max-w-md relative">
+                  <span className="absolute left-3 top-2.5 text-slate-400"><Search size={16} /></span>
+                  <input
+                    type="text"
+                    value={contractsSearchQuery}
+                    onChange={(e) => setContractsSearchQuery(e.target.value)}
+                    placeholder="Tìm theo họ tên, mã NV, số hợp đồng..."
+                    className="w-full pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none transition-all text-xs font-semibold"
+                  />
+                </div>
+                
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={handleAddBlankContractRow}
+                    className="flex items-center gap-1.5 px-4 py-2.5 bg-[#005BAC] hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-premium active:scale-95"
+                  >
+                    <Plus size={14} /> Thêm hợp đồng mới
+                  </button>
+
+                  <button
+                    onClick={handleBulkSaveContracts}
+                    disabled={savingContracts}
+                    className="flex items-center gap-1.5 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-premium disabled:opacity-50 active:scale-95"
+                  >
+                    {savingContracts ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} 
+                    Lưu tất cả thay đổi
+                  </button>
+
+                  <button
+                    onClick={fetchContracts}
+                    disabled={loadingContracts}
+                    className="p-2.5 border border-slate-200 hover:bg-slate-50 text-slate-500 rounded-xl transition-all cursor-pointer active:scale-95"
+                    title="Đồng bộ lại"
+                  >
+                    <RefreshCw size={14} className={loadingContracts ? "animate-spin" : ""} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Upload Panel (Excel Drag & Drop + AI Individual Contract Scanner) */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Excel Drag & Drop */}
+                <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium flex flex-col space-y-4">
+                  <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                    <span className="p-2 bg-blue-50 text-blue-600 rounded-xl"><FileText size={16} /></span>
+                    <div>
+                      <h4 className="font-heading font-black text-slate-800 text-xs uppercase tracking-wider">Nhập dữ liệu theo dõi từ file Excel</h4>
+                      <p className="text-slate-400 text-[10px] font-semibold mt-0.5">Kéo thả danh sách Excel ký HĐ để AI phân tích cấu trúc cột và tự động nạp</p>
+                    </div>
+                  </div>
+
+                  {isExcelImporting ? (
+                    <div className="flex-1 flex flex-col items-center justify-center p-6 border-2 border-dashed border-blue-200 rounded-2xl bg-blue-50/5 gap-3 min-h-[140px]">
+                      {/* Animated step indicators */}
+                      <div className="flex items-center gap-2 w-full max-w-xs">
+                        {([
+                          { key: "reading",   label: "Đọc file",     icon: "📂" },
+                          { key: "sending",   label: "Gửi lên AI",   icon: "☁️" },
+                          { key: "receiving", label: "Nhận kết quả", icon: "⚡" },
+                        ] as const).map((step, idx) => {
+                          const stages = ["reading", "sending", "receiving", "done"] as const;
+                          const currentIdx = stages.indexOf(excelImportStage);
+                          const stepIdx = ["reading", "sending", "receiving"].indexOf(step.key);
+                          const isDone    = currentIdx > stepIdx;
+                          const isActive  = currentIdx === stepIdx;
+                          return (
+                            <>
+                              {idx > 0 && (
+                                <div key={`line-${idx}`} className={`flex-1 h-0.5 rounded-full transition-all duration-500 ${isDone ? "bg-blue-400" : "bg-slate-200"}`} />
+                              )}
+                              <div key={step.key} className={`flex flex-col items-center gap-0.5`}>
+                                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm transition-all duration-300 ${
+                                  isDone   ? "bg-blue-500 text-white shadow-md shadow-blue-200" :
+                                  isActive ? "bg-blue-100 ring-2 ring-blue-400 ring-offset-1 animate-pulse" :
+                                             "bg-slate-100 text-slate-400"
+                                }`}>
+                                  {isDone ? "✓" : step.icon}
+                                </div>
+                                <span className={`text-[9px] font-bold ${
+                                  isDone ? "text-blue-500" : isActive ? "text-[#005BAC]" : "text-slate-400"
+                                }`}>{step.label}</span>
+                              </div>
+                            </>
+                          );
+                        })}
+                      </div>
+                      <div className="flex items-center gap-2 mt-1">
+                        <Loader2 className="animate-spin text-[#005BAC] flex-shrink-0" size={16} />
+                        <span className="text-xs font-bold text-[#005BAC]">
+                          {excelImportStage === "reading"   && "Đang đọc và tối ưu dữ liệu từ file Excel..."}
+                          {excelImportStage === "sending"   && "Đang gửi dữ liệu lên ChatGPT để phân tích..."}
+                          {excelImportStage === "receiving" && "AI đang phân tích hợp đồng theo từng lô dữ liệu..."}
+                          {(excelImportStage as string) === "saving" && "Đang lưu toàn bộ hợp đồng vào hệ thống..."}
+                        </span>
+                      </div>
+                      <span className="text-[9px] text-slate-400 font-semibold">File lớn sẽ được chia nhỏ và xử lý theo từng lô tự động</span>
+                    </div>
+                  ) : (
+                    <>
+                      <input
+                        type="file"
+                        accept=".xlsx,.xls"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleExcelContractUpload(file);
+                        }}
+                        className="hidden"
+                        id="excel-contract-input-tab"
+                      />
+                      <label
+                        htmlFor="excel-contract-input-tab"
+                        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const files = e.dataTransfer.files;
+                          if (files && files[0]) handleExcelContractUpload(files[0]);
+                        }}
+                        className="flex-1 border-2 border-dashed border-slate-200 hover:border-[#005BAC] rounded-2xl p-6 flex flex-col items-center justify-center text-center cursor-pointer transition-all bg-slate-50/50 hover:bg-blue-50/10 min-h-[140px]"
+                      >
+                        <UploadCloud size={32} className="text-slate-400 mb-2" />
+                        <span className="text-xs font-bold text-slate-700">Kéo thả file Excel theo dõi hợp đồng vào đây</span>
+                        <span className="text-[10px] text-slate-400 font-semibold mt-1">Hoặc click để chọn file Excel từ máy tính (.xlsx, .xls)</span>
+                      </label>
+                    </>
+                  )}
+                </div>
+
+                {/* AI Document Scanner */}
+                <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium flex flex-col space-y-4">
+                  <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                    <span className="p-2 bg-purple-50 text-purple-600 rounded-xl"><FileText size={16} /></span>
+                    <div>
+                      <h4 className="font-heading font-black text-slate-800 text-xs uppercase tracking-wider">Đọc hợp đồng lao động bằng AI</h4>
+                      <p className="text-slate-400 text-[10px] font-semibold mt-0.5">Tải lên file PDF/Word hợp đồng thực tế, AI tự trích xuất lương, thưởng và phụ cấp</p>
+                    </div>
+                  </div>
+
+                  {isContractReading ? (
+                    <div className="flex-1 flex flex-col items-center justify-center p-6 border-2 border-dashed border-purple-200 rounded-2xl bg-purple-50/5 gap-2 min-h-[140px]">
+                      <Loader2 className="animate-spin text-purple-600" size={24} />
+                      <span className="text-xs font-bold text-purple-600">AI đang đọc nội dung hợp đồng lao động...</span>
+                      <span className="text-[9px] text-slate-400 font-semibold">AI sẽ trích xuất thông tin lương chính thức, phụ cấp và ngày hiệu lực</span>
+                    </div>
+                  ) : (
+                    <>
+                      <input
+                        type="file"
+                        accept=".pdf,.docx,.doc,.png,.jpg,.jpeg,.txt"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleIndividualContractReader(file);
+                        }}
+                        className="hidden"
+                        id="individual-contract-input"
+                      />
+                      <label
+                        htmlFor="individual-contract-input"
+                        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const files = e.dataTransfer.files;
+                          if (files && files[0]) handleIndividualContractReader(files[0]);
+                        }}
+                        className="flex-1 border-2 border-dashed border-slate-200 hover:border-purple-500 rounded-2xl p-6 flex flex-col items-center justify-center text-center cursor-pointer transition-all bg-slate-50/50 hover:bg-purple-50/10 min-h-[140px]"
+                      >
+                        <UploadCloud size={32} className="text-purple-400 mb-2" />
+                        <span className="text-xs font-bold text-slate-700">Kéo thả hợp đồng lao động vào đây (PDF/Word/Ảnh)</span>
+                        <span className="text-[10px] text-slate-400 font-semibold mt-1">Hoặc click để tải lên file hợp đồng của nhân viên</span>
+                      </label>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Data Grid Table */}
+              <div className="glass bg-white rounded-2xl border border-slate-200/50 shadow-premium overflow-hidden">
+                <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between bg-slate-50/50 gap-2">
+                  <h3 className="font-heading font-black text-slate-800 text-xs uppercase tracking-wider">Danh sách theo dõi ký HĐTV, HĐLĐ ({tempContracts.length} bản ghi)</h3>
+                  <span className="text-[9px] text-amber-600 font-extrabold bg-amber-50 px-2.5 py-1 rounded-full uppercase tracking-wider border border-amber-100">
+                    Nhập liệu trực tiếp vào các ô trống. Bấm nút Lưu từng dòng hoặc Lưu tất cả thay đổi.
+                  </span>
+                </div>
+
+                <div className="overflow-x-auto overflow-y-auto max-h-[600px] scrollbar-thin">
+                  <table className="w-full text-[11px] text-left border-collapse min-w-[2400px]">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 font-extrabold uppercase tracking-wider text-[9px] sticky top-0 z-10">
+                        <th className="py-2.5 px-2 w-16 text-center bg-slate-50 border-r border-slate-200">HĐ Tồn</th>
+                        <th className="py-2.5 px-2 w-14 text-center bg-slate-50 border-r border-slate-200">STT</th>
+                        <th className="py-2.5 px-2 w-28 bg-slate-50 border-r border-slate-200">Mã NV</th>
+                        <th className="py-2.5 px-2 w-48 bg-slate-50 border-r border-slate-200">Họ và tên</th>
+                        <th className="py-2.5 px-2 w-32 text-center bg-slate-50 border-r border-slate-200">Ngày nhận việc</th>
+                        <th className="py-2.5 px-2 w-44 bg-slate-50 border-r border-slate-200">Số HĐTV</th>
+                        <th className="py-2.5 px-2 w-32 text-center bg-slate-50 border-r border-slate-200">HĐTV Từ ngày</th>
+                        <th className="py-2.5 px-2 w-32 text-center bg-slate-50 border-r border-slate-200">HĐTV Đến ngày</th>
+                        <th className="py-2.5 px-2 w-44 bg-slate-50 border-r border-slate-200 text-[#005BAC]">Số HĐLĐ</th>
+                        <th className="py-2.5 px-2 w-44 bg-slate-50 border-r border-slate-200">Loại HĐLĐ</th>
+                        <th className="py-2.5 px-2 w-32 text-center bg-slate-50 border-r border-slate-200">HĐLĐ Hiệu lực</th>
+                        <th className="py-2.5 px-2 w-32 text-center bg-slate-50 border-r border-slate-200">HĐLĐ Hết hạn</th>
+                        <th className="py-2.5 px-2 w-32 text-right bg-slate-50 border-r border-slate-200">Lương BHXH</th>
+                        <th className="py-2.5 px-2 w-32 text-right bg-slate-50 border-r border-slate-200">Thưởng HQCV</th>
+                        <th className="py-2.5 px-2 w-32 text-right bg-slate-50 border-r border-slate-200">Phụ cấp</th>
+                        <th className="py-2.5 px-2 w-32 text-right bg-slate-50 border-r border-slate-200 text-emerald-700 bg-emerald-50/10">Tổng thu nhập</th>
+                        <th className="py-2.5 px-2 w-20 text-center bg-slate-50">Thao tác</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-medium text-slate-700 bg-white">
+                      {loadingContracts ? (
+                        <tr>
+                          <td colSpan={17} className="py-12 text-center text-slate-400 gap-2">
+                            <Loader2 className="animate-spin text-[#005BAC] mx-auto mb-2" size={20} />
+                            <span>Đang tải danh sách hợp đồng lao động...</span>
+                          </td>
+                        </tr>
+                      ) : tempContracts.length === 0 ? (
+                        <tr>
+                          <td colSpan={19} className="py-12 text-center text-slate-400">
+                            Không tìm thấy dữ liệu hợp đồng nào. Hãy tải lên Excel hoặc thêm dòng hợp đồng mới!
+                          </td>
+                        </tr>
+                      ) : (
+                        (() => {
+                          const query = contractsSearchQuery.trim().toLowerCase();
+                          const filtered = tempContracts.filter(c => {
+                            const name = (c.employee_name || "").toLowerCase();
+                            const code = (c.employee_code || "").toLowerCase();
+                            const num = (c.contract_number || "").toLowerCase();
+                            const dept = (c.employees?.department || "").toLowerCase();
+                            return name.includes(query) || code.includes(query) || num.includes(query) || dept.includes(query);
+                          });
+
+                          return filtered.map((c) => {
+                            const actualIdx = tempContracts.findIndex(tc => tc.id === c.id);
+                            return (
+                              <tr key={c.id} className="hover:bg-slate-50/50 transition-all">
+                                {/* STT Tồn */}
+                                <td className="py-1 px-1 border-r border-slate-100 text-center">
+                                  <input
+                                    type="text"
+                                    value={c.stt_ton || ""}
+                                    onChange={(e) => handleContractCellChange(actualIdx, "stt_ton", e.target.value)}
+                                    className="w-full text-center bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 font-semibold text-slate-500"
+                                  />
+                                </td>
+                                {/* STT */}
+                                <td className="py-1 px-1 border-r border-slate-100 text-center">
+                                  <input
+                                    type="number"
+                                    value={c.stt || ""}
+                                    onChange={(e) => handleContractCellChange(actualIdx, "stt", e.target.value ? parseInt(e.target.value) : null)}
+                                    className="w-full text-center bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 font-semibold"
+                                  />
+                                </td>
+                                {/* Mã NV */}
+                                <td className="py-1 px-1 border-r border-slate-100">
+                                  <input
+                                    type="text"
+                                    value={c.employee_code || ""}
+                                    onChange={(e) => handleContractCellChange(actualIdx, "employee_code", e.target.value)}
+                                    className="w-full bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 px-1 text-slate-600 font-mono"
+                                  />
+                                </td>
+                                {/* Họ và tên */}
+                                <td className="py-1 px-1 border-r border-slate-100 font-bold text-slate-800">
+                                  <div className="flex flex-col gap-1 w-full">
+                                    <select
+                                      value={c.employee_id || ""}
+                                      onChange={(e) => handleContractCellChange(actualIdx, "employee_id", e.target.value)}
+                                      className="w-full bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 text-xs cursor-pointer font-bold text-slate-850"
+                                    >
+                                      <option value="">-- Chọn nhân viên hệ thống --</option>
+                                      {employees.map(emp => (
+                                        <option key={emp.id} value={emp.id}>
+                                          {emp.name} ({emp.employee_code || "N/A"})
+                                        </option>
+                                      ))}
+                                    </select>
+                                    {!c.employee_id && (
+                                      <input
+                                        type="text"
+                                        value={c.employee_name || ""}
+                                        onChange={(e) => handleContractCellChange(actualIdx, "employee_name", e.target.value)}
+                                        placeholder="Hoặc tự gõ tên..."
+                                        className="w-full px-1.5 py-0.5 bg-slate-50 border border-slate-200 rounded font-normal text-[10px] focus:bg-white focus:border-blue-300 outline-none"
+                                      />
+                                    )}
+                                  </div>
+                                </td>
+                                {/* Ngày nhận việc */}
+                                <td className="py-1 px-1 border-r border-slate-100 text-center">
+                                  <input
+                                    type="date"
+                                    value={c.onboard_date || ""}
+                                    onChange={(e) => handleContractCellChange(actualIdx, "onboard_date", e.target.value)}
+                                    className="bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 px-1 w-full text-center"
+                                  />
+                                </td>
+                                {/* Số HĐTV */}
+                                <td className="py-1 px-1 border-r border-slate-100">
+                                  <input
+                                    type="text"
+                                    value={c.probation_contract_number || ""}
+                                    onChange={(e) => handleContractCellChange(actualIdx, "probation_contract_number", e.target.value)}
+                                    className="w-full bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 px-1 font-mono text-[10px]"
+                                  />
+                                </td>
+                                {/* HĐTV Từ ngày */}
+                                <td className="py-1 px-1 border-r border-slate-100 text-center">
+                                  <input
+                                    type="date"
+                                    value={c.probation_start_date || ""}
+                                    onChange={(e) => handleContractCellChange(actualIdx, "probation_start_date", e.target.value)}
+                                    className="bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 px-1 w-full text-center"
+                                  />
+                                </td>
+                                {/* HĐTV Đến ngày */}
+                                <td className="py-1 px-1 border-r border-slate-100 text-center">
+                                  <input
+                                    type="date"
+                                    value={c.probation_end_date || ""}
+                                    onChange={(e) => handleContractCellChange(actualIdx, "probation_end_date", e.target.value)}
+                                    className="bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 px-1 w-full text-center"
+                                  />
+                                </td>
+                                {/* Số HĐLĐ */}
+                                <td className="py-1 px-1 border-r border-slate-100 font-bold text-[#005BAC]">
+                                  <input
+                                    type="text"
+                                    value={c.contract_number || ""}
+                                    onChange={(e) => handleContractCellChange(actualIdx, "contract_number", e.target.value)}
+                                    placeholder="HDLD-..."
+                                    className="w-full bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 px-1 font-mono text-[10px] font-bold text-[#005BAC]"
+                                  />
+                                </td>
+                                {/* Loại HĐLĐ */}
+                                <td className="py-1 px-1 border-r border-slate-100">
+                                  <select
+                                    value={c.type || "Thử việc"}
+                                    onChange={(e) => handleContractCellChange(actualIdx, "type", e.target.value)}
+                                    className="w-full bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 text-[10px] cursor-pointer font-bold text-slate-800"
+                                  >
+                                    <option value="Thử việc">Thử việc</option>
+                                    <option value="Không xác định thời hạn">Không xác định thời hạn</option>
+                                    <option value="Xác định thời hạn 1 năm">Xác định thời hạn 1 năm</option>
+                                    <option value="Xác định thời hạn 2 năm">Xác định thời hạn 2 năm</option>
+                                    <option value="Xác định thời hạn 3 năm">Xác định thời hạn 3 năm</option>
+                                    <option value="Xác định thời hạn khác">Xác định thời hạn khác</option>
+                                  </select>
+                                </td>
+                                {/* HĐLĐ Hiệu lực */}
+                                <td className="py-1 px-1 border-r border-slate-100 text-center">
+                                  <input
+                                    type="date"
+                                    value={c.sign_date || ""}
+                                    onChange={(e) => handleContractCellChange(actualIdx, "sign_date", e.target.value)}
+                                    className="bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 px-1 w-full text-center"
+                                  />
+                                </td>
+                                {/* HĐLĐ Hết hạn */}
+                                <td className="py-1 px-1 border-r border-slate-100 text-center">
+                                  <input
+                                    type="date"
+                                    value={c.expiration_date || ""}
+                                    onChange={(e) => handleContractCellChange(actualIdx, "expiration_date", e.target.value)}
+                                    className="bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 px-1 w-full text-center"
+                                  />
+                                </td>
+                                {/* Lương BHXH */}
+                                <td className="py-1 px-1 border-r border-slate-100 text-right">
+                                  <input
+                                    type="text"
+                                    value={c.base_salary_insurance !== null && c.base_salary_insurance !== undefined ? c.base_salary_insurance.toLocaleString("vi-VN") : ""}
+                                    onChange={(e) => {
+                                      const val = e.target.value.replace(/\D/g, "");
+                                      handleContractCellChange(actualIdx, "base_salary_insurance", val ? parseInt(val) : null);
+                                    }}
+                                    className="w-full text-right bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 px-1 font-bold text-slate-800"
+                                  />
+                                </td>
+                                {/* Thưởng HQCV */}
+                                <td className="py-1 px-1 border-r border-slate-100 text-right">
+                                  <input
+                                    type="text"
+                                    value={c.performance_bonus !== null && c.performance_bonus !== undefined ? c.performance_bonus.toLocaleString("vi-VN") : ""}
+                                    onChange={(e) => {
+                                      const val = e.target.value.replace(/\D/g, "");
+                                      handleContractCellChange(actualIdx, "performance_bonus", val ? parseInt(val) : null);
+                                    }}
+                                    className="w-full text-right bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 px-1 font-bold text-slate-600"
+                                  />
+                                </td>
+                                {/* Phụ cấp */}
+                                <td className="py-1 px-1 border-r border-slate-100 text-right">
+                                  <input
+                                    type="text"
+                                    value={c.allowances !== null && c.allowances !== undefined ? c.allowances.toLocaleString("vi-VN") : ""}
+                                    onChange={(e) => {
+                                      const val = e.target.value.replace(/\D/g, "");
+                                      handleContractCellChange(actualIdx, "allowances", val ? parseInt(val) : null);
+                                    }}
+                                    className="w-full text-right bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 px-1 font-bold text-slate-600"
+                                  />
+                                </td>
+                                {/* Tổng thu nhập */}
+                                <td className="py-1 px-1 border-r border-slate-100 text-right font-bold text-emerald-700 bg-emerald-50/10">
+                                  <input
+                                    type="text"
+                                    value={c.total_income !== null && c.total_income !== undefined ? c.total_income.toLocaleString("vi-VN") : ""}
+                                    onChange={(e) => {
+                                      const val = e.target.value.replace(/\D/g, "");
+                                      handleContractCellChange(actualIdx, "total_income", val ? parseInt(val) : null);
+                                    }}
+                                    className="w-full text-right bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 px-1 font-bold text-emerald-700"
+                                  />
+                                </td>
+                                {/* Thao tác */}
+                                <td className="py-1 px-1 text-center flex items-center justify-center gap-1.5">
+                                  <button
+                                    onClick={() => handleSaveContractRow(actualIdx)}
+                                    className="p-1 text-emerald-600 hover:bg-emerald-50 rounded transition-all cursor-pointer"
+                                    title="Lưu dòng này"
+                                  >
+                                    <Save size={13} />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteContractRow(actualIdx)}
+                                    className="p-1 text-rose-500 hover:bg-rose-50 rounded transition-all cursor-pointer"
+                                    title="Xoá"
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          });
+                        })()
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ─── MODAL PREVIEW NHẬP EXCEL HỢP ĐỒNG ─── */}
+          {showExcelImportPreview && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fade-in">
+              <div className="bg-white w-full max-w-6xl rounded-2xl shadow-premium border border-slate-100 overflow-hidden transform transition-all animate-scale-up max-h-[85vh] flex flex-col">
+                <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-[#005BAC] text-white shrink-0">
+                  <h3 className="font-heading font-black text-sm flex items-center gap-2">
+                    <FileText size={16} /> Xem trước danh sách hợp đồng AI đã trích xuất từ Excel
+                  </h3>
+                  <button
+                    onClick={() => setShowExcelImportPreview(false)}
+                    className="text-white/80 hover:text-white transition-all cursor-pointer p-1 rounded-lg hover:bg-white/10"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+                
+                <div className="p-6 overflow-y-auto space-y-4 flex-1">
+                  <div className="bg-blue-50 border border-blue-100 p-3 rounded-xl text-blue-800 text-xs font-semibold">
+                    💡 AI đã tự động chuẩn hóa ngày tháng và số tiền. Hãy kiểm tra các cột thông tin trước khi nạp vào bảng chính. Ô có nút chọn nhân viên cho phép khớp nối với hồ sơ nhân sự hiện có.
+                  </div>
+
+                  <div className="overflow-x-auto border border-slate-200 rounded-xl max-h-[50vh] scrollbar-thin">
+                    <table className="w-full text-[10px] text-left border-collapse min-w-[2200px]">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 font-extrabold uppercase tracking-wider text-[8px] sticky top-0">
+                          <th className="py-2 px-2 w-12 text-center bg-slate-50 border-r border-slate-200">HĐ Tồn</th>
+                          <th className="py-2 px-2 w-10 text-center bg-slate-50 border-r border-slate-200">STT</th>
+                          <th className="py-2 px-2 w-24 bg-slate-50 border-r border-slate-200">Mã NV</th>
+                          <th className="py-2 px-2 w-48 bg-slate-50 border-r border-slate-200">Họ và tên khớp hệ thống</th>
+                          <th className="py-2 px-2 w-28 text-center bg-slate-50 border-r border-slate-200">Ngày nhận việc</th>
+                          <th className="py-2 px-2 w-40 bg-slate-50 border-r border-slate-200">Số HĐTV</th>
+                          <th className="py-2 px-2 w-28 text-center bg-slate-50 border-r border-slate-200">Từ ngày</th>
+                          <th className="py-2 px-2 w-28 text-center bg-slate-50 border-r border-slate-200">Đến ngày</th>
+                          <th className="py-2 px-2 w-40 bg-slate-50 border-r border-slate-200">Số HĐLĐ</th>
+                          <th className="py-2 px-2 w-36 bg-slate-50 border-r border-slate-200">Loại HĐLĐ</th>
+                          <th className="py-2 px-2 w-28 text-center bg-slate-50 border-r border-slate-200">Hiệu lực</th>
+                          <th className="py-2 px-2 w-28 text-center bg-slate-50 border-r border-slate-200">Hết hạn</th>
+                          <th className="py-2 px-2 w-28 text-right bg-slate-50 border-r border-slate-200">Lương BHXH</th>
+                          <th className="py-2 px-2 w-28 text-right bg-slate-50 border-r border-slate-200">Thưởng HQCV</th>
+                          <th className="py-2 px-2 w-28 text-right bg-slate-50 border-r border-slate-200">Phụ cấp</th>
+                          <th className="py-2 px-2 w-28 text-right bg-slate-50 border-r border-slate-200 text-emerald-700 bg-emerald-50/10">Tổng thu nhập</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-medium text-slate-700 bg-white">
+                        {excelImportedContracts.map((c, idx) => (
+                          <tr key={c.id || idx} className="hover:bg-slate-50/30">
+                            <td className="py-2 px-2 border-r border-slate-100 text-center">{c.stt_ton}</td>
+                            <td className="py-2 px-2 border-r border-slate-100 text-center">{c.stt}</td>
+                            <td className="py-2 px-2 border-r border-slate-100 font-mono">{c.employee_code}</td>
+                            <td className="py-2 px-2 border-r border-slate-100 font-bold text-slate-800">
+                              <select
+                                value={c.employee_id || ""}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setExcelImportedContracts(prev => {
+                                    const copy = [...prev];
+                                    const matched = employees.find(emp => emp.id === val);
+                                    copy[idx] = {
+                                      ...copy[idx],
+                                      employee_id: val,
+                                      employee_name: matched ? matched.name : copy[idx].employee_name,
+                                      employee_code: matched ? (matched.employee_code || "") : copy[idx].employee_code,
+                                    };
+                                    return copy;
+                                  });
+                                }}
+                                className="w-full bg-slate-50 border border-slate-200 rounded p-1 text-[10px] font-bold text-slate-800"
+                              >
+                                <option value="">-- {c.employee_name || "Chọn nhân sự hệ thống"} --</option>
+                                {employees.map(emp => (
+                                  <option key={emp.id} value={emp.id}>{emp.name} ({emp.employee_code || "N/A"})</option>
+                                ))}
+                              </select>
+                            </td>
+                            <td className="py-2 px-2 border-r border-slate-100 text-center font-mono">{c.onboard_date}</td>
+                            <td className="py-2 px-2 border-r border-slate-100 font-mono text-[9px]">{c.probation_contract_number}</td>
+                            <td className="py-2 px-2 border-r border-slate-100 text-center font-mono">{c.probation_start_date}</td>
+                            <td className="py-2 px-2 border-r border-slate-100 text-center font-mono">{c.probation_end_date}</td>
+                            <td className="py-2 px-2 border-r border-slate-100 font-mono text-[9px] text-[#005BAC]">{c.contract_number}</td>
+                            <td className="py-2 px-2 border-r border-slate-100 font-bold">{c.type}</td>
+                            <td className="py-2 px-2 border-r border-slate-100 text-center font-mono">{c.sign_date}</td>
+                            <td className="py-2 px-2 border-r border-slate-100 text-center font-mono">{c.expiration_date}</td>
+                            <td className="py-2 px-2 border-r border-slate-100 text-right font-bold text-slate-850">
+                              {c.base_salary_insurance ? c.base_salary_insurance.toLocaleString("vi-VN") : ""}
+                            </td>
+                            <td className="py-2 px-2 border-r border-slate-100 text-right font-bold text-slate-500">
+                              {c.performance_bonus ? c.performance_bonus.toLocaleString("vi-VN") : ""}
+                            </td>
+                            <td className="py-2 px-2 border-r border-slate-100 text-right font-bold text-slate-500">
+                              {c.allowances ? c.allowances.toLocaleString("vi-VN") : ""}
+                            </td>
+                            <td className="py-2 px-2 border-r border-slate-100 text-right font-bold text-emerald-600 bg-emerald-50/10">
+                              {c.total_income ? c.total_income.toLocaleString("vi-VN") : ""}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/50 flex justify-end gap-2 shrink-0">
+                  <button
+                    onClick={() => setShowExcelImportPreview(false)}
+                    className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 font-bold rounded-xl active:scale-95 transition-all cursor-pointer text-xs"
+                  >
+                    Hủy bỏ
+                  </button>
+                  <button
+                    onClick={() => {
+                      setTempContracts(prev => [...excelImportedContracts, ...prev]);
+                      setShowExcelImportPreview(false);
+                      alert(`Đã nạp ${excelImportedContracts.length} dòng hợp đồng từ Excel vào bảng chính! Nhớ bấm 'Lưu tất cả thay đổi' để đồng bộ lên hệ thống.`);
+                    }}
+                    className="px-5 py-2 bg-[#005BAC] hover:bg-blue-700 text-white font-bold rounded-xl active:scale-95 transition-all cursor-pointer text-xs shadow-premium"
+                  >
+                    Đồng ý nạp vào bảng chính
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ─── MODAL XÁC NHẬN HỢP ĐỒNG ĐỌC BẰNG AI ─── */}
+          {showSingleContractModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fade-in">
+              <div className="bg-white w-full max-w-2xl rounded-2xl shadow-premium border border-slate-100 overflow-hidden transform transition-all animate-scale-up">
+                <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-[#005BAC] text-white">
+                  <h3 className="font-heading font-black text-sm flex items-center gap-2">
+                    <FileText size={16} /> Chi tiết hợp đồng AI trích xuất từ tài liệu
+                  </h3>
+                  <button
+                    onClick={() => setShowSingleContractModal(false)}
+                    className="text-white/80 hover:text-white transition-all cursor-pointer p-1 rounded-lg hover:bg-white/10"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+                
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (!singleContractForm.contract_number) {
+                      alert("Vui lòng điền Số HĐLĐ!");
+                      return;
+                    }
+                    setTempContracts(prev => [singleContractForm as Contract, ...prev]);
+                    setShowSingleContractModal(false);
+                    alert("Đã thêm hợp đồng trích xuất vào bảng! Bạn nhớ bấm 'Lưu tất cả thay đổi' để hoàn tất.");
+                  }}
+                  className="p-6 space-y-4 text-xs font-semibold text-slate-700"
+                >
+                  <div className="bg-purple-50 border border-purple-100 p-3 rounded-xl text-purple-800 text-[10px] font-bold">
+                    🔮 AI đã đọc tài liệu hợp đồng và phát hiện thông tin dưới đây. Vui lòng xác minh và khớp nối với nhân sự hệ thống trước khi nạp vào bảng.
+                  </div>
+
+                  {/* Họ tên & Khớp nối */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Họ tên nhân viên (AI đọc được)</label>
+                      <input
+                        type="text"
+                        value={singleContractForm.employee_name || ""}
+                        onChange={(e) => setSingleContractForm(prev => ({ ...prev, employee_name: e.target.value }))}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] outline-none"
+                      />
+                    </div>
+                    
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Khớp với hồ sơ hệ thống</label>
+                      <select
+                        value={singleContractForm.employee_id || ""}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const emp = employees.find(emp => emp.id === val);
+                          setSingleContractForm(prev => ({
+                            ...prev,
+                            employee_id: val,
+                            employee_name: emp ? emp.name : prev.employee_name,
+                            employee_code: emp ? (emp.employee_code || "") : prev.employee_code,
+                            employees: emp ? {
+                              name: emp.name,
+                              department: emp.department,
+                              role: emp.role,
+                              employee_code: emp.employee_code
+                            } : undefined
+                          }));
+                        }}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl cursor-pointer"
+                      >
+                        <option value="">-- Chọn nhân sự để khớp nối --</option>
+                        {employees.map(emp => (
+                          <option key={emp.id} value={emp.id}>{emp.name} ({emp.employee_code || "N/A"})</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Số HĐLĐ & Loại HĐLĐ */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-[#005BAC] uppercase tracking-wider">Số HĐLĐ (Bắt buộc)</label>
+                      <input
+                        type="text"
+                        value={singleContractForm.contract_number || ""}
+                        onChange={(e) => setSingleContractForm(prev => ({ ...prev, contract_number: e.target.value }))}
+                        required
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] outline-none font-bold"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Loại hợp đồng</label>
+                      <select
+                        value={singleContractForm.type || "Thử việc"}
+                        onChange={(e) => setSingleContractForm(prev => ({ ...prev, type: e.target.value }))}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl cursor-pointer"
+                      >
+                        <option value="Thử việc">Thử việc</option>
+                        <option value="Không xác định thời hạn">Không xác định thời hạn</option>
+                        <option value="Xác định thời hạn 1 năm">Xác định thời hạn 1 năm</option>
+                        <option value="Xác định thời hạn 2 năm">Xác định thời hạn 2 năm</option>
+                        <option value="Xác định thời hạn 3 năm">Xác định thời hạn 3 năm</option>
+                        <option value="Xác định thời hạn khác">Xác định thời hạn khác</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Ngày hiệu lực & Ngày hết hạn */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Ngày hiệu lực HĐLĐ</label>
+                      <input
+                        type="date"
+                        value={singleContractForm.sign_date || ""}
+                        onChange={(e) => setSingleContractForm(prev => ({ ...prev, sign_date: e.target.value }))}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Ngày hết hạn HĐLĐ</label>
+                      <input
+                        type="date"
+                        value={singleContractForm.expiration_date || ""}
+                        onChange={(e) => setSingleContractForm(prev => ({ ...prev, expiration_date: e.target.value }))}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Thông tin Lương, Thưởng và Phụ cấp */}
+                  <div className="grid grid-cols-4 gap-3 bg-slate-50 p-3 rounded-2xl border border-slate-100">
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider">Lương BHXH</label>
+                      <input
+                        type="text"
+                        value={singleContractForm.base_salary_insurance !== null && singleContractForm.base_salary_insurance !== undefined ? singleContractForm.base_salary_insurance.toLocaleString("vi-VN") : ""}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/\D/g, "");
+                          setSingleContractForm(prev => ({ ...prev, base_salary_insurance: val ? parseInt(val) : null }));
+                        }}
+                        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl outline-none text-right font-bold"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider">Thưởng HQCV</label>
+                      <input
+                        type="text"
+                        value={singleContractForm.performance_bonus !== null && singleContractForm.performance_bonus !== undefined ? singleContractForm.performance_bonus.toLocaleString("vi-VN") : ""}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/\D/g, "");
+                          setSingleContractForm(prev => ({ ...prev, performance_bonus: val ? parseInt(val) : null }));
+                        }}
+                        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl outline-none text-right font-bold text-right font-bold"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider">Phụ cấp</label>
+                      <input
+                        type="text"
+                        value={singleContractForm.allowances !== null && singleContractForm.allowances !== undefined ? singleContractForm.allowances.toLocaleString("vi-VN") : ""}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/\D/g, "");
+                          setSingleContractForm(prev => ({ ...prev, allowances: val ? parseInt(val) : null }));
+                        }}
+                        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl outline-none text-right font-bold"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-emerald-700 uppercase tracking-wider">Tổng thu nhập</label>
+                      <input
+                        type="text"
+                        value={singleContractForm.total_income !== null && singleContractForm.total_income !== undefined ? singleContractForm.total_income.toLocaleString("vi-VN") : ""}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/\D/g, "");
+                          setSingleContractForm(prev => ({ ...prev, total_income: val ? parseInt(val) : null }));
+                        }}
+                        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl outline-none text-right font-bold text-emerald-700"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Thử việc & Thông tin phụ lục */}
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Số HĐ thử việc</label>
+                      <input
+                        type="text"
+                        value={singleContractForm.probation_contract_number || ""}
+                        onChange={(e) => setSingleContractForm(prev => ({ ...prev, probation_contract_number: e.target.value }))}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Thử việc từ ngày</label>
+                      <input
+                        type="date"
+                        value={singleContractForm.probation_start_date || ""}
+                        onChange={(e) => setSingleContractForm(prev => ({ ...prev, probation_start_date: e.target.value }))}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Thử việc đến ngày</label>
+                      <input
+                        type="date"
+                        value={singleContractForm.probation_end_date || ""}
+                        onChange={(e) => setSingleContractForm(prev => ({ ...prev, probation_end_date: e.target.value }))}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => setShowSingleContractModal(false)}
+                      className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 font-bold rounded-xl active:scale-95 transition-all cursor-pointer"
+                    >
+                      Hủy bỏ
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-5 py-2 bg-[#005BAC] hover:bg-blue-700 text-white font-bold rounded-xl active:scale-95 transition-all cursor-pointer shadow-premium"
+                    >
+                      Xác nhận và nạp vào bảng
+                    </button>
+                  </div>
+                </form>
+              </div>
             </div>
           )}
 

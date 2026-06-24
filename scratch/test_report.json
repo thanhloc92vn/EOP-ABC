@@ -1,0 +1,33 @@
+{
+  "startDate": "2026-06-01",
+  "endDate": "2026-06-30",
+  "candidates": [
+    {
+      "id": "1",
+      "name": "Trần Quốc Cường",
+      "department": "DA.CỐNG VÀM LẼO - BẠC LIÊU",
+      "role": "Giám sát an toàn",
+      "status": "hired",
+      "onboard_date": "2026-06-10"
+    },
+    {
+      "id": "2",
+      "name": "Nguyễn Thị Mai",
+      "department": "Phòng Hành Chính Nhân Sự",
+      "role": "Tuyển dụng",
+      "status": "hired",
+      "onboard_date": "2026-06-15"
+    }
+  ],
+  "officeManualNeeds": {
+    "HCNS": 2,
+    "Phòng QLDA": 1,
+    "Kế toán": 1
+  },
+  "projectManualNeeds": {
+    "Vàm Lẽo": 3,
+    "RXT": 2,
+    "Mã Đà": 1,
+    "ĐMT Trà Vinh": 2
+  }
+}
