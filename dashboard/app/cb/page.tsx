@@ -1539,23 +1539,29 @@ export default function CBPage() {
             };
             if (empId) dbData.employee_id = empId;
 
+            let dbError = null;
             if (existingContract) {
-              dbData.id = existingContract.id;
               dbData.contract_number = item.contract_number || existingContract.contract_number;
+              const { error } = await supabase
+                .from("contracts")
+                .update(dbData)
+                .eq("id", existingContract.id);
+              dbError = error;
             } else {
               const contractNum = (item.contract_number || "").trim();
               const uniqueFallback = `IMPORT-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
               dbData.contract_number = contractNum || uniqueFallback;
+
+              // Use upsert on conflict of contract_number so duplicate rows in the Excel file overwrite each other
+              const { error } = await supabase
+                .from("contracts")
+                .upsert([dbData], { onConflict: "contract_number", ignoreDuplicates: false });
+              dbError = error;
             }
 
-            // Use upsert so re-importing the same file updates/overwrites existing records on conflict of id
-            const { error } = await supabase
-              .from("contracts")
-              .upsert([dbData], { onConflict: "id", ignoreDuplicates: false });
-
-            if (error) {
-              console.error("Lỗi lưu hợp đồng:", item.employee_name, error.message);
-              if (!firstError) firstError = error.message;
+            if (dbError) {
+              console.error("Lỗi lưu hợp đồng:", item.employee_name, dbError.message);
+              if (!firstError) firstError = dbError.message;
               failCount++;
             } else {
               savedCount++;
