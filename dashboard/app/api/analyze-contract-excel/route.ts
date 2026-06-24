@@ -201,8 +201,9 @@ Hãy trích xuất danh sách hợp đồng dạng JSON chứa mảng 'contracts
       }
     };
 
-    // For large inputs, split into batches of MAX_ROWS_PER_BATCH rows each
-    const MAX_ROWS_PER_BATCH = 120;
+    // For large inputs, split into batches of MAX_ROWS_PER_BATCH rows each.
+    // We reduce this to 40 to avoid hitting the OpenAI 4,096 output token limit (which causes truncation when generating large JSON objects).
+    const MAX_ROWS_PER_BATCH = 40;
     let allContracts: any[] = [];
 
     if (messages.length > 0) {
@@ -221,6 +222,7 @@ Hãy trích xuất danh sách hợp đồng dạng JSON chứa mảng 'contracts
         const headerRow = csvLines[0] || "";
         const dataLines = csvLines.slice(1);
 
+        const promises = [];
         for (let i = 0; i < dataLines.length; i += MAX_ROWS_PER_BATCH) {
           const batchLines = dataLines.slice(i, i + MAX_ROWS_PER_BATCH);
           const batchCsv = [headerRow, ...batchLines].join("\n");
@@ -229,16 +231,25 @@ Hãy trích xuất danh sách hợp đồng dạng JSON chứa mảng 'contracts
             { role: "user", content: `${headerPart}\n${batchCsv}` },
           ];
 
-          const completion = await openai.chat.completions.create({
-            model,
-            messages: batchMessages,
-            temperature: 0,
-            max_tokens: 16000,
-            response_format: { type: "json_object" },
-          });
+          promises.push(
+            openai.chat.completions.create({
+              model,
+              messages: batchMessages,
+              temperature: 0,
+              max_tokens: 4000,
+              response_format: { type: "json_object" },
+            }).then(completion => {
+              const reply = completion.choices[0]?.message?.content || "{}";
+              return safeParseContracts(reply);
+            }).catch(err => {
+              console.error(`Batch parsing error at rows ${i} to ${i + MAX_ROWS_PER_BATCH}:`, err);
+              return [];
+            })
+          );
+        }
 
-          const reply = completion.choices[0]?.message?.content || "{}";
-          const batchContracts = safeParseContracts(reply);
+        const results = await Promise.all(promises);
+        for (const batchContracts of results) {
           allContracts = allContracts.concat(batchContracts);
         }
       } else {
