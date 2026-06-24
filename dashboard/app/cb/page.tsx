@@ -4945,11 +4945,10 @@ export default function CBPage() {
                   <table className="w-full text-[11px] text-left border-collapse min-w-[2400px]">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 font-extrabold uppercase tracking-wider text-[9px] sticky top-0 z-10">
-                        <th className="py-2.5 px-2 w-16 text-center bg-slate-50 border-r border-slate-200">HĐ Tồn</th>
-                        <th className="py-2.5 px-2 w-14 text-center bg-slate-50 border-r border-slate-200">STT</th>
+                        <th className="py-2.5 px-2 w-12 text-center bg-slate-50 border-r border-slate-200">STT</th>
                         <th className="py-2.5 px-2 w-28 bg-slate-50 border-r border-slate-200">Mã NV</th>
                         <th className="py-2.5 px-2 w-48 bg-slate-50 border-r border-slate-200">Họ và tên</th>
-                        <th className="py-2.5 px-2 w-32 bg-slate-50 border-r border-slate-200">Phòng ban</th>
+                        <th className="py-2.5 px-2 w-40 bg-slate-50 border-r border-slate-200">Phòng ban</th>
                         <th className="py-2.5 px-2 w-32 text-center bg-slate-50 border-r border-slate-200">Ngày nhận việc</th>
                         <th className="py-2.5 px-2 w-44 bg-slate-50 border-r border-slate-200">Số HĐTV</th>
                         <th className="py-2.5 px-2 w-32 text-center bg-slate-50 border-r border-slate-200">HĐTV Từ ngày</th>
@@ -4992,27 +4991,13 @@ export default function CBPage() {
                             return (name.includes(query) || code.includes(query) || num.includes(query) || dept.includes(query)) && deptMatch && projectMatch;
                           });
 
-                          return filtered.map((c) => {
+                          return filtered.map((c, index) => {
                             const actualIdx = tempContracts.findIndex(tc => tc.id === c.id);
                             return (
                               <tr key={c.id} className="hover:bg-slate-50/50 transition-all">
-                                {/* STT Tồn */}
-                                <td className="py-1 px-1 border-r border-slate-100 text-center">
-                                  <input
-                                    type="text"
-                                    value={c.stt_ton || ""}
-                                    onChange={(e) => handleContractCellChange(actualIdx, "stt_ton", e.target.value)}
-                                    className="w-full text-center bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 font-semibold text-slate-500"
-                                  />
-                                </td>
                                 {/* STT */}
-                                <td className="py-1 px-1 border-r border-slate-100 text-center">
-                                  <input
-                                    type="number"
-                                    value={c.stt || ""}
-                                    onChange={(e) => handleContractCellChange(actualIdx, "stt", e.target.value ? parseInt(e.target.value) : null)}
-                                    className="w-full text-center bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 font-semibold"
-                                  />
+                                <td className="py-1 px-1 border-r border-slate-100 text-center font-bold text-slate-500">
+                                  {index + 1}
                                 </td>
                                 {/* Mã NV */}
                                 <td className="py-1 px-1 border-r border-slate-100">
@@ -5050,11 +5035,11 @@ export default function CBPage() {
                                   </div>
                                 </td>
                                 {/* Phòng ban */}
-                                <td className="py-1 px-1 border-r border-slate-100 font-semibold text-slate-500 text-[10px] text-center">
+                                <td className="py-1 px-1 border-r border-slate-100 font-semibold text-slate-500 text-[10px] text-center whitespace-normal break-words">
                                   <select
                                     value={c.department || c.employees?.department || ""}
                                     onChange={(e) => handleContractCellChange(actualIdx, "department", e.target.value)}
-                                    className="w-full bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 text-center cursor-pointer text-[10px]"
+                                    className="w-full bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 text-center cursor-pointer text-[10px] whitespace-normal break-words"
                                   >
                                     <option value="">Chưa phân loại</option>
                                     {(() => {
@@ -5258,10 +5243,10 @@ export default function CBPage() {
                     <table className="w-full text-[10px] text-left border-collapse min-w-[2200px]">
                       <thead>
                         <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 font-extrabold uppercase tracking-wider text-[8px] sticky top-0">
-                          <th className="py-2 px-2 w-12 text-center bg-slate-50 border-r border-slate-200">HĐ Tồn</th>
-                          <th className="py-2 px-2 w-10 text-center bg-slate-50 border-r border-slate-200">STT</th>
+                          <th className="py-2 px-2 w-12 text-center bg-slate-50 border-r border-slate-200">STT</th>
                           <th className="py-2 px-2 w-24 bg-slate-50 border-r border-slate-200">Mã NV</th>
                           <th className="py-2 px-2 w-48 bg-slate-50 border-r border-slate-200">Họ và tên khớp hệ thống</th>
+                          <th className="py-2 px-2 w-40 bg-slate-50 border-r border-slate-200">Phòng ban</th>
                           <th className="py-2 px-2 w-28 text-center bg-slate-50 border-r border-slate-200">Ngày nhận việc</th>
                           <th className="py-2 px-2 w-40 bg-slate-50 border-r border-slate-200">Số HĐTV</th>
                           <th className="py-2 px-2 w-28 text-center bg-slate-50 border-r border-slate-200">Từ ngày</th>
@@ -5279,8 +5264,7 @@ export default function CBPage() {
                       <tbody className="divide-y divide-slate-100 font-medium text-slate-700 bg-white">
                         {excelImportedContracts.map((c, idx) => (
                           <tr key={c.id || idx} className="hover:bg-slate-50/30">
-                            <td className="py-2 px-2 border-r border-slate-100 text-center">{c.stt_ton}</td>
-                            <td className="py-2 px-2 border-r border-slate-100 text-center">{c.stt}</td>
+                            <td className="py-2 px-2 border-r border-slate-100 text-center font-bold text-slate-500">{idx + 1}</td>
                             <td className="py-2 px-2 border-r border-slate-100 font-mono">{c.employee_code}</td>
                             <td className="py-2 px-2 border-r border-slate-100 font-bold text-slate-800">
                               <select
@@ -5307,6 +5291,7 @@ export default function CBPage() {
                                 ))}
                               </select>
                             </td>
+                            <td className="py-2 px-2 border-r border-slate-100 text-center font-semibold text-[10px] text-slate-500 whitespace-normal break-words">{c.department || "Chưa phân loại"}</td>
                             <td className="py-2 px-2 border-r border-slate-100 text-center font-mono">{c.onboard_date}</td>
                             <td className="py-2 px-2 border-r border-slate-100 font-mono text-[9px]">{c.probation_contract_number}</td>
                             <td className="py-2 px-2 border-r border-slate-100 text-center font-mono">{c.probation_start_date}</td>
