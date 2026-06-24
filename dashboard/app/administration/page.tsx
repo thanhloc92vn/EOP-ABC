@@ -921,6 +921,30 @@ export default function AdministrationPage() {
 
       if (error) throw error;
 
+      // Client-side auto-migration of old VPP task statuses (runs under authenticated user session)
+      const tasksToMigrate = (data || []).filter(t => t.status === "pending_approval" || t.status === "completed");
+      if (tasksToMigrate.length > 0) {
+        for (const t of tasksToMigrate) {
+          const newStatus = t.status === "pending_approval" ? "Chờ duyệt" : "Hoàn thành";
+          let notesObj: any = {};
+          try {
+            notesObj = JSON.parse(t.notes || "{}");
+          } catch (e) {}
+          notesObj.frequency = notesObj.frequency || "Cấp phát";
+
+          await supabase
+            .from("tasks")
+            .update({ status: newStatus, notes: JSON.stringify(notesObj) })
+            .eq("id", t.id);
+        }
+        // Re-fetch requests and checklist after a short delay
+        setTimeout(() => {
+          fetchDeptRequests();
+          fetchChecklist();
+        }, 500);
+        return;
+      }
+
       const mapped = (data || []).map(t => parseVppTask(t));
       setDeptRequests(mapped);
     } catch (err) {
