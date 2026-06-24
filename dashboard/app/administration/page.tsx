@@ -417,37 +417,80 @@ export default function AdministrationPage() {
     e.dataTransfer.setData("text/plain", id);
   };
 
-  const handleDropCard = (e: React.DragEvent, targetStatus: string) => {
+  const handleDropCard = async (e: React.DragEvent, targetStatus: string) => {
     e.preventDefault();
     const id = e.dataTransfer.getData("text/plain");
     if (!id) return;
     
+    // Optimistic local update
     setChecklist(prev => prev.map(item => 
       item.id === id ? { ...item, status: targetStatus as any } : item
     ));
+
+    try {
+      const { error } = await supabase
+        .from("tasks")
+        .update({ status: targetStatus })
+        .eq("id", id);
+
+      if (error) throw error;
+      fetchChecklist();
+    } catch (err: any) {
+      console.error("Error updating checklist status in Supabase:", err);
+      fetchChecklist();
+    }
   };
 
-  const handleDeleteTask = (id: string) => {
+  const handleDeleteTask = async (id: string) => {
+    if (!window.confirm("Bạn có chắc chắn muốn xóa công việc này không?")) return;
+    
+    // Optimistic update
     setChecklist(prev => prev.filter(item => item.id !== id));
+
+    try {
+      const { error } = await supabase
+        .from("tasks")
+        .delete()
+        .eq("id", id);
+
+      if (error) throw error;
+      fetchChecklist();
+    } catch (err: any) {
+      console.error("Error deleting checklist task from Supabase:", err);
+      alert("Lỗi khi xóa công việc: " + (err.message || err));
+      fetchChecklist();
+    }
   };
 
-  const handleAddTask = (e: React.FormEvent) => {
+  const handleAddTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTaskName.trim()) return;
 
-    const newTask: ChecklistItem = {
-      id: `T-${Date.now()}`,
-      task: newTaskName,
-      assignee: newTaskAssignee,
-      frequency: newTaskFreq,
-      status: "Kế hoạch",
-      priority: newTaskPriority,
-      date: new Date().toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" }).replace("/", "-")
-    };
+    const dateStr = new Date().toISOString().split("T")[0];
 
-    setChecklist(prev => [...prev, newTask]);
-    setNewTaskName("");
-    setShowAddTask(false);
+    try {
+      const { error } = await supabase
+        .from("tasks")
+        .insert([{
+          title: newTaskName,
+          assignee: newTaskAssignee,
+          priority: newTaskPriority,
+          status: "Kế hoạch",
+          start_date: dateStr,
+          notes: JSON.stringify({
+            frequency: newTaskFreq
+          })
+        }]);
+
+      if (error) throw error;
+
+      setNewTaskName("");
+      setShowAddTask(false);
+      fetchChecklist();
+    } catch (err: any) {
+      console.error("Error adding checklist task to Supabase:", err);
+      alert("Lỗi khi thêm công việc: " + (err.message || err));
+    }
   };
 
   // VPP states
@@ -589,7 +632,7 @@ export default function AdministrationPage() {
           qty: parsed.qty,
           date: parsed.date || t.start_date,
           allocationTime: parsed.allocationTime || parsed.allocationDate || "",
-          status: t.status === "completed" ? "Đã cấp phát" : "Chờ duyệt",
+          status: (t.status === "completed" || t.status === "Hoàn thành") ? "Đã cấp phát" : "Chờ duyệt",
           target: parsed.target || "phongban",
           targetName: normTargetName,
           requesterName: parsed.requesterName || "",
@@ -613,7 +656,7 @@ export default function AdministrationPage() {
       qty: qty,
       date: t.start_date || "",
       allocationTime: "",
-      status: t.status === "completed" ? "Đã cấp phát" : "Chờ duyệt",
+      status: (t.status === "completed" || t.status === "Hoàn thành") ? "Đã cấp phát" : "Chờ duyệt",
       target: t.title.includes("Ban điều hành") || t.title.includes("BĐH") ? "duan" : "phongban",
       targetName: targetName,
       cat: "",
@@ -885,6 +928,41 @@ export default function AdministrationPage() {
     }
   };
 
+  // Fetch Checklist tasks from Supabase
+  const fetchChecklist = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("tasks")
+        .select("*")
+        .in("status", ["Kế hoạch", "Đang xử lý", "Chờ duyệt", "Cần chỉnh sửa", "Hoàn thành"]);
+
+      if (error) throw error;
+
+      if (data) {
+        const mapped = data.map((t: any) => {
+          let frequency = "Hàng ngày";
+          try {
+            const notesObj = JSON.parse(t.notes || "{}");
+            frequency = notesObj.frequency || "Hàng ngày";
+          } catch (e) {}
+
+          return {
+            id: t.id,
+            task: t.title,
+            assignee: t.assignee || "Như Quỳnh",
+            frequency: frequency as any,
+            status: t.status as any,
+            priority: t.priority || "Trung bình",
+            date: t.start_date ? new Date(t.start_date).toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" }).replace("/", "-") : ""
+          };
+        });
+        setChecklist(mapped);
+      }
+    } catch (err) {
+      console.error("Error fetching checklist from Supabase:", err);
+    }
+  };
+
   // Fetch suppliers from Supabase
   const fetchSuppliers = useCallback(async () => {
     try {
@@ -955,6 +1033,7 @@ export default function AdministrationPage() {
       fetchSuppliers();
       fetchSuppliesCatalog();
       fetchReportRows();
+      fetchChecklist();
 
       fetchUserRoleAndDept();
     }
@@ -1126,6 +1205,7 @@ export default function AdministrationPage() {
 
         alert("Đã xóa yêu cầu cấp phát thành công.");
         fetchDeptRequests();
+        fetchChecklist();
       } catch (err: any) {
         console.error("Error deleting VPP request from Supabase:", err);
         alert("Lỗi khi xóa yêu cầu: " + (err.message || err));
@@ -2388,10 +2468,10 @@ export default function AdministrationPage() {
     }
 
     try {
-      // Update status in Supabase
+      // Update status in Supabase (use Vietnamese status for checklist kanban board sync)
       const { error } = await supabase
         .from("tasks")
-        .update({ status: "completed", progress: 100 })
+        .update({ status: "Hoàn thành", progress: 100 })
         .eq("id", reqId);
 
       if (error) throw error;
@@ -2403,6 +2483,7 @@ export default function AdministrationPage() {
       
       // Refresh list from Supabase
       fetchDeptRequests();
+      fetchChecklist();
     } catch (err: any) {
       console.error("Error approving request in Supabase:", err);
       alert("Lỗi khi phê duyệt cấp phát: " + (err.message || err));
@@ -2447,7 +2528,7 @@ export default function AdministrationPage() {
       const ids = pendingReqs.map(r => r.id);
       const { error } = await supabase
         .from("tasks")
-        .update({ status: "completed", progress: 100 })
+        .update({ status: "Hoàn thành", progress: 100 })
         .in("id", ids);
 
       if (error) throw error;
@@ -2457,6 +2538,7 @@ export default function AdministrationPage() {
 
       alert(`Đã phê duyệt cấp phát thành công ${pendingReqs.length} yêu cầu.`);
       fetchDeptRequests();
+      fetchChecklist();
     } catch (err: any) {
       console.error("Error approving all requests in Supabase:", err);
       alert("Lỗi khi phê duyệt tất cả: " + (err.message || err));
@@ -2642,7 +2724,7 @@ export default function AdministrationPage() {
           due_date: dateStr,
           priority: "Thấp",
           progress: 0,
-          status: "pending_approval",
+          status: "Chờ duyệt",
           notes: JSON.stringify({
             dept: deptName,
             target: newPYCTarget,
@@ -2650,7 +2732,8 @@ export default function AdministrationPage() {
             item: newPYCItem,
             qty: Number(newPYCQty),
             date: dateStr,
-            requesterName: newPYCRequesterName.trim()
+            requesterName: newPYCRequesterName.trim(),
+            frequency: "Cấp phát"
           })
         }])
         .select();
@@ -2667,6 +2750,7 @@ export default function AdministrationPage() {
       
       // Refresh list from Supabase
       fetchDeptRequests();
+      fetchChecklist();
     } catch (err: any) {
       console.error("Error creating PYC in Supabase:", err);
       alert("Lỗi khi tạo phiếu yêu cầu: " + (err.message || err));
