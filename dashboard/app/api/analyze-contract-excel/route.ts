@@ -255,6 +255,34 @@ Hãy trích xuất danh sách hợp đồng dạng JSON chứa mảng 'contracts
         allContracts = safeParseContracts(reply);
       }
     }
+    // Normalize raw department names from AI to standard DEPARTMENTS_LIST
+    const normalizeDepartment = (raw: string | undefined | null) => {
+      if (!raw) return "";
+      const lower = raw.toLowerCase();
+      if (lower.includes("hành chính") || lower.includes("nhân sự") || lower.includes("hcns")) return "Phòng Hành Chính Nhân Sự";
+      if (lower.includes("tài chính") || lower.includes("kế toán") || lower.includes("tckt")) return "Phòng Tài Chính Kế Toán";
+      if (lower.includes("thư ký") || lower.includes("trợ lý")) return "Phòng Thư Ký, Trợ Lý";
+      if (lower.includes("kế hoạch") || lower.includes("đấu thầu") || lower.includes("khđt")) return "Phòng Kế Hoạch Đấu Thầu";
+      if (lower.includes("thị trường")) return "Phòng Thị Trường";
+      if (lower.includes("kỹ thuật")) return "Phòng Kỹ Thuật";
+      if (lower.includes("vật tư") || lower.includes("thiết bị") || lower.includes("vttb")) return "Phòng Vật Tư Thiết Bị";
+      if (lower.includes("an toàn") || lower.includes("hse") || lower.includes("atlđ")) return "Phòng An Toàn Lao Động";
+      if (lower.includes("quản lý dự án") || lower.includes("qlda")) return "Phòng Quản Lý Dự Án";
+      
+      // Projects
+      if (lower.includes("vàm lẽo")) return "Ban Điều Hành Dự Án Vàm Lẽo";
+      if (lower.includes("cà ná")) return "Ban Điều Hành Dự Án Cà Ná";
+      if (lower.includes("trà vinh")) return "Ban Điều Hành Dự Án ĐNT Trà Vinh 2";
+      if (lower.includes("rạch xuyên")) return "Ban Điều Hành Dự Án Rạch Xuyên Tân";
+      if (lower.includes("tây ninh") || lower.includes("xử lý nước thải") || lower.includes("xlnt")) return "Ban Điều Hành Dự Án XLNT Tây Ninh";
+      
+      return raw;
+    };
+
+    allContracts = allContracts.map(c => ({
+      ...c,
+      department: normalizeDepartment(c.department)
+    }));
 
     return NextResponse.json({ contracts: allContracts });
   } catch (err: any) {

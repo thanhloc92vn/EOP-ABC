@@ -375,9 +375,9 @@ const DEPARTMENTS_LIST = [
   // Khối Hiện Trường / Công Trường
   { name: "Ban Điều Hành Dự Án Vàm Lẽo", key: "project_vamleo", type: "project", desc: "Ban điều hành trực tiếp thi công, giám sát tại dự án Vàm Lẽo", color: "from-amber-600 to-orange-600" },
   { name: "Ban Điều Hành Dự Án Cà Ná", key: "project_cana", type: "project", desc: "Ban điều hành trực tiếp thi công, giám sát tại dự án Cà Ná", color: "from-orange-600 to-red-600" },
-  { name: "BĐH ĐNT Trà Vinh 2", key: "project_travinh2", type: "project", desc: "Ban điều hành trực tiếp thi công ĐNT Trà Vinh 2", color: "from-blue-500 to-cyan-500" },
-  { name: "BĐH Rạch Xuyên Tân", key: "project_rachxuyentan", type: "project", desc: "Ban điều hành trực tiếp thi công Rạch Xuyên Tân", color: "from-green-500 to-emerald-500" },
-  { name: "BĐH XLNT Tây Ninh", key: "project_tayninh", type: "project", desc: "Ban điều hành trực tiếp thi công XLNT Tây Ninh", color: "from-purple-500 to-pink-500" }
+  { name: "Ban Điều Hành Dự Án ĐNT Trà Vinh 2", key: "project_travinh2", type: "project", desc: "Ban điều hành trực tiếp thi công ĐNT Trà Vinh 2", color: "from-blue-500 to-cyan-500" },
+  { name: "Ban Điều Hành Dự Án Rạch Xuyên Tân", key: "project_rachxuyentan", type: "project", desc: "Ban điều hành trực tiếp thi công Rạch Xuyên Tân", color: "from-green-500 to-emerald-500" },
+  { name: "Ban Điều Hành Dự Án XLNT Tây Ninh", key: "project_tayninh", type: "project", desc: "Ban điều hành trực tiếp thi công XLNT Tây Ninh", color: "from-purple-500 to-pink-500" }
 ];
 
 const BOARD_OF_DIRECTORS = [
