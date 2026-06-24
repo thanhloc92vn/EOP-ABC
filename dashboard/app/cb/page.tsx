@@ -94,6 +94,7 @@ interface Contract {
     role?: string;
     employee_code?: string;
   };
+  department?: string;
 }
 
 // --- MOCK DATA FOR C&B SUBSECTIONS ---
@@ -427,6 +428,8 @@ export default function CBPage() {
 
   // States for Employee Contracts management
   const [contractsSearchQuery, setContractsSearchQuery] = useState("");
+  const [contractsDeptFilter, setContractsDeptFilter] = useState("");
+  const [contractsProjectFilter, setContractsProjectFilter] = useState("");
   const [tempContracts, setTempContracts] = useState<Contract[]>([]);
   const [isExcelImporting, setIsExcelImporting] = useState(false);
   const [excelImportStage, setExcelImportStage] = useState<"reading" | "sending" | "receiving" | "done">("reading");
@@ -4727,19 +4730,41 @@ export default function CBPage() {
           {activeTab === "employee_contracts" && (
             <div className="space-y-6 animate-fade-in">
               {/* Header and Control Bar */}
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-4 rounded-2xl shadow-sm border border-slate-200/50">
-                <div className="flex-1 max-w-md relative">
-                  <span className="absolute left-3 top-2.5 text-slate-400"><Search size={16} /></span>
-                  <input
-                    type="text"
-                    value={contractsSearchQuery}
-                    onChange={(e) => setContractsSearchQuery(e.target.value)}
-                    placeholder="Tìm theo họ tên, mã NV, số hợp đồng..."
-                    className="w-full pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none transition-all text-xs font-semibold"
-                  />
-                </div>
-                
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-4 rounded-2xl shadow-sm border border-slate-200/50">
+                  <div className="flex flex-1 flex-wrap items-center gap-2">
+                    <div className="flex-1 min-w-[200px] relative">
+                      <span className="absolute left-3 top-2.5 text-slate-400"><Search size={16} /></span>
+                      <input
+                        type="text"
+                        value={contractsSearchQuery}
+                        onChange={(e) => setContractsSearchQuery(e.target.value)}
+                        placeholder="Tìm theo họ tên, mã NV, số hợp đồng..."
+                        className="w-full pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none transition-all text-xs font-semibold"
+                      />
+                    </div>
+                    <select
+                      value={contractsDeptFilter}
+                      onChange={(e) => { setContractsDeptFilter(e.target.value); setContractsProjectFilter(""); }}
+                      className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none transition-all text-xs font-semibold text-slate-600 cursor-pointer"
+                    >
+                      <option value="">Tất cả phòng ban</option>
+                      {DEPARTMENTS_LIST.filter(d => d.type !== "project").map(d => (
+                        <option key={d.key} value={d.name}>{d.name}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={contractsProjectFilter}
+                      onChange={(e) => { setContractsProjectFilter(e.target.value); setContractsDeptFilter(""); }}
+                      className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none transition-all text-xs font-semibold text-slate-600 cursor-pointer"
+                    >
+                      <option value="">Tất cả Ban điều hành</option>
+                      {DEPARTMENTS_LIST.filter(d => d.type === "project").map(d => (
+                        <option key={d.key} value={d.name}>{d.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  <div className="flex flex-wrap items-center gap-2">
                   <button
                     onClick={handleAddBlankContractRow}
                     className="flex items-center gap-1.5 px-4 py-2.5 bg-[#005BAC] hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-premium active:scale-95"
@@ -4921,6 +4946,7 @@ export default function CBPage() {
                         <th className="py-2.5 px-2 w-14 text-center bg-slate-50 border-r border-slate-200">STT</th>
                         <th className="py-2.5 px-2 w-28 bg-slate-50 border-r border-slate-200">Mã NV</th>
                         <th className="py-2.5 px-2 w-48 bg-slate-50 border-r border-slate-200">Họ và tên</th>
+                        <th className="py-2.5 px-2 w-32 bg-slate-50 border-r border-slate-200">Phòng ban</th>
                         <th className="py-2.5 px-2 w-32 text-center bg-slate-50 border-r border-slate-200">Ngày nhận việc</th>
                         <th className="py-2.5 px-2 w-44 bg-slate-50 border-r border-slate-200">Số HĐTV</th>
                         <th className="py-2.5 px-2 w-32 text-center bg-slate-50 border-r border-slate-200">HĐTV Từ ngày</th>
@@ -4957,8 +4983,10 @@ export default function CBPage() {
                             const name = (c.employee_name || "").toLowerCase();
                             const code = (c.employee_code || "").toLowerCase();
                             const num = (c.contract_number || "").toLowerCase();
-                            const dept = (c.employees?.department || "").toLowerCase();
-                            return name.includes(query) || code.includes(query) || num.includes(query) || dept.includes(query);
+                            const dept = (c.employees?.department || c.department || "").toLowerCase();
+                            const deptMatch = contractsDeptFilter ? dept.includes(contractsDeptFilter.toLowerCase()) : true;
+                            const projectMatch = contractsProjectFilter ? dept.includes(contractsProjectFilter.toLowerCase()) : true;
+                            return (name.includes(query) || code.includes(query) || num.includes(query) || dept.includes(query)) && deptMatch && projectMatch;
                           });
 
                           return filtered.map((c) => {
@@ -5017,6 +5045,19 @@ export default function CBPage() {
                                       />
                                     )}
                                   </div>
+                                </td>
+                                {/* Phòng ban */}
+                                <td className="py-1 px-1 border-r border-slate-100 font-semibold text-slate-500 text-[10px] text-center">
+                                  <select
+                                    value={c.department || c.employees?.department || ""}
+                                    onChange={(e) => handleContractCellChange(actualIdx, "department", e.target.value)}
+                                    className="w-full bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 text-center cursor-pointer text-[10px]"
+                                  >
+                                    <option value="">Chưa phân loại</option>
+                                    {DEPARTMENTS_LIST.map(d => (
+                                      <option key={d.key} value={d.name}>{d.name}</option>
+                                    ))}
+                                  </select>
                                 </td>
                                 {/* Ngày nhận việc */}
                                 <td className="py-1 px-1 border-r border-slate-100 text-center">
@@ -5089,12 +5130,20 @@ export default function CBPage() {
                                   />
                                 </td>
                                 {/* HĐLĐ Hết hạn */}
-                                <td className="py-1 px-1 border-r border-slate-100 text-center">
+                                <td className={`py-1 px-1 border-r border-slate-100 text-center transition-colors ${
+                                  c.expiration_date && (new Date(c.expiration_date).getTime() - new Date().getTime()) <= 30 * 24 * 60 * 60 * 1000 && (new Date(c.expiration_date).getTime() - new Date().getTime()) > -24 * 60 * 60 * 1000
+                                    ? "bg-amber-100/50"
+                                    : ""
+                                }`}>
                                   <input
                                     type="date"
                                     value={c.expiration_date || ""}
                                     onChange={(e) => handleContractCellChange(actualIdx, "expiration_date", e.target.value)}
-                                    className="bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 px-1 w-full text-center"
+                                    className={`bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 px-1 w-full text-center ${
+                                      c.expiration_date && (new Date(c.expiration_date).getTime() - new Date().getTime()) <= 30 * 24 * 60 * 60 * 1000 && (new Date(c.expiration_date).getTime() - new Date().getTime()) > -24 * 60 * 60 * 1000
+                                        ? "text-amber-600 font-bold"
+                                        : ""
+                                    }`}
                                   />
                                 </td>
                                 {/* Lương BHXH */}
