@@ -619,26 +619,54 @@ export default function AdministrationPage() {
   const [slipPreviewTargetType, setSlipPreviewTargetType] = useState<"phongban" | "duan">("phongban");
   const [slipPreviewTargetName, setSlipPreviewTargetName] = useState("");
 
-  // Helper to parse tasks into DeptRequests
-  const parseVppTask = (t: any): DeptRequest => {
+  // Helper to parse tasks into DeptRequests array (can return 1 or more requests)
+  const parseVppTaskToRequests = (t: any): DeptRequest[] => {
     try {
       if (t.notes && t.notes.startsWith("{")) {
         const parsed = JSON.parse(t.notes);
         const normTargetName = normalizeDeptName(parsed.targetName || t.assignee);
-        return {
-          id: t.id,
-          dept: parsed.target === "phongban" ? normTargetName : `Ban điều hành ${normTargetName}`,
+        const deptName = parsed.target === "phongban" ? normTargetName : `Ban điều hành ${normTargetName}`;
+        const targetType = parsed.target || "phongban";
+        const requesterName = parsed.requesterName || "";
+        const dateVal = parsed.date || t.start_date || "";
+
+        // Check if notes has a list of items
+        if (Array.isArray(parsed.items) && parsed.items.length > 0) {
+          return parsed.items.map((itemObj: any, index: number) => {
+            const subId = `${t.id}__${itemObj.id !== undefined ? itemObj.id : index}`;
+            const itemStatus = itemObj.status || ((t.status === "completed" || t.status === "Hoàn thành") ? "Đã cấp phát" : "Chờ duyệt");
+            return {
+              id: subId,
+              dept: deptName,
+              item: itemObj.item || "",
+              qty: Number(itemObj.qty) || 1,
+              date: dateVal,
+              allocationTime: itemObj.allocationTime || "",
+              status: itemStatus === "Đã cấp phát" ? "Đã cấp phát" : "Chờ duyệt",
+              target: targetType,
+              targetName: normTargetName,
+              requesterName: requesterName,
+              cat: itemObj.cat || "",
+              unit: itemObj.unit || ""
+            };
+          });
+        }
+
+        // Legacy format but has JSON note (single item)
+        return [{
+          id: String(t.id),
+          dept: deptName,
           item: parsed.item,
           qty: parsed.qty,
-          date: parsed.date || t.start_date,
+          date: dateVal,
           allocationTime: parsed.allocationTime || parsed.allocationDate || "",
           status: (t.status === "completed" || t.status === "Hoàn thành") ? "Đã cấp phát" : "Chờ duyệt",
-          target: parsed.target || "phongban",
+          target: targetType,
           targetName: normTargetName,
-          requesterName: parsed.requesterName || "",
+          requesterName: requesterName,
           cat: parsed.cat || "",
           unit: parsed.unit || ""
-        };
+        }];
       }
     } catch (e) {
       console.error("Error parsing task notes as JSON:", e);
@@ -649,8 +677,8 @@ export default function AdministrationPage() {
     const targetName = normalizeDeptName((parts[0] || "").replace("VPP:", "").trim());
     const item = parts[1] || "";
     const qty = Number(parts[2]) || 1;
-    return {
-      id: t.id,
+    return [{
+      id: String(t.id),
       dept: t.title.includes("Ban điều hành") || t.title.includes("BĐH") ? `Ban điều hành ${targetName}` : targetName,
       item: item,
       qty: qty,
@@ -661,7 +689,7 @@ export default function AdministrationPage() {
       targetName: targetName,
       cat: "",
       unit: ""
-    };
+    }];
   };
 
   // Helper to fuzzy match requested item names to supplies catalog
@@ -917,7 +945,7 @@ export default function AdministrationPage() {
       const { data, error } = await supabase
         .from("tasks")
         .select("*")
-        .ilike("title", "VPP:%");
+        .or("title.ilike.VPP:%,title.ilike.Cấp phát VPP%");
 
       if (error) throw error;
 
@@ -945,7 +973,10 @@ export default function AdministrationPage() {
         return;
       }
 
-      const mapped = (data || []).map(t => parseVppTask(t));
+      const mapped: DeptRequest[] = [];
+      (data || []).forEach(t => {
+        mapped.push(...parseVppTaskToRequests(t));
+      });
       setDeptRequests(mapped);
     } catch (err) {
       console.error("Error fetching dept requests from Supabase:", err);
@@ -1204,12 +1235,57 @@ export default function AdministrationPage() {
 
     if (window.confirm("Bạn có chắc chắn muốn xóa yêu cầu cấp phát này không?")) {
       try {
-        const { error } = await supabase
-          .from("tasks")
-          .delete()
-          .eq("id", reqId);
+        if (reqId.includes("__")) {
+          const [parentTaskId, itemIdStr] = reqId.split("__");
+          const itemId = Number(itemIdStr);
+          const { data: taskData, error: fetchErr } = await supabase
+            .from("tasks")
+            .select("*")
+            .eq("id", parentTaskId)
+            .single();
+          if (fetchErr) throw fetchErr;
 
-        if (error) throw error;
+          let notesObj = JSON.parse(taskData.notes || "{}");
+          if (notesObj.items && Array.isArray(notesObj.items)) {
+            const updatedItems = notesObj.items.filter((itemObj: any, idx: number) => {
+              const currentId = itemObj.id !== undefined ? itemObj.id : idx;
+              return Number(currentId) !== itemId;
+            });
+
+            if (updatedItems.length === 0) {
+              // Delete parent task completely
+              const { error: deleteErr } = await supabase
+                .from("tasks")
+                .delete()
+                .eq("id", parentTaskId);
+              if (deleteErr) throw deleteErr;
+            } else {
+              // Calculate status of the remaining items
+              const allApproved = updatedItems.every((itemObj: any) => itemObj.status === "Đã cấp phát");
+              const approvedCount = updatedItems.filter((itemObj: any) => itemObj.status === "Đã cấp phát").length;
+              const progressPercent = Math.round((approvedCount / updatedItems.length) * 100);
+
+              notesObj.items = updatedItems;
+
+              const { error: updateErr } = await supabase
+                .from("tasks")
+                .update({
+                  status: allApproved ? "Hoàn thành" : "Chờ duyệt",
+                  progress: progressPercent,
+                  notes: JSON.stringify(notesObj)
+                })
+                .eq("id", parentTaskId);
+              if (updateErr) throw updateErr;
+            }
+          }
+        } else {
+          // Legacy task delete
+          const { error } = await supabase
+            .from("tasks")
+            .delete()
+            .eq("id", reqId);
+          if (error) throw error;
+        }
 
         // If the request was approved ("Đã cấp phát"), restore the stock
         if (request.status === "Đã cấp phát") {
@@ -2492,13 +2568,53 @@ export default function AdministrationPage() {
     }
 
     try {
-      // Update status in Supabase (use Vietnamese status for checklist kanban board sync)
-      const { error } = await supabase
-        .from("tasks")
-        .update({ status: "Hoàn thành", progress: 100 })
-        .eq("id", reqId);
+      if (reqId.includes("__")) {
+        const [parentTaskId, itemIdStr] = reqId.split("__");
+        const itemId = Number(itemIdStr);
+        const { data: taskData, error: fetchErr } = await supabase
+          .from("tasks")
+          .select("*")
+          .eq("id", parentTaskId)
+          .single();
+        if (fetchErr) throw fetchErr;
 
-      if (error) throw error;
+        let notesObj = JSON.parse(taskData.notes || "{}");
+        if (notesObj.items && Array.isArray(notesObj.items)) {
+          notesObj.items = notesObj.items.map((itemObj: any, idx: number) => {
+            const currentId = itemObj.id !== undefined ? itemObj.id : idx;
+            if (Number(currentId) === itemId) {
+              return {
+                ...itemObj,
+                status: "Đã cấp phát",
+                allocationTime: new Date().toISOString().split("T")[0]
+              };
+            }
+            return itemObj;
+          });
+
+          const allApproved = notesObj.items.every((itemObj: any) => itemObj.status === "Đã cấp phát");
+          const approvedCount = notesObj.items.filter((itemObj: any) => itemObj.status === "Đã cấp phát").length;
+          const progressPercent = Math.round((approvedCount / notesObj.items.length) * 100);
+
+          const { error: updateErr } = await supabase
+            .from("tasks")
+            .update({
+              status: allApproved ? "Hoàn thành" : "Chờ duyệt",
+              progress: progressPercent,
+              notes: JSON.stringify(notesObj)
+            })
+            .eq("id", parentTaskId);
+          if (updateErr) throw updateErr;
+        }
+      } else {
+        // Legacy single-item approval
+        const { error } = await supabase
+          .from("tasks")
+          .update({ status: "Hoàn thành", progress: 100 })
+          .eq("id", reqId);
+
+        if (error) throw error;
+      }
 
       // Update deptRequests state locally (optimistic/immediate update)
       setDeptRequests(prev => prev.map(r => r.id === reqId ? { ...r, status: "Đã cấp phát" } : r));
@@ -2549,15 +2665,72 @@ export default function AdministrationPage() {
     }
 
     try {
-      const ids = pendingReqs.map(r => r.id);
-      const { error } = await supabase
-        .from("tasks")
-        .update({ status: "Hoàn thành", progress: 100 })
-        .in("id", ids);
+      const groupedTasksToUpdate: { [parentTaskId: string]: number[] } = {};
+      const legacyIdsToUpdate: string[] = [];
 
-      if (error) throw error;
+      pendingReqs.forEach(r => {
+        if (r.id.includes("__")) {
+          const [parentTaskId, itemIdStr] = r.id.split("__");
+          if (!groupedTasksToUpdate[parentTaskId]) {
+            groupedTasksToUpdate[parentTaskId] = [];
+          }
+          groupedTasksToUpdate[parentTaskId].push(Number(itemIdStr));
+        } else {
+          legacyIdsToUpdate.push(r.id);
+        }
+      });
+
+      // 1. Update legacy tasks
+      if (legacyIdsToUpdate.length > 0) {
+        const { error: legacyErr } = await supabase
+          .from("tasks")
+          .update({ status: "Hoàn thành", progress: 100 })
+          .in("id", legacyIdsToUpdate);
+        if (legacyErr) throw legacyErr;
+      }
+
+      // 2. Update grouped tasks
+      for (const parentTaskId of Object.keys(groupedTasksToUpdate)) {
+        const itemIdsToApprove = groupedTasksToUpdate[parentTaskId];
+        const { data: taskData, error: fetchErr } = await supabase
+          .from("tasks")
+          .select("*")
+          .eq("id", parentTaskId)
+          .single();
+        if (fetchErr) throw fetchErr;
+
+        let notesObj = JSON.parse(taskData.notes || "{}");
+        if (notesObj.items && Array.isArray(notesObj.items)) {
+          notesObj.items = notesObj.items.map((itemObj: any, idx: number) => {
+            const currentId = itemObj.id !== undefined ? itemObj.id : idx;
+            if (itemIdsToApprove.includes(Number(currentId))) {
+              return {
+                ...itemObj,
+                status: "Đã cấp phát",
+                allocationTime: new Date().toISOString().split("T")[0]
+              };
+            }
+            return itemObj;
+          });
+
+          const allApproved = notesObj.items.every((itemObj: any) => itemObj.status === "Đã cấp phát");
+          const approvedCount = notesObj.items.filter((itemObj: any) => itemObj.status === "Đã cấp phát").length;
+          const progressPercent = Math.round((approvedCount / notesObj.items.length) * 100);
+
+          const { error: updateErr } = await supabase
+            .from("tasks")
+            .update({
+              status: allApproved ? "Hoàn thành" : "Chờ duyệt",
+              progress: progressPercent,
+              notes: JSON.stringify(notesObj)
+            })
+            .eq("id", parentTaskId);
+          if (updateErr) throw updateErr;
+        }
+      }
 
       // Update deptRequests state locally (optimistic/immediate update)
+      const ids = pendingReqs.map(r => r.id);
       setDeptRequests(prev => prev.map(r => ids.includes(r.id) ? { ...r, status: "Đã cấp phát" } : r));
 
       alert(`Đã phê duyệt cấp phát thành công ${pendingReqs.length} yêu cầu.`);
@@ -2739,32 +2912,94 @@ export default function AdministrationPage() {
     const dateStr = new Date().toISOString().split("T")[0];
 
     try {
-      const { data, error } = await supabase
+      const currentMonthStr = new Date().toLocaleDateString("vi-VN", { month: "numeric" });
+      const title = `Cấp phát VPP cho ${newPYCTargetName} tháng ${currentMonthStr}`;
+
+      // Check if there is already an active grouped VPP task for this department/project in "Chờ duyệt" status for the current month
+      const { data: existingTasks, error: checkErr } = await supabase
         .from("tasks")
-        .insert([{
-          title: `VPP: ${newPYCTargetName} | ${newPYCItem} | ${newPYCQty}`,
-          assignee: newPYCTargetName,
-          start_date: dateStr,
-          due_date: dateStr,
-          priority: "Thấp",
-          progress: 0,
+        .select("*")
+        .eq("title", title)
+        .eq("status", "Chờ duyệt")
+        .eq("assignee", newPYCTargetName);
+
+      if (checkErr) throw checkErr;
+
+      if (existingTasks && existingTasks.length > 0) {
+        const existingTask = existingTasks[0];
+        let notesObj = { items: [] as any[] };
+        try {
+          notesObj = JSON.parse(existingTask.notes || "{}");
+        } catch (e) {}
+
+        if (!notesObj.items || !Array.isArray(notesObj.items)) {
+          notesObj.items = [];
+        }
+
+        const nextId = notesObj.items.reduce((max: number, item: any) => Math.max(max, item.id || 0), 0) + 1;
+        notesObj.items.push({
+          id: nextId,
+          item: newPYCItem,
+          qty: Number(newPYCQty),
           status: "Chờ duyệt",
-          notes: JSON.stringify({
-            dept: deptName,
-            target: newPYCTarget,
-            targetName: newPYCTargetName,
-            item: newPYCItem,
-            qty: Number(newPYCQty),
-            date: dateStr,
-            requesterName: newPYCRequesterName.trim(),
-            frequency: "Cấp phát"
+          allocationTime: "",
+          cat: "",
+          unit: "Cái"
+        });
+
+        const approvedCount = notesObj.items.filter((itemObj: any) => itemObj.status === "Đã cấp phát").length;
+        const progressPercent = Math.round((approvedCount / notesObj.items.length) * 100);
+
+        const { error: updateErr } = await supabase
+          .from("tasks")
+          .update({
+            notes: JSON.stringify(notesObj),
+            progress: progressPercent
           })
-        }])
-        .select();
+          .eq("id", existingTask.id);
 
-      if (error) throw error;
+        if (updateErr) throw updateErr;
 
-      alert(`Đã tạo thành công Phiếu yêu cầu thành công cho ${deptName}.`);
+        alert(`Đã thêm vật tư vào phiếu yêu cầu cấp phát VPP tháng ${currentMonthStr} của ${newPYCTargetName}.`);
+      } else {
+        const items = [{
+          id: 1,
+          item: newPYCItem,
+          qty: Number(newPYCQty),
+          status: "Chờ duyệt",
+          allocationTime: "",
+          cat: "",
+          unit: "Cái"
+        }];
+
+        const notes = JSON.stringify({
+          dept: deptName,
+          target: newPYCTarget,
+          targetName: newPYCTargetName,
+          requesterName: newPYCRequesterName.trim(),
+          frequency: "Cấp phát",
+          date: dateStr,
+          items: items
+        });
+
+        const { error } = await supabase
+          .from("tasks")
+          .insert([{
+            title: title,
+            assignee: newPYCTargetName,
+            start_date: dateStr,
+            due_date: dateStr,
+            priority: "Thấp",
+            progress: 0,
+            status: "Chờ duyệt",
+            notes: notes
+          }]);
+
+        if (error) throw error;
+
+        alert(`Đã tạo thành công Phiếu yêu cầu cấp phát VPP cho ${deptName}.`);
+      }
+
       setShowNewPYCModal(false);
       
       // Reset fields
@@ -2863,33 +3098,47 @@ export default function AdministrationPage() {
     const dateStr = new Date().toISOString().split("T")[0];
 
     try {
-      const payloads = selectedItems.map(item => ({
-        title: `VPP: ${vppPreviewTargetName} | ${item.name} | ${item.qty}`,
+      const currentMonthStr = new Date().toLocaleDateString("vi-VN", { month: "numeric" });
+      const title = `Cấp phát VPP cho ${vppPreviewTargetName} tháng ${currentMonthStr}`;
+
+      const items = selectedItems.map((item, index) => ({
+        id: index + 1,
+        item: item.name,
+        qty: Number(item.qty),
+        status: "Chờ duyệt",
+        allocationTime: "",
+        cat: "",
+        unit: item.unit || "Cái"
+      }));
+
+      const notes = JSON.stringify({
+        dept: deptName,
+        target: vppPreviewTargetType,
+        targetName: vppPreviewTargetName,
+        requesterName: vppPreviewRequesterName,
+        frequency: "Cấp phát",
+        date: dateStr,
+        items: items
+      });
+
+      const payload = {
+        title: title,
         assignee: vppPreviewTargetName,
         start_date: dateStr,
         due_date: dateStr,
         priority: "Thấp",
         progress: 0,
         status: "Chờ duyệt",
-        notes: JSON.stringify({
-          dept: deptName,
-          target: vppPreviewTargetType,
-          targetName: vppPreviewTargetName,
-          item: item.name,
-          qty: Number(item.qty),
-          date: dateStr,
-          requesterName: vppPreviewRequesterName,
-          frequency: "Cấp phát"
-        })
-      }));
+        notes: notes
+      };
 
       const { error } = await supabase
         .from("tasks")
-        .insert(payloads);
+        .insert([payload]);
 
       if (error) throw error;
 
-      alert(`Đã tạo thành công ${payloads.length} yêu cầu cấp phát VPP cho ${deptName}.`);
+      alert(`Đã tạo thành công Phiếu yêu cầu cấp phát VPP cho ${deptName} với ${items.length} vật tư.`);
       setShowVppPreviewModal(false);
       setVppPreviewRequesterName("");
       
@@ -2913,30 +3162,72 @@ export default function AdministrationPage() {
       const updatedCat = field === "cat" ? String(value) : (currentReq.cat || "");
       const updatedUnit = field === "unit" ? String(value) : (currentReq.unit || "");
 
-      const newTitle = `VPP: ${currentReq.targetName} | ${updatedItem} | ${updatedQty}`;
-      
-      const newNotes = {
-        dept: currentReq.dept,
-        target: currentReq.target,
-        targetName: currentReq.targetName,
-        item: updatedItem,
-        qty: updatedQty,
-        date: currentReq.date,
-        allocationTime: updatedTime,
-        requesterName: currentReq.requesterName || "",
-        cat: updatedCat,
-        unit: updatedUnit
-      };
+      if (reqId.includes("__")) {
+        const [parentTaskId, itemIdStr] = reqId.split("__");
+        const itemId = Number(itemIdStr);
+        const { data: taskData, error: fetchErr } = await supabase
+          .from("tasks")
+          .select("*")
+          .eq("id", parentTaskId)
+          .single();
+        if (fetchErr) throw fetchErr;
 
-      const { error } = await supabase
-        .from("tasks")
-        .update({
-          title: newTitle,
-          notes: JSON.stringify(newNotes)
-        })
-        .eq("id", reqId);
+        let notesObj = JSON.parse(taskData.notes || "{}");
+        if (notesObj.items && Array.isArray(notesObj.items)) {
+          notesObj.items = notesObj.items.map((itemObj: any, idx: number) => {
+            const currentId = itemObj.id !== undefined ? itemObj.id : idx;
+            if (Number(currentId) === itemId) {
+              return {
+                ...itemObj,
+                qty: updatedQty,
+                allocationTime: updatedTime,
+                item: updatedItem,
+                cat: updatedCat,
+                unit: updatedUnit
+              };
+            }
+            return itemObj;
+          });
 
-      if (error) throw error;
+          const approvedCount = notesObj.items.filter((itemObj: any) => itemObj.status === "Đã cấp phát").length;
+          const progressPercent = Math.round((approvedCount / notesObj.items.length) * 100);
+
+          const { error: updateErr } = await supabase
+            .from("tasks")
+            .update({
+              notes: JSON.stringify(notesObj),
+              progress: progressPercent
+            })
+            .eq("id", parentTaskId);
+          if (updateErr) throw updateErr;
+        }
+      } else {
+        const newTitle = `VPP: ${currentReq.targetName} | ${updatedItem} | ${updatedQty}`;
+        
+        const newNotes = {
+          dept: currentReq.dept,
+          target: currentReq.target,
+          targetName: currentReq.targetName,
+          item: updatedItem,
+          qty: updatedQty,
+          date: currentReq.date,
+          allocationTime: updatedTime,
+          requesterName: currentReq.requesterName || "",
+          cat: updatedCat,
+          unit: updatedUnit,
+          frequency: "Cấp phát"
+        };
+
+        const { error } = await supabase
+          .from("tasks")
+          .update({
+            title: newTitle,
+            notes: JSON.stringify(newNotes)
+          })
+          .eq("id", reqId);
+
+        if (error) throw error;
+      }
 
       setDeptRequests(prev => prev.map(r => {
         if (r.id === reqId) {
