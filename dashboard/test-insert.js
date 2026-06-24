@@ -15,22 +15,35 @@ if (!supabaseUrl && fs.existsSync('.env.local')) {
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 async function main() {
-  console.log('Inserting test row...');
+  console.log('Inserting test candidate...');
   const { data, error } = await supabase
-    .from('admin_monthly_reports')
+    .from('candidates')
     .insert([{
-      stt: 'test',
-      content: 'Test Row from Node',
-      category_type: 'office',
-      m1: 100, m2: 200, m3: 300, m4: 0, m5: 0, m6: 0, m7: 0, m8: 0, m9: 0, m10: 0, m11: 0, m12: 0,
-      notes: 'Test'
+      name: "Lê Tuấn Kha",
+      email: "test@example.com",
+      phone: "0123456789",
+      education: "Đại học",
+      major: "Chuyên viên",
+      experience: "9 năm",
+      last_position: "Chuyên viên",
+      last_company: "Công ty cũ",
+      region: "TP.HCM",
+      department: "An toàn lao động",
+      role: "Chuyên viên an toàn lao động",
+      status: "screening",
+      v1_date: new Date().toLocaleDateString('sv-SE'),
+      source: "Khác",
+      reviewer: "AI Auto",
+      ai_score: 85,
+      ai_recommendation: "Pass CV",
+      ai_analysis: "Tốt"
     }])
     .select();
 
   if (error) {
-    console.error('Error inserting row:', error);
+    console.error('Error inserting candidate:', error);
   } else {
-    console.log('Success inserting row:', data);
+    console.log('Success inserting candidate:', data);
   }
 }
 

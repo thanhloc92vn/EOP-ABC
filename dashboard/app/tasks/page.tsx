@@ -495,6 +495,47 @@ export default function TaskManagementPage() {
 
     if (isUserAdmin) return true;
 
+    // --- VPP TASK FILTER SYNC ---
+    // If it is a VPP (Stationery) request task, apply custom visibility rules
+    const isVppTask = t.title.toLowerCase().startsWith("vpp:") || t.title.toLowerCase().includes("vpp");
+    if (isVppTask) {
+      // 1. HR Department staff who handle VPP see all VPP tasks
+      const userDept = currentUser.department ? currentUser.department.toLowerCase().trim() : "";
+      const isUserInHr = userDept.includes("hành chính") || userDept.includes("nhân sự") ||
+                         userEmail === "nhuquynh.nguyenbich@gmail.com" ||
+                         userEmail === "thanhhangg25697@gmail.com" ||
+                         userEmail === "quyen.0408@gmail.com";
+      if (isUserInHr) return true;
+
+      // 2. The requester sees their own requested VPP tasks
+      let requesterName = "";
+      try {
+        const notesObj = JSON.parse(t.notes || "{}");
+        requesterName = notesObj.requesterName || "";
+      } catch (e) {}
+
+      const isRequester = requesterName && (
+        requesterName.toLowerCase().includes(userName.toLowerCase()) ||
+        userName.toLowerCase().includes(requesterName.toLowerCase())
+      );
+      if (isRequester) return true;
+
+      // 3. Employees in the target department see tasks of their department
+      const targetAssignee = t.assignee.toLowerCase().trim();
+      if (
+        userDept && (
+          targetAssignee === userDept ||
+          targetAssignee.includes(userDept) ||
+          userDept.includes(targetAssignee)
+        )
+      ) {
+        return true;
+      }
+
+      // Hide if none of the criteria are met
+      return false;
+    }
+
     // 2. Như Quỳnh thấy task Thanh Hằng và của chính mình
     if (userEmail === "nhuquynh.nguyenbich@gmail.com" || userName.includes("Như Quỳnh")) {
       const targetAssignee = t.assignee.toLowerCase();

@@ -15,22 +15,26 @@ if (!supabaseUrl && fs.existsSync('.env.local')) {
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 async function main() {
-  console.log('Querying duplicate employees...');
+  console.log('Querying all employees from database...');
   const { data, error } = await supabase
     .from('employees')
-    .select('id, name, employee_code, email, department, role')
+    .select('*')
     .order('name', { ascending: true });
 
   if (error) {
     console.error('Error:', error);
-  } else {
-    const counts = {};
-    data.forEach(e => {
-      counts[e.name] = (counts[e.name] || 0) + 1;
-    });
-    const duplicates = data.filter(e => counts[e.name] > 1);
-    console.log('Duplicate records:', JSON.stringify(duplicates, null, 2));
+    return;
   }
+  
+  console.log(`Total employees in DB: ${data.length}`);
+  
+  // Find employees with name containing "hanh"
+  const hanhEmployees = data.filter(e => {
+    const name = e.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[đĐ]/g, "d");
+    return name.includes("hanh");
+  });
+  
+  console.log('Employees matching "hanh":', JSON.stringify(hanhEmployees, null, 2));
 }
 
 main().catch(console.error);
