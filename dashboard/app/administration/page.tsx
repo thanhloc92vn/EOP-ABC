@@ -2870,7 +2870,7 @@ export default function AdministrationPage() {
         due_date: dateStr,
         priority: "Thấp",
         progress: 0,
-        status: "pending_approval",
+        status: "Chờ duyệt",
         notes: JSON.stringify({
           dept: deptName,
           target: vppPreviewTargetType,
@@ -2878,7 +2878,8 @@ export default function AdministrationPage() {
           item: item.name,
           qty: Number(item.qty),
           date: dateStr,
-          requesterName: vppPreviewRequesterName
+          requesterName: vppPreviewRequesterName,
+          frequency: "Cấp phát"
         })
       }));
 
@@ -2894,6 +2895,7 @@ export default function AdministrationPage() {
       
       // Refresh list from Supabase
       fetchDeptRequests();
+      fetchChecklist();
     } catch (err: any) {
       console.error("Error creating batch PYC in Supabase:", err);
       alert("Lỗi khi tạo danh sách phiếu yêu cầu: " + (err.message || err));
