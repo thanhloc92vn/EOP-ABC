@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 import * as XLSX from "xlsx";
 
+export const maxDuration = 300;
+
 const SYSTEM_PROMPT = `
 Bạn là một AI phân tích dữ liệu hợp đồng lao động chuyên nghiệp cho phòng Hành chính Nhân sự của công ty Trung Nam E&C.
 Nhiệm vụ của bạn là đọc và trích xuất bảng theo dõi ký HĐTV, HĐLĐ từ tệp tài liệu (Excel, Word, PDF hoặc hình ảnh) được cung cấp.
