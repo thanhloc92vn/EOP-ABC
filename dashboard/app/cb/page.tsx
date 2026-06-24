@@ -5042,13 +5042,6 @@ export default function CBPage() {
                                     className="w-full bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 text-center cursor-pointer text-[10px] whitespace-normal break-words"
                                   >
                                     <option value="">Chưa phân loại</option>
-                                    {(() => {
-                                      const currentVal = c.department || c.employees?.department;
-                                      if (currentVal && !DEPARTMENTS_LIST.some(d => d.name === currentVal)) {
-                                        return <option value={currentVal}>{currentVal}</option>;
-                                      }
-                                      return null;
-                                    })()}
                                     {DEPARTMENTS_LIST.map(d => (
                                       <option key={d.key} value={d.name}>{d.name}</option>
                                     ))}
