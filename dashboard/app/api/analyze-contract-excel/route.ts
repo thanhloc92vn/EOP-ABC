@@ -105,13 +105,14 @@ Hãy trích xuất danh sách hợp đồng dạng JSON chứa mảng 'contracts
       for (const sheetName of workbook.SheetNames) {
         const sheet = workbook.Sheets[sheetName];
         const csv = XLSX.utils.sheet_to_csv(sheet);
-        // Strip empty lines to reduce token payload then cap at 600 rows
-        const csvLines = csv
-          .split("\n")
-          .filter(line => line.replace(/,/g, "").trim().length > 0);
-        const cappedCsv = csvLines.slice(0, 600).join("\n");
-        if (csvLines.length > 600) {
-          console.warn(`[analyze-contract-excel] Sheet "${sheetName}" has ${csvLines.length} non-empty rows, truncated to 600.`);
+        const allLines = csv.split("\n");
+        // Only strip lines that are 100% empty (no characters at all after removing commas)
+        // Keep lines with any data — even just a name or code — to preserve all employees
+        const csvLines = allLines.filter(line => line.replace(/,/g, "").trim().length > 0);
+        console.log(`[analyze-contract-excel] Sheet "${sheetName}": ${allLines.length} total CSV lines, ${csvLines.length} non-empty lines after filtering.`);
+        const cappedCsv = csvLines.slice(0, 800).join("\n");
+        if (csvLines.length > 800) {
+          console.warn(`[analyze-contract-excel] Sheet "${sheetName}" has ${csvLines.length} non-empty rows, truncated to 800.`);
         }
         excelText += `--- SHEET: ${sheetName} ---\n${cappedCsv}\n\n`;
       }
@@ -387,6 +388,7 @@ Hãy trích xuất danh sách hợp đồng dạng JSON chứa mảng 'contracts
       department: normalizeDepartment(c.department)
     }));
 
+    console.log(`[analyze-contract-excel] ✅ Total contracts extracted: ${allContracts.length}`);
     return NextResponse.json({ contracts: allContracts });
   } catch (err: any) {
     console.error("Analyze contract excel error:", err);
