@@ -1504,13 +1504,19 @@ export default function CBPage() {
               if (emp) empId = emp.id;
             }
 
-            // Generate a unique fallback contract_number to avoid duplicate key errors
-            const contractNum = (item.contract_number || "").trim();
-            const uniqueFallback = `IMPORT-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
-            const finalContractNumber = contractNum || uniqueFallback;
+            // Look for duplicate/existing contract in the database to overwrite
+            let existingContract = null;
+            if (item.contract_number) {
+              existingContract = contracts.find(c => c.contract_number === item.contract_number);
+            }
+            if (!existingContract && item.probation_contract_number) {
+              existingContract = contracts.find(c => c.probation_contract_number === item.probation_contract_number);
+            }
+            if (!existingContract && empId) {
+              existingContract = contracts.find(c => c.employee_id === empId);
+            }
 
             const dbData: any = {
-              contract_number: finalContractNumber,
               type: item.type || "Thử việc",
               sign_date: item.sign_date || null,
               expiration_date: item.expiration_date || null,
@@ -1533,10 +1539,19 @@ export default function CBPage() {
             };
             if (empId) dbData.employee_id = empId;
 
-            // Use upsert so re-importing the same file updates existing records
+            if (existingContract) {
+              dbData.id = existingContract.id;
+              dbData.contract_number = item.contract_number || existingContract.contract_number;
+            } else {
+              const contractNum = (item.contract_number || "").trim();
+              const uniqueFallback = `IMPORT-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+              dbData.contract_number = contractNum || uniqueFallback;
+            }
+
+            // Use upsert so re-importing the same file updates/overwrites existing records on conflict of id
             const { error } = await supabase
               .from("contracts")
-              .upsert([dbData], { onConflict: "contract_number", ignoreDuplicates: false });
+              .upsert([dbData], { onConflict: "id", ignoreDuplicates: false });
 
             if (error) {
               console.error("Lỗi lưu hợp đồng:", item.employee_name, error.message);
