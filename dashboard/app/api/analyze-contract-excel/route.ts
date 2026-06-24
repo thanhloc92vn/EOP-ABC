@@ -223,7 +223,7 @@ Hãy trích xuất danh sách hợp đồng dạng JSON chứa mảng 'contracts
             model: modelName,
             messages: msgPayload,
             temperature: 0,
-            max_tokens: 4000,
+            max_tokens: 16000,
             response_format: { type: "json_object" },
           });
           return completion;
@@ -239,8 +239,8 @@ Hãy trích xuất danh sách hợp đồng dạng JSON chứa mảng 'contracts
     }
 
     // For large inputs, split into batches of MAX_ROWS_PER_BATCH rows each.
-    // We reduce this to 40 to avoid hitting the OpenAI 4,096 output token limit (which causes truncation when generating large JSON objects).
-    const MAX_ROWS_PER_BATCH = 40;
+    // We use 20 rows per batch with max_tokens=16000 to ensure the full JSON output is never truncated.
+    const MAX_ROWS_PER_BATCH = 20;
     let allContracts: any[] = [];
 
     if (messages.length > 0) {
