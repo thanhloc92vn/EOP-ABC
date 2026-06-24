@@ -145,6 +145,34 @@ export default function TaskManagementPage() {
       if (error) throw error;
       
       if (data) {
+        // Auto-migrate old VPP task statuses (runs under authenticated user session)
+        const vppTasksToMigrate = data.filter((t: any) => 
+          t.title.toLowerCase().startsWith("vpp:") && 
+          (t.status === "pending_approval" || t.status === "completed")
+        );
+
+        if (vppTasksToMigrate.length > 0) {
+          console.log("Auto-migrating old VPP task statuses in tasks page...", vppTasksToMigrate.length);
+          for (const t of vppTasksToMigrate) {
+            const newStatus = t.status === "pending_approval" ? "Chờ duyệt" : "Hoàn thành";
+            let notesObj: any = {};
+            try {
+              notesObj = JSON.parse(t.notes || "{}");
+            } catch (e) {}
+            notesObj.frequency = notesObj.frequency || "Cấp phát";
+
+            await supabase
+              .from("tasks")
+              .update({ status: newStatus, notes: JSON.stringify(notesObj) })
+              .eq("id", t.id);
+          }
+          // Re-fetch tasks after migration
+          setTimeout(() => {
+            fetchTasks();
+          }, 500);
+          return;
+        }
+
         // Map database fields to interface
         const mappedTasks = data.map((t: any) => ({
           id: t.id,
