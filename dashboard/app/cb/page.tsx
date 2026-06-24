@@ -1477,10 +1477,12 @@ export default function CBPage() {
               }
             };
           }
+          const cleanEmpName = c.employee_name ? c.employee_name.replace(/\([^)]*\)/g, "").trim() : "";
           return {
             ...c,
             id: "new-" + Math.random().toString(36).substr(2, 9),
             employee_id: "",
+            employee_name: cleanEmpName,
             employee_code: codeVal,
             department: resolvedDept
           };
@@ -2138,9 +2140,11 @@ export default function CBPage() {
             }
           }
 
+          const cleanNameVal = c.employee_name ? c.employee_name.replace(/\([^)]*\)/g, "").trim() : "";
           return {
             ...c,
             employee_id: empId || "",
+            employee_name: cleanNameVal,
             department: normalizeDeptClient(c.department),
             employees: matchedEmp ? {
               ...matchedEmp,
@@ -5155,7 +5159,7 @@ export default function CBPage() {
                                       <option value="">-- Chọn nhân viên hệ thống --</option>
                                       {employees.map(emp => (
                                         <option key={emp.id} value={emp.id}>
-                                          {emp.name} ({emp.employee_code || "N/A"})
+                                          {emp.name}
                                         </option>
                                       ))}
                                     </select>
@@ -5416,7 +5420,7 @@ export default function CBPage() {
                               >
                                 <option value="">-- {c.employee_name || "Chọn nhân sự hệ thống"} --</option>
                                 {employees.map(emp => (
-                                  <option key={emp.id} value={emp.id}>{emp.name} ({emp.employee_code || "N/A"})</option>
+                                  <option key={emp.id} value={emp.id}>{emp.name}</option>
                                 ))}
                               </select>
                             </td>
@@ -5539,7 +5543,7 @@ export default function CBPage() {
                       >
                         <option value="">-- Chọn nhân sự để khớp nối --</option>
                         {employees.map(emp => (
-                          <option key={emp.id} value={emp.id}>{emp.name} ({emp.employee_code || "N/A"})</option>
+                          <option key={emp.id} value={emp.id}>{emp.name}</option>
                         ))}
                       </select>
                     </div>
