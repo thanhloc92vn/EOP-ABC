@@ -305,7 +305,7 @@ const INITIAL_BENEFIT_CLAIMS = [
     id: "claim-3",
     name: "Trần Nghiệp Quang",
     role: "Chỉ huy phó",
-    department: "Ban Điều Hành Dự Án Vàm Lẽo",
+    department: "BĐH Vàm Lẽo",
     level: "Quản lý sơ cấp",
     category: "Sinh con",
     amount: 500000,
@@ -357,27 +357,109 @@ const HISTORICAL_SALARY_TREND = [
   { name: "T6", "Tổng lương (Tỷ)": 1.58, "Đóng BHXH (Triệu)": 170 }
 ];
 
+// --- CLIENT-SIDE DEPT NORMALIZATION & MATCHING HELPERS ---
+const normalizeDeptClient = (raw: string | null | undefined): string => {
+  if (!raw) return "";
+  const lower = raw.trim().toLowerCase();
+  
+  // Office departments
+  if (lower.includes("hành chính") || lower.includes("nhân sự") || lower.includes("hcns")) return "Phòng Hành Chính Nhân Sự";
+  if (lower.includes("tài chính") || lower.includes("kế toán") || lower.includes("tckt")) return "Phòng Tài Chính Kế Toán";
+  if (lower.includes("vật tư") || lower.includes("thiết bị") || lower.includes("vttb")) return "Phòng Vật Tư Thiết Bị";
+  if (lower.includes("thị trường")) return "Phòng Thị Trường";
+  if (lower.includes("kế hoạch") || lower.includes("đấu thầu") || lower.includes("khđt")) return "Phòng Kế Hoạch Đấu Thầu";
+  if (lower.includes("kỹ thuật")) return "Phòng Kỹ Thuật";
+  if (lower.includes("an toàn") || lower.includes("hse") || lower.includes("atlđ")) return "Phòng An Toàn Lao Động";
+  if (lower.includes("quản lý dự án") || lower.includes("qlda")) return "Phòng Quản Lý Dự Án";
+  if (lower.includes("thư ký") || lower.includes("trợ lý")) return "Phòng Thư Ký, Trợ Lý";
+
+  // Project departments
+  if (lower.includes("vàm lẽo") || lower.includes("vàm lẻo")) return "BĐH Vàm Lẽo";
+  if (lower.includes("rạch xuyên") || lower.includes("rxt")) return "BĐH Rạch Xuyên Tâm";
+  if (lower.includes("thường phước") || lower.includes("thuong phuoc")) return "BĐH Thường Phước";
+  if (lower.includes("tây ninh") || lower.includes("xử lý nước thải") || lower.includes("xlnt")) return "BĐH XLNT Tây Ninh";
+  if (lower.includes("cà ná") || lower.includes("ca na")) return "BĐH KCN Cà Ná";
+  if (lower.includes("chống hạn") || lower.includes("chong han")) return "BĐH Chống Hạn Ninh Thuận";
+  if (lower.includes("tỉnh lộ 8") || lower.includes("tl8") || lower.includes("tỉnh lộ 08") || lower.includes("tl 8")) return "BĐH Tỉnh Lộ 8";
+  if (lower.includes("mã đà") || lower.includes("ma da")) return "BĐH Cầu Mã Đà";
+  if (lower.includes("trà vinh") || lower.includes("tra vinh")) return "BĐH ĐMT Trà Vinh 2";
+  if (lower.includes("hương lộ 11") || lower.includes("hl11") || lower.includes("hl 11")) return "BĐH Hương Lộ 11";
+
+  return raw.trim();
+};
+
+const cleanName = (name: string) => {
+  let cleaned = name.replace(/\([^)]*\)/g, ""); // Strip anything in parentheses like "(5957)"
+  return cleaned
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .trim()
+    .replace(/\s+/g, " ");
+};
+
+const matchEmployee = (rawName: string | undefined | null, rawCode: string | number | undefined | null, employeesList: Employee[]) => {
+  if (!rawName && !rawCode) return null;
+  
+  // 1. Try matching by code (exact match)
+  if (rawCode) {
+    const codeStr = String(rawCode).trim();
+    if (codeStr) {
+      const found = employeesList.find(e => e.employee_code && String(e.employee_code).trim() === codeStr);
+      if (found) return found;
+    }
+  }
+  
+  // 2. Try matching by name (exact clean match after stripping parentheses)
+  if (rawName) {
+    const cleanedSearch = cleanName(rawName);
+    if (cleanedSearch) {
+      const found = employeesList.find(e => e.name && cleanName(e.name) === cleanedSearch);
+      if (found) return found;
+    }
+  }
+
+  // 3. Try matching by name (fuzzy match)
+  if (rawName) {
+    const cleanedSearch = cleanName(rawName);
+    if (cleanedSearch.length > 5) {
+      const found = employeesList.find(e => {
+        if (!e.name) return false;
+        const cleanedEmp = cleanName(e.name);
+        return cleanedEmp.includes(cleanedSearch) || cleanedSearch.includes(cleanedEmp);
+      });
+      if (found) return found;
+    }
+  }
+
+  return null;
+};
+
 // --- ORG CHART SETUP DATA ---
 const DEPARTMENTS_LIST = [
-  // Khối Văn Phòng
+  // Khối Văn Phòng (type: "office")
   { name: "Phòng Hành Chính Nhân Sự", key: "hr", type: "office", desc: "Quản trị hành chính, tuyển dụng, đào tạo, C&B và các chế độ phúc lợi", color: "from-blue-600 to-indigo-600" },
   { name: "Phòng Tài Chính Kế Toán", key: "accounting", type: "office", desc: "Quản lý tài chính doanh nghiệp, kế toán thuế, công nợ và quyết toán thanh toán", color: "from-indigo-600 to-purple-600" },
-  { name: "Phòng Thư Ký, Trợ Lý", key: "assistant", type: "office", desc: "Hỗ trợ công tác thư ký Ban Giám đốc, điều phối công việc hành chính", color: "from-amber-600 to-yellow-600" },
-  { name: "Phòng Kế Hoạch Đấu Thầu", key: "bidding", type: "office", desc: "Xây dựng kế hoạch đấu thầu, định giá dự án, lập hồ sơ thầu thi công", color: "from-purple-600 to-fuchsia-600" },
+  { name: "Phòng Vật Tư Thiết Bị", key: "materials", type: "office", desc: "Cung ứng vật tư thiết bị, quản lý điều động máy móc công trình dự án", color: "from-cyan-600 to-blue-600" },
   { name: "Phòng Thị Trường", key: "market", type: "office", desc: "Phát triển thị trường, quan hệ đối tác, mở rộng dự án thi công xây dựng", color: "from-pink-600 to-rose-600" },
-  
-  // Khối Kỹ Thuật & Giám Sát
-  { name: "Phòng Kỹ Thuật", key: "technical", type: "tech", desc: "Giám sát thiết kế, bóc tách khối lượng, giải pháp kỹ thuật công trình", color: "from-teal-600 to-emerald-600" },
-  { name: "Phòng Vật Tư Thiết Bị", key: "materials", type: "tech", desc: "Cung ứng vật tư thiết bị, quản lý điều động máy móc công trình dự án", color: "from-cyan-600 to-blue-600" },
-  { name: "Phòng An Toàn Lao Động", key: "safety", type: "tech", desc: "Đảm bảo ATLĐ, vệ sinh môi trường công trường, đào tạo HSE", color: "from-emerald-600 to-green-600" },
-  { name: "Phòng Quản Lý Dự Án", key: "management", type: "tech", desc: "Quản lý tiến độ, chất lượng thi công dự án, hồ sơ thanh quyết toán", color: "from-sky-600 to-indigo-600" },
+  { name: "Phòng Kế Hoạch Đấu Thầu", key: "bidding", type: "office", desc: "Xây dựng kế hoạch đấu thầu, định giá dự án, lập hồ sơ thầu thi công", color: "from-purple-600 to-fuchsia-600" },
+  { name: "Phòng Kỹ Thuật", key: "technical", type: "office", desc: "Giám sát thiết kế, bóc tách khối lượng, giải pháp kỹ thuật công trình", color: "from-teal-600 to-emerald-600" },
+  { name: "Phòng An Toàn Lao Động", key: "safety", type: "office", desc: "Đảm bảo ATLĐ, vệ sinh môi trường công trường, đào tạo HSE", color: "from-emerald-600 to-green-600" },
+  { name: "Phòng Quản Lý Dự Án", key: "management", type: "office", desc: "Quản lý tiến độ, chất lượng thi công dự án, hồ sơ thanh quyết toán", color: "from-sky-600 to-indigo-600" },
+  { name: "Phòng Thư Ký, Trợ Lý", key: "assistant", type: "office", desc: "Hỗ trợ công tác thư ký Ban Giám đốc, điều phối công việc hành chính", color: "from-amber-600 to-yellow-600" },
 
-  // Khối Hiện Trường / Công Trường
-  { name: "Ban Điều Hành Dự Án Vàm Lẽo", key: "project_vamleo", type: "project", desc: "Ban điều hành trực tiếp thi công, giám sát tại dự án Vàm Lẽo", color: "from-amber-600 to-orange-600" },
-  { name: "Ban Điều Hành Dự Án Cà Ná", key: "project_cana", type: "project", desc: "Ban điều hành trực tiếp thi công, giám sát tại dự án Cà Ná", color: "from-orange-600 to-red-600" },
-  { name: "Ban Điều Hành Dự Án ĐNT Trà Vinh 2", key: "project_travinh2", type: "project", desc: "Ban điều hành trực tiếp thi công ĐNT Trà Vinh 2", color: "from-blue-500 to-cyan-500" },
-  { name: "Ban Điều Hành Dự Án Rạch Xuyên Tân", key: "project_rachxuyentan", type: "project", desc: "Ban điều hành trực tiếp thi công Rạch Xuyên Tân", color: "from-green-500 to-emerald-500" },
-  { name: "Ban Điều Hành Dự Án XLNT Tây Ninh", key: "project_tayninh", type: "project", desc: "Ban điều hành trực tiếp thi công XLNT Tây Ninh", color: "from-purple-500 to-pink-500" }
+  // Khối Hiện Trường / Công Trường (type: "project")
+  { name: "BĐH Vàm Lẽo", key: "project_vamleo", type: "project", desc: "Ban điều hành trực tiếp thi công tại dự án Vàm Lẽo", color: "from-amber-600 to-orange-600" },
+  { name: "BĐH Rạch Xuyên Tâm", key: "project_rachxuyentam", type: "project", desc: "Ban điều hành trực tiếp thi công Rạch Xuyên Tâm", color: "from-green-500 to-emerald-500" },
+  { name: "BĐH Thường Phước", key: "project_thuongphuoc", type: "project", desc: "Ban điều hành trực tiếp thi công Thường Phước", color: "from-rose-500 to-orange-500" },
+  { name: "BĐH XLNT Tây Ninh", key: "project_tayninh", type: "project", desc: "Ban điều hành trực tiếp thi công XLNT Tây Ninh", color: "from-purple-500 to-pink-500" },
+  { name: "BĐH KCN Cà Ná", key: "project_kcncana", type: "project", desc: "Ban điều hành trực tiếp thi công KCN Cà Ná", color: "from-orange-600 to-red-600" },
+  { name: "BĐH Chống Hạn Ninh Thuận", key: "project_chonghanninhthuan", type: "project", desc: "Ban điều hành trực tiếp thi công Chống Hạn Ninh Thuận", color: "from-teal-500 to-cyan-500" },
+  { name: "BĐH Tỉnh Lộ 8", key: "project_tinhlo8", type: "project", desc: "Ban điều hành trực tiếp thi công Tỉnh Lộ 8", color: "from-blue-600 to-sky-600" },
+  { name: "BĐH Cầu Mã Đà", key: "project_caumada", type: "project", desc: "Ban điều hành trực tiếp thi công Cầu Mã Đà", color: "from-yellow-600 to-amber-600" },
+  { name: "BĐH ĐMT Trà Vinh 2", key: "project_travinh2", type: "project", desc: "Ban điều hành trực tiếp thi công ĐMT Trà Vinh 2", color: "from-blue-500 to-cyan-500" },
+  { name: "BĐH Hương Lộ 11", key: "project_huonglo11", type: "project", desc: "Ban điều hành trực tiếp thi công Hương Lộ 11", color: "from-red-500 to-pink-500" }
 ];
 
 const BOARD_OF_DIRECTORS = [
@@ -1358,16 +1440,26 @@ export default function CBPage() {
         // Hydrate imported contracts with matched employees where possible
         const hydrated = result.contracts.map((c: any) => {
           let empId = "";
-          let matched = null;
-          if (c.employee_name) {
-            matched = employees.find(e =>
-              e.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") ===
-              c.employee_name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-            );
+          let matched = matchEmployee(c.employee_name, c.employee_code, employees);
+          
+          // Try to extract employee code from name if missing (e.g. "Nguyễn Thanh Tấn (5957)")
+          let codeVal = c.employee_code || "";
+          if (!codeVal && c.employee_name) {
+            const extracted = c.employee_name.match(/\((\d+)\)/);
+            if (extracted) {
+              codeVal = extracted[1];
+              // Try matching again if code was just extracted
+              if (!matched) {
+                matched = matchEmployee(c.employee_name, codeVal, employees);
+              }
+            }
           }
-          if (!matched && c.employee_code) {
-            matched = employees.find(e => e.employee_code === String(c.employee_code));
-          }
+
+          const rawDept = c.department || "";
+          const resolvedDept = rawDept && rawDept !== "Chưa phân loại" 
+            ? normalizeDeptClient(rawDept) 
+            : (matched ? normalizeDeptClient(matched.department) : "");
+
           if (matched) {
             empId = matched.id;
             return {
@@ -1375,10 +1467,11 @@ export default function CBPage() {
               id: "new-" + Math.random().toString(36).substr(2, 9),
               employee_id: empId,
               employee_name: matched.name,
-              employee_code: matched.employee_code || "",
+              employee_code: matched.employee_code || codeVal || "",
+              department: resolvedDept,
               employees: {
                 name: matched.name,
-                department: matched.department,
+                department: normalizeDeptClient(matched.department),
                 role: matched.role,
                 employee_code: matched.employee_code
               }
@@ -1387,7 +1480,9 @@ export default function CBPage() {
           return {
             ...c,
             id: "new-" + Math.random().toString(36).substr(2, 9),
-            employee_id: ""
+            employee_id: "",
+            employee_code: codeVal,
+            department: resolvedDept
           };
         });
 
@@ -1403,10 +1498,7 @@ export default function CBPage() {
           try {
             let empId = item.employee_id;
             if (!empId && item.employee_name) {
-              const emp = employees.find(e =>
-                e.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") ===
-                (item.employee_name as string).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-              );
+              const emp = matchEmployee(item.employee_name, item.employee_code, employees);
               if (emp) empId = emp.id;
             }
 
@@ -1582,10 +1674,7 @@ export default function CBPage() {
       
       let empId = contract.employee_id;
       if (!empId && contract.employee_name) {
-        const emp = employees.find(e => 
-          e.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") === 
-          contract.employee_name!.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-        );
+        const emp = matchEmployee(contract.employee_name, contract.employee_code, employees);
         if (emp) empId = emp.id;
       }
 
@@ -1614,6 +1703,7 @@ export default function CBPage() {
         allowances: contract.allowances || null,
         total_income: contract.total_income || null,
         last_salary_adj_date: contract.last_salary_adj_date || null,
+        department: contract.department || null,
       };
 
       if (empId) {
@@ -1662,10 +1752,7 @@ export default function CBPage() {
       for (const item of newItems) {
         let empId = item.employee_id;
         if (!empId && item.employee_name) {
-          const emp = employees.find(e => 
-            e.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") === 
-            item.employee_name!.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-          );
+          const emp = matchEmployee(item.employee_name, item.employee_code, employees);
           if (emp) empId = emp.id;
         }
 
@@ -1689,6 +1776,7 @@ export default function CBPage() {
           allowances: item.allowances || null,
           total_income: item.total_income || null,
           last_salary_adj_date: item.last_salary_adj_date || null,
+          department: item.department || null,
         };
         if (empId) dbData.employee_id = empId;
 
@@ -1719,9 +1807,16 @@ export default function CBPage() {
           item.total_income !== original.total_income ||
           item.last_salary_adj_date !== original.last_salary_adj_date ||
           item.status !== original.status ||
-          item.employee_id !== original.employee_id;
+          item.employee_id !== original.employee_id ||
+          item.department !== original.department;
 
         if (!hasChanged) continue;
+
+        let empId = item.employee_id;
+        if (!empId && item.employee_name) {
+          const emp = matchEmployee(item.employee_name, item.employee_code, employees);
+          if (emp) empId = emp.id;
+        }
 
         const dbData: any = {
           contract_number: item.contract_number,
@@ -1743,7 +1838,8 @@ export default function CBPage() {
           allowances: item.allowances || null,
           total_income: item.total_income || null,
           last_salary_adj_date: item.last_salary_adj_date || null,
-          employee_id: item.employee_id || null,
+          employee_id: empId || null,
+          department: item.department || null,
         };
 
         const { error } = await supabase.from("contracts").update(dbData).eq("id", item.id);
@@ -1942,8 +2038,8 @@ export default function CBPage() {
       };
       setCurrentUser(userInfo);
 
-      await loadEmployeesData(email, fullAccess, userInfo.name, empData);
-      await fetchContracts();
+      const loadedEmployees = await loadEmployeesData(email, fullAccess, userInfo.name, empData);
+      await fetchContracts(loadedEmployees);
       await fetchLeavesFromSupabase();
     } catch (err) {
       console.error("Error checking user access:", err);
@@ -1953,7 +2049,7 @@ export default function CBPage() {
   };
 
   // Fetch employees from Supabase with access filters
-  const loadEmployeesData = async (email: string, fullAccess: boolean, userName: string, empRecord: any) => {
+  const loadEmployeesData = async (email: string, fullAccess: boolean, userName: string, empRecord: any): Promise<Employee[]> => {
     try {
       setLoadingEmployees(true);
       const { data, error } = await supabase
@@ -1975,7 +2071,7 @@ export default function CBPage() {
               name: userName,
               email: email,
               phone: empRecord?.phone || "",
-              department: empRecord?.department || "Chưa xếp phòng",
+              department: normalizeDeptClient(empRecord?.department) || "Chưa xếp phòng",
               role: empRecord?.role || "Nhân viên",
               status: "Chính thức",
               avatar: userName.slice(0, 2).toUpperCase(),
@@ -1988,13 +2084,23 @@ export default function CBPage() {
             finalEmployees = [dummyEmp];
           }
         }
-        setEmployees(finalEmployees);
-        if (finalEmployees.length > 0) {
-          setSelectedEmp(finalEmployees[0]);
+        
+        // Normalize employee departments client-side
+        const normalizedEmployees = finalEmployees.map(e => ({
+          ...e,
+          department: normalizeDeptClient(e.department)
+        }));
+        
+        setEmployees(normalizedEmployees);
+        if (normalizedEmployees.length > 0) {
+          setSelectedEmp(normalizedEmployees[0]);
         }
+        return normalizedEmployees;
       }
+      return [];
     } catch (err) {
       console.error("Error fetching employees in CB:", err);
+      return [];
     } finally {
       setLoadingEmployees(false);
     }
@@ -2004,7 +2110,7 @@ export default function CBPage() {
     await checkAccessAndLoad();
   };
 
-  const fetchContracts = async () => {
+  const fetchContracts = async (employeesList?: Employee[]) => {
     try {
       setLoadingContracts(true);
       const { data, error } = await supabase
@@ -2013,8 +2119,38 @@ export default function CBPage() {
         .order("created_at", { ascending: false });
       if (error) throw error;
       if (data) {
-        setContracts(data as Contract[]);
-        setTempContracts(data as Contract[]);
+        const listToUse = employeesList || employees;
+        const normalizedData = (data as Contract[]).map(c => {
+          let empId = c.employee_id;
+          let matchedEmp = c.employees;
+          
+          // Auto-match employee reference if missing
+          if ((!empId || !matchedEmp) && c.employee_name) {
+            const found = matchEmployee(c.employee_name, c.employee_code, listToUse);
+            if (found) {
+              empId = found.id;
+              matchedEmp = {
+                name: found.name,
+                department: found.department,
+                role: found.role,
+                employee_code: found.employee_code
+              };
+            }
+          }
+
+          return {
+            ...c,
+            employee_id: empId || "",
+            department: normalizeDeptClient(c.department),
+            employees: matchedEmp ? {
+              ...matchedEmp,
+              department: normalizeDeptClient(matchedEmp.department)
+            } : undefined
+          };
+        });
+        
+        setContracts(normalizedData);
+        setTempContracts(normalizedData);
       }
     } catch (err) {
       console.error("Error fetching contracts in CB:", err);
@@ -4785,7 +4921,7 @@ export default function CBPage() {
                   </button>
 
                   <button
-                    onClick={fetchContracts}
+                    onClick={() => fetchContracts()}
                     disabled={loadingContracts}
                     className="p-2.5 border border-slate-200 hover:bg-slate-50 text-slate-500 rounded-xl transition-all cursor-pointer active:scale-95"
                     title="Đồng bộ lại"
