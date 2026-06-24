@@ -35,6 +35,13 @@ Mỗi hợp đồng trong danh sách cần có các trường dữ liệu sau:
 - Đối với các số tiền (lương, thưởng, phụ cấp, tổng thu nhập), hãy loại bỏ các ký tự dấu phân cách nghìn (dấu chấm hoặc dấu phẩy) và chuyển sang dạng số nguyên.
 - Trả về kết quả CHỈ dạng JSON chứa mảng "contracts", không kèm bất kỳ giải thích nào khác.
 
+━━━ QUY TẮC BẮT BUỘC ĐỂ KHÔNG BỎ SÓT NHÂN VIÊN ━━━
+1. BẮT BUỘC TRÍCH XUẤT ĐỦ 100% CÁC DÒNG CÓ TÊN NHÂN VIÊN: Không được phép bỏ sót bất kỳ nhân viên nào có tên hoặc mã nhân viên xuất hiện trong dữ liệu được cung cấp. Số lượng hợp đồng trả về trong mảng JSON phải khớp chính xác và đầy đủ số dòng nhân sự thực tế.
+2. XỬ LÝ CỘT TRỐNG / DÒNG THIẾU THÔNG TIN:
+   - Nếu một nhân viên chỉ có Họ tên hoặc Mã nhân viên mà các cột thông tin khác (số hợp đồng, ngày ký, ngày hết hạn, các khoản lương, phụ cấp, v.v.) bị bỏ trống, bạn VẪN PHẢI trích xuất và trả về đối tượng nhân viên đó.
+   - Với các trường dữ liệu trống hoặc không có thông tin, hãy điền "" (đối với kiểu chuỗi/ngày tháng) hoặc null (đối với số). TUYỆT ĐỐI KHÔNG ĐƯỢC bỏ qua nhân viên đó chỉ vì thiếu thông tin hợp đồng hay thiếu lương. Người dùng sẽ tự điền tay sau.
+3. TUYỆT ĐỐI KHÔNG ĐƯỢC dừng trích xuất giữa chừng hoặc bỏ qua phần cuối danh sách với lý do "dòng trống không đọc". Phải trích xuất hết cho đến người cuối cùng.
+
 ━━━ OUTPUT FORMAT (JSON ONLY) ━━━
 {
   "contracts": [
@@ -201,6 +208,35 @@ Hãy trích xuất danh sách hợp đồng dạng JSON chứa mảng 'contracts
       }
     };
 
+    // Helper function to call OpenAI API with exponential backoff retry mechanism
+    async function callOpenAIWithRetry(
+      openaiInstance: OpenAI,
+      modelName: string,
+      msgPayload: OpenAI.Chat.ChatCompletionMessageParam[],
+      retries = 3,
+      delayMs = 1500
+    ): Promise<any> {
+      for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+          const completion = await openaiInstance.chat.completions.create({
+            model: modelName,
+            messages: msgPayload,
+            temperature: 0,
+            max_tokens: 4000,
+            response_format: { type: "json_object" },
+          });
+          return completion;
+        } catch (err: any) {
+          console.warn(`[analyze-contract-excel] Attempt ${attempt} failed: ${err.message || err}`);
+          if (attempt === retries) {
+            throw err;
+          }
+          // Exponential backoff
+          await new Promise(resolve => setTimeout(resolve, delayMs * attempt));
+        }
+      }
+    }
+
     // For large inputs, split into batches of MAX_ROWS_PER_BATCH rows each.
     // We reduce this to 40 to avoid hitting the OpenAI 4,096 output token limit (which causes truncation when generating large JSON objects).
     const MAX_ROWS_PER_BATCH = 40;
@@ -218,39 +254,90 @@ Hãy trích xuất danh sách hợp đồng dạng JSON chứa mảng 'contracts
         const csvPart = userContent.slice(markerIdx + excelMarker.length).trim();
         const csvLines = csvPart.split("\n");
 
-        // First line is always the header row — keep it in every batch
-        const headerRow = csvLines[0] || "";
-        const dataLines = csvLines.slice(1);
+        // Find the line that looks like the column headers (usually line containing "Họ và tên", "Họ tên" or "Nhân viên")
+        let headerRowIndex = 0;
+        for (let idx = 0; idx < Math.min(csvLines.length, 15); idx++) {
+          const line = csvLines[idx].toLowerCase();
+          if (
+            line.includes("họ và tên") ||
+            line.includes("họ tên") ||
+            line.includes("nhân viên") ||
+            line.includes("ngày nhận việc") ||
+            line.includes("ngày vào")
+          ) {
+            headerRowIndex = idx;
+            break;
+          }
+        }
 
-        const promises = [];
+        // Keep all title and column header lines at the top of the CSV
+        const headerRows = csvLines.slice(0, headerRowIndex + 1);
+        const headerCsv = headerRows.join("\n");
+        const dataLines = csvLines.slice(headerRowIndex + 1);
+
+        // Scan all CSV lines to map active group/department headers
+        const activeGroupHeaders: string[] = [];
+        let currentGroupHeader = "";
+        for (let idx = 0; idx < csvLines.length; idx++) {
+          const line = csvLines[idx];
+          const cells = line.split(",").map(c => c.trim());
+          const nonEmptyCells = cells.filter(c => c.length > 0);
+
+          // A group/department header typically has 1 or 2 non-empty cells
+          if (nonEmptyCells.length >= 1 && nonEmptyCells.length <= 2) {
+            const firstCell = nonEmptyCells[0];
+            const isNumber = /^\d+$/.test(firstCell);
+            const lowerCell = firstCell.toLowerCase();
+            const isHeader =
+              lowerCell.includes("bch") ||
+              lowerCell.includes("đội") ||
+              lowerCell.includes("ban") ||
+              lowerCell.includes("phòng") ||
+              lowerCell.includes("da ") ||
+              lowerCell.includes("dự án") ||
+              lowerCell.includes("công trình") ||
+              (firstCell === firstCell.toUpperCase() && !isNumber && firstCell.length > 3);
+            if (isHeader) {
+              currentGroupHeader = line;
+            }
+          }
+          activeGroupHeaders.push(currentGroupHeader);
+        }
+
+        // Process batches sequentially to respect rate limits and allow retries
         for (let i = 0; i < dataLines.length; i += MAX_ROWS_PER_BATCH) {
           const batchLines = dataLines.slice(i, i + MAX_ROWS_PER_BATCH);
-          const batchCsv = [headerRow, ...batchLines].join("\n");
+
+          // Retrieve active group header for the first line of this batch
+          const firstLineIndexInCsv = headerRowIndex + 1 + i;
+          const activeHeader = activeGroupHeaders[firstLineIndexInCsv] || "";
+
+          let prependedLines = [...batchLines];
+          // Prepend active department header if not already present in this batch
+          if (activeHeader && !batchLines.includes(activeHeader)) {
+            prependedLines = [activeHeader, ...batchLines];
+          }
+
+          const batchCsv = [headerCsv, ...prependedLines].join("\n");
           const batchMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
             { role: "system", content: SYSTEM_PROMPT },
             { role: "user", content: `${headerPart}\n${batchCsv}` },
           ];
 
-          promises.push(
-            openai.chat.completions.create({
-              model,
-              messages: batchMessages,
-              temperature: 0,
-              max_tokens: 4000,
-              response_format: { type: "json_object" },
-            }).then(completion => {
-              const reply = completion.choices[0]?.message?.content || "{}";
-              return safeParseContracts(reply);
-            }).catch(err => {
-              console.error(`Batch parsing error at rows ${i} to ${i + MAX_ROWS_PER_BATCH}:`, err);
-              return [];
-            })
-          );
-        }
+          const batchNumber = Math.floor(i / MAX_ROWS_PER_BATCH) + 1;
+          const totalBatches = Math.ceil(dataLines.length / MAX_ROWS_PER_BATCH);
+          console.log(`[analyze-contract-excel] Processing batch ${batchNumber}/${totalBatches}...`);
 
-        const results = await Promise.all(promises);
-        for (const batchContracts of results) {
-          allContracts = allContracts.concat(batchContracts);
+          try {
+            const completion = await callOpenAIWithRetry(openai, model, batchMessages);
+            const reply = completion.choices[0]?.message?.content || "{}";
+            const batchContracts = safeParseContracts(reply);
+            console.log(`[analyze-contract-excel] Batch ${batchNumber} parsed ${batchContracts.length} contracts.`);
+            allContracts = allContracts.concat(batchContracts);
+          } catch (err: any) {
+            console.error(`[analyze-contract-excel] Batch ${batchNumber} parsing failed completely:`, err);
+            throw new Error(`Lỗi khi phân tích gói dữ liệu thứ ${batchNumber}/${totalBatches} của danh sách nhân sự: ${err.message || err}`);
+          }
         }
       } else {
         // Non-Excel path (PDF/Word/image): single call with higher token limit
