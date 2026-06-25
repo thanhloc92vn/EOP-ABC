@@ -1505,8 +1505,18 @@ export default function CBPage() {
         let failCount = 0;
         let firstError = "";
 
-        // Track processed contracts in this batch to detect internal collisions
-        const processedContracts: { contract_number: string, employee_name: string }[] = [];
+        // Faithful 1:1 import: every employee row extracted from the file becomes
+        // exactly one record. We deliberately do NOT merge by employee code, name,
+        // or contract number — the tracking sheet may legitimately list the same
+        // person more than once, and two different people sometimes share a
+        // mistakenly-duplicated code. The only thing we must guard is the unique
+        // contract_number column in the DB: when a real number is empty or already
+        // used, we assign an internal unique id so the row still inserts as its own
+        // record instead of overwriting another one.
+        const usedNumbers = new Set<string>(
+          contracts.map(c => (c.contract_number || "").trim()).filter(Boolean)
+        );
+        const generateUniqueId = () => `IMPORT-${crypto.randomUUID()}`;
 
         for (const item of hydrated) {
           // Skip completely empty rows (no name and no contract number)
@@ -1517,37 +1527,6 @@ export default function CBPage() {
             if (!empId && item.employee_name) {
               const emp = matchEmployee(item.employee_name, item.employee_code, employees);
               if (emp) empId = emp.id;
-            }
-
-             // Look for duplicate/existing contract in the database to overwrite
-            let existingContract = null;
-            if (empId) {
-              existingContract = contracts.find(c => c.employee_id === empId);
-            }
-            if (!existingContract && item.employee_name) {
-              existingContract = contracts.find(c => c.employee_name && cleanName(c.employee_name) === cleanName(item.employee_name));
-            }
-            // If contract number matches, we ONLY match if the employee name matches (or is empty).
-            // This prevents overwriting employee A's contract with employee B's data when they have identical contract numbers in Excel.
-            if (!existingContract && item.contract_number) {
-              const matchByNum = contracts.find(c => c.contract_number === item.contract_number);
-              if (matchByNum) {
-                const sameEmp = !matchByNum.employee_name || 
-                               (item.employee_name && cleanName(matchByNum.employee_name) === cleanName(item.employee_name));
-                if (sameEmp) {
-                  existingContract = matchByNum;
-                }
-              }
-            }
-            if (!existingContract && item.probation_contract_number) {
-              const matchByProbNum = contracts.find(c => c.probation_contract_number === item.probation_contract_number);
-              if (matchByProbNum) {
-                const sameEmp = !matchByProbNum.employee_name || 
-                               (item.employee_name && cleanName(matchByProbNum.employee_name) === cleanName(item.employee_name));
-                if (sameEmp) {
-                  existingContract = matchByProbNum;
-                }
-              }
             }
 
             const dbData: any = {
@@ -1573,72 +1552,23 @@ export default function CBPage() {
             };
             if (empId) dbData.employee_id = empId;
 
-            let dbError = null;
-            if (existingContract) {
-              dbData.contract_number = item.contract_number || existingContract.contract_number;
-              const { error } = await supabase
-                .from("contracts")
-                .update(dbData)
-                .eq("id", existingContract.id);
-              dbError = error;
-            } else {
-              const contractNum = (item.contract_number || "").trim();
-              const isTakenByOtherInDB = contractNum && contracts.some(c => 
-                c.contract_number === contractNum && 
-                c.employee_name && 
-                cleanName(c.employee_name) !== cleanName(item.employee_name)
-              );
-              const isTakenByOtherInBatch = contractNum && processedContracts.some(c =>
-                c.contract_number === contractNum &&
-                cleanName(c.employee_name) !== cleanName(item.employee_name)
-              );
-              const isTakenByOther = isTakenByOtherInDB || isTakenByOtherInBatch;
-              
-              const isFallback = !contractNum || isTakenByOther;
-              const generateUniqueId = () => `IMPORT-${crypto.randomUUID()}`;
-              
-              if (isTakenByOther) {
-                dbData.contract_number = `IMPORT-COLLISION-${crypto.randomUUID()}`;
-              } else {
-                dbData.contract_number = contractNum || generateUniqueId();
-              }
+            // Decide the contract_number to store. Keep the real number only if it
+            // is present and not already taken; otherwise fall back to a unique id
+            // so this row inserts as a separate record.
+            const contractNum = (item.contract_number || "").trim();
+            dbData.contract_number = (contractNum && !usedNumbers.has(contractNum))
+              ? contractNum
+              : generateUniqueId();
 
-              if (isFallback) {
-                // For auto-generated or collision fallback contract numbers, use plain insert
-                const { error } = await supabase
-                  .from("contracts")
-                  .insert([dbData]);
-                dbError = error;
-                // If duplicate key error, retry once with a fresh unique ID
-                if (dbError && dbError.message?.includes("duplicate key")) {
-                  dbData.contract_number = generateUniqueId();
-                  const { error: retryError } = await supabase
-                    .from("contracts")
-                    .insert([dbData]);
-                  dbError = retryError;
-                }
-              } else {
-                // Real contract number from Excel: use upsert to overwrite duplicates
-                const { error } = await supabase
-                  .from("contracts")
-                  .upsert([dbData], { onConflict: "contract_number", ignoreDuplicates: false });
-                dbError = error;
-                // If upsert fails due to composite constraint mismatch, try plain insert
-                if (dbError && dbError.message?.includes("duplicate key")) {
-                  const { error: insertError } = await supabase
-                    .from("contracts")
-                    .insert([dbData]);
-                  if (insertError && insertError.message?.includes("duplicate key")) {
-                    // Generate fallback ID since the contract number is taken by another record in DB
-                    dbData.contract_number = `IMPORT-COLLISION-${crypto.randomUUID()}`;
-                    const { error: retryError } = await supabase
-                      .from("contracts")
-                      .insert([dbData]);
-                    dbError = retryError;
-                  } else {
-                    dbError = insertError;
-                  }
-                }
+            let dbError = null;
+            {
+              const { error } = await supabase.from("contracts").insert([dbData]);
+              dbError = error;
+              // On any unique-key collision, retry once with a fresh internal id.
+              if (dbError && dbError.message?.includes("duplicate key")) {
+                dbData.contract_number = generateUniqueId();
+                const { error: retryError } = await supabase.from("contracts").insert([dbData]);
+                dbError = retryError;
               }
             }
 
@@ -1648,12 +1578,7 @@ export default function CBPage() {
               failCount++;
             } else {
               savedCount++;
-              if (dbData.contract_number) {
-                processedContracts.push({
-                  contract_number: dbData.contract_number,
-                  employee_name: item.employee_name || ""
-                });
-              }
+              usedNumbers.add(dbData.contract_number);
             }
           } catch (e: any) {
             console.error("Lỗi không xác định:", e);
@@ -3059,7 +2984,32 @@ export default function CBPage() {
                         </div>
                       )}
 
-                      {activeSubTab === "contract" && (
+                      {activeSubTab === "contract" && (() => {
+                        // Single source of truth: pull the employee's contract straight from the
+                        // tracking list (`contracts`). Any edit saved in "Hợp đồng nhân sự" refreshes
+                        // `contracts`, so this profile view auto-syncs with the tracking table.
+                        const fmtDate = (d: any) => {
+                          if (!d) return "—";
+                          const dt = new Date(d);
+                          return isNaN(dt.getTime()) ? String(d) : dt.toLocaleDateString("vi-VN");
+                        };
+                        const isRealNumber = (n: any) => !!n && !String(n).startsWith("IMPORT-");
+                        const empCode = (selectedEmp.employee_code || "").toString().trim();
+                        const matchedContracts = contracts.filter(c =>
+                          (c.employee_id && c.employee_id === selectedEmp.id) ||
+                          (empCode && (c.employee_code || "").toString().trim() === empCode) ||
+                          (c.employee_name && selectedEmp.name && cleanName(c.employee_name) === cleanName(selectedEmp.name))
+                        );
+                        // Prefer the labour contract (real HĐLĐ number + sign date), then any real
+                        // number, then whatever matched.
+                        const empContract =
+                          matchedContracts.find(c => isRealNumber(c.contract_number) && c.sign_date) ||
+                          matchedContracts.find(c => isRealNumber(c.contract_number)) ||
+                          matchedContracts[0] || null;
+                        const contractNo = empContract && isRealNumber(empContract.contract_number)
+                          ? empContract.contract_number
+                          : (empContract?.probation_contract_number || "—");
+                        return (
                         <div className="glass bg-white rounded-2xl p-6 border-transparent shadow-premium space-y-6">
                           <div className="flex items-center justify-between border-b border-slate-100 pb-4">
                             <div>
@@ -3071,26 +3021,30 @@ export default function CBPage() {
                             </button>
                           </div>
 
+                          {!empContract && (
+                            <div className="text-[11px] font-semibold text-amber-600 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
+                              Chưa có dữ liệu hợp đồng cho nhân viên này trong danh sách theo dõi. Hãy thêm/nhập ở tab “Hợp đồng nhân sự”.
+                            </div>
+                          )}
+
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div className="space-y-4">
                               <div className="bg-slate-50/50 p-4 rounded-xl space-y-3">
                                 <div className="flex justify-between text-xs font-semibold">
                                   <span className="text-slate-400">Số hợp đồng</span>
-                                  <span className="text-mono text-slate-850 font-bold">HDLD-{selectedEmp.name.slice(0, 2).toUpperCase()}-2025</span>
+                                  <span className="text-mono text-slate-850 font-bold">{contractNo}</span>
                                 </div>
                                 <div className="flex justify-between text-xs font-semibold">
                                   <span className="text-slate-400">Loại hợp đồng</span>
-                                  <span className="text-slate-850 font-bold">Xác định thời hạn (3 năm)</span>
+                                  <span className="text-slate-850 font-bold">{empContract?.type || "—"}</span>
                                 </div>
                                 <div className="flex justify-between text-xs font-semibold">
                                   <span className="text-slate-400">Ngày ký hiệu lực</span>
-                                  <span className="text-slate-850 font-bold">{new Date(selectedEmp.created_at).toLocaleDateString("vi-VN")}</span>
+                                  <span className="text-slate-850 font-bold">{fmtDate(empContract?.sign_date)}</span>
                                 </div>
                                 <div className="flex justify-between text-xs font-semibold">
                                   <span className="text-slate-400">Ngày hết hạn dự kiến</span>
-                                  <span className="text-slate-850 font-bold">
-                                    {new Date(new Date(selectedEmp.created_at).getTime() + 3 * 365 * 24 * 60 * 60 * 1000).toLocaleDateString("vi-VN")}
-                                  </span>
+                                  <span className="text-slate-850 font-bold">{fmtDate(empContract?.expiration_date)}</span>
                                 </div>
                               </div>
                             </div>
@@ -3114,7 +3068,8 @@ export default function CBPage() {
                             </div>
                           </div>
                         </div>
-                      )}
+                        );
+                      })()}
 
                       {activeSubTab === "promotion" && (
                         <div className="glass bg-white rounded-2xl p-6 border-transparent shadow-premium space-y-6">
@@ -5099,7 +5054,7 @@ export default function CBPage() {
                 </div>
 
                 <div className="overflow-x-auto overflow-y-auto max-h-[600px] scrollbar-thin">
-                  <table className="w-full text-[11px] text-left border-collapse min-w-[2400px]">
+                  <table className="w-full text-[11px] text-left border-collapse min-w-[2560px]">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 font-extrabold uppercase tracking-wider text-[9px] sticky top-0 z-10">
                         <th className="py-2.5 px-2 w-12 text-center bg-slate-50 border-r border-slate-200">STT</th>
@@ -5108,6 +5063,7 @@ export default function CBPage() {
                         <th className="py-2.5 px-2 w-40 bg-slate-50 border-r border-slate-200">Phòng ban</th>
                         <th className="py-2.5 px-2 w-32 text-center bg-slate-50 border-r border-slate-200">Ngày nhận việc</th>
                         <th className="py-2.5 px-2 w-44 bg-slate-50 border-r border-slate-200">Số HĐTV</th>
+                        <th className="py-2.5 px-2 w-40 bg-slate-50 border-r border-slate-200">Loại HĐLĐ</th>
                         <th className="py-2.5 px-2 w-32 text-center bg-slate-50 border-r border-slate-200">HĐLĐ Hiệu lực</th>
                         <th className="py-2.5 px-2 w-32 text-center bg-slate-50 border-r border-slate-200">HĐLĐ Hết hạn</th>
                         <th className="py-2.5 px-2 w-32 text-right bg-slate-50 border-r border-slate-200">Lương BHXH</th>
@@ -5120,14 +5076,14 @@ export default function CBPage() {
                     <tbody className="divide-y divide-slate-100 font-medium text-slate-700 bg-white">
                       {loadingContracts ? (
                         <tr>
-                          <td colSpan={13} className="py-12 text-center text-slate-400 gap-2">
+                          <td colSpan={14} className="py-12 text-center text-slate-400 gap-2">
                             <Loader2 className="animate-spin text-[#005BAC] mx-auto mb-2" size={20} />
                             <span>Đang tải danh sách hợp đồng lao động...</span>
                           </td>
                         </tr>
                       ) : tempContracts.length === 0 ? (
                         <tr>
-                          <td colSpan={13} className="py-12 text-center text-slate-400">
+                          <td colSpan={14} className="py-12 text-center text-slate-400">
                             Không tìm thấy dữ liệu hợp đồng nào. Hãy tải lên Excel hoặc thêm dòng hợp đồng mới!
                           </td>
                         </tr>
@@ -5138,7 +5094,10 @@ export default function CBPage() {
                             const name = (c.employee_name || "").toLowerCase();
                             const code = (c.employee_code || "").toLowerCase();
                             const num = (c.contract_number || "").toLowerCase();
-                            const dept = (c.employees?.department || c.department || "").toLowerCase();
+                            // Filter on the SAME department shown in the row (the contract's
+                            // own department takes priority), so a row never appears under a
+                            // department filter that differs from its displayed phòng ban.
+                            const dept = (c.department || c.employees?.department || "").toLowerCase();
                             const deptMatch = contractsDeptFilter ? dept.includes(contractsDeptFilter.toLowerCase()) : true;
                             const projectMatch = contractsProjectFilter ? dept.includes(contractsProjectFilter.toLowerCase()) : true;
                             return (name.includes(query) || code.includes(query) || num.includes(query) || dept.includes(query)) && deptMatch && projectMatch;
@@ -5217,6 +5176,25 @@ export default function CBPage() {
                                     onChange={(e) => handleContractCellChange(actualIdx, "probation_contract_number", e.target.value)}
                                     className="w-full bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 px-1 font-mono text-[10px]"
                                   />
+                                </td>
+                                {/* Loại HĐLĐ */}
+                                <td className="py-1 px-1 border-r border-slate-100">
+                                  <select
+                                    value={c.type || ""}
+                                    onChange={(e) => handleContractCellChange(actualIdx, "type", e.target.value)}
+                                    className="w-full bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 px-1 text-[10px] cursor-pointer"
+                                  >
+                                    <option value="">—</option>
+                                    <option value="Xác định thời hạn">Xác định thời hạn</option>
+                                    <option value="Không xác định thời hạn">Không xác định thời hạn</option>
+                                    <option value="Thử việc">Thử việc</option>
+                                    <option value="1 năm">1 năm</option>
+                                    <option value="2 năm">2 năm</option>
+                                    <option value="3 năm">3 năm</option>
+                                    {c.type && !["Xác định thời hạn", "Không xác định thời hạn", "Thử việc", "1 năm", "2 năm", "3 năm"].includes(c.type) && (
+                                      <option value={c.type}>{c.type}</option>
+                                    )}
+                                  </select>
                                 </td>
 
                                 {/* HĐLĐ Hiệu lực */}
