@@ -33,6 +33,7 @@ Nhiệm vụ của bạn là đọc nội dung hợp đồng lao động cá nh�
 ━━━ QUY TẮC PHÂN TÍCH & CHUẨN HOÁ ━━━
 - Hãy chuẩn hoá tất cả định dạng ngày về YYYY-MM-DD (ví dụ: "ngày 10 tháng 03 năm 2026" hoặc "10/03/2026" đều chuyển thành "2026-03-10").
 - Chuẩn hoá các trường tiền tệ về kiểu số nguyên nguyên bản (ví dụ: "18.000.000 VNĐ" hoặc "18,000,000" -> 18000000).
+- TUYỆT ĐỐI KHÔNG tự bịa ra hoặc phỏng đoán dữ liệu nếu thông tin đó không xuất hiện trong tài liệu. Các trường dữ liệu nào trống hãy điền "" hoặc null để bỏ qua cho người dùng tự điền tay.
 - Trả về kết quả CHỈ dạng JSON, không kèm bất kỳ giải thích nào khác.
 
 ━━━ OUTPUT FORMAT (JSON ONLY) ━━━

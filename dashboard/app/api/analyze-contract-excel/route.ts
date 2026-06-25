@@ -36,6 +36,7 @@ Mỗi hợp đồng trong danh sách cần có các trường dữ liệu sau:
 - Đối với tất cả các ngày, chuyển sang định dạng YYYY-MM-DD. Ví dụ: "1/2/2025" -> "2025-02-01".
 - Đối với các số tiền, loại bỏ dấu phân cách nghìn và chuyển thành số nguyên. Nếu trống điền null.
 - Trích xuất ĐẦY ĐỦ từng dòng dữ liệu nhân viên xuất hiện trong bảng CSV. Mỗi dòng tương ứng với một object trong mảng "contracts". Dòng nào thiếu thông tin ở cột nào thì điền "" hoặc null cho cột đó, TUYỆT ĐỐI KHÔNG tự ý lọc bỏ dòng.
+- TUYỆT ĐỐI KHÔNG tự bịa ra hoặc phỏng đoán dữ liệu nếu thông tin đó không xuất hiện trong tài liệu. Các trường dữ liệu nào trống hãy điền "" hoặc null để bỏ qua cho người dùng tự điền tay.
 - Trả về kết quả CHỈ dạng JSON chứa mảng "contracts", không kèm bất kỳ giải thích nào khác.
 
 ━━━ OUTPUT FORMAT (JSON ONLY) ━━━
