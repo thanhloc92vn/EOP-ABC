@@ -76,6 +76,72 @@ Mỗi hợp đồng trong danh sách cần có các trường dữ liệu sau:
 }
 `.trim();
 
+const isLineGroupHeader = (line: string): boolean => {
+  const cells = line.split(",").map(c => c.trim().replace(/^["']|["']$/g, ""));
+  const nonEmpty = cells.filter(c => c.length > 0);
+  if (nonEmpty.length === 0) return false;
+  if (nonEmpty.length > 3) return false;
+
+  for (const cell of nonEmpty) {
+    const lower = cell.toLowerCase();
+    if (
+      lower.startsWith("p. ") ||
+      lower.startsWith("p.") ||
+      lower.startsWith("phòng ") ||
+      lower.startsWith("ban ") ||
+      lower.startsWith("tổ ") ||
+      lower.startsWith("đội ") ||
+      lower.startsWith("bch ") ||
+      lower.startsWith("bđh ") ||
+      lower.startsWith("da ") ||
+      lower.startsWith("dự án ") ||
+      lower.includes("giám đốc") ||
+      lower.includes("chỉ huy") ||
+      lower.includes("điều hành") ||
+      lower.includes("công trình")
+    ) {
+      return true;
+    }
+  }
+  return false;
+};
+
+const isLineHeaderOrSubHeader = (line: string): boolean => {
+  const lower = line.toLowerCase();
+  if (
+    lower.includes("họ tên") ||
+    lower.includes("họ và tên") ||
+    lower.includes("mã nhân viên") ||
+    lower.includes("từ ngày") ||
+    lower.includes("đến ngày") ||
+    lower.includes("ngày hiệu lực") ||
+    lower.includes("ngày hết hạn") ||
+    lower.includes("ngày ký") ||
+    lower.includes("ngày nhận việc") ||
+    lower.includes("mức lương") ||
+    lower.includes("phụ cấp") ||
+    lower.includes("thu nhập")
+  ) {
+    return true;
+  }
+  return false;
+};
+
+const isLineDataRow = (line: string, codeColIdx: number, nameColIdx: number): boolean => {
+  const stripped = line.replace(/,/g, "").trim();
+  if (stripped.length === 0) return false;
+
+  if (isLineGroupHeader(line)) return false;
+  if (isLineHeaderOrSubHeader(line)) return false;
+
+  const cells = line.split(",").map(c => c.trim());
+  const hasCode = codeColIdx !== -1 && cells[codeColIdx] && cells[codeColIdx].length > 0;
+  const hasName = nameColIdx !== -1 && cells[nameColIdx] && cells[nameColIdx].length > 0;
+
+  if (!hasCode && !hasName) return false;
+  return true;
+};
+
 export async function POST(req: NextRequest) {
   try {
     const authHeader = req.headers.get("Authorization");
@@ -108,21 +174,19 @@ Hãy trích xuất danh sách hợp đồng dạng JSON chứa mảng 'contracts
 
     if (fileType.endsWith(".xlsx") || fileType.endsWith(".xls")) {
       const workbook = XLSX.read(fileBuffer, { type: "buffer" });
-      let excelText = "";
-      for (const sheetName of workbook.SheetNames) {
-        const sheet = workbook.Sheets[sheetName];
-        const csv = XLSX.utils.sheet_to_csv(sheet);
-        const allLines = csv.split("\n");
-        // Only strip lines that are 100% empty (no characters at all after removing commas)
-        // Keep lines with any data — even just a name or code — to preserve all employees
-        const csvLines = allLines.filter(line => line.replace(/,/g, "").trim().length > 0);
-        console.log(`[analyze-contract-excel] Sheet "${sheetName}": ${allLines.length} total CSV lines, ${csvLines.length} non-empty lines after filtering.`);
-        const cappedCsv = csvLines.slice(0, 800).join("\n");
-        if (csvLines.length > 800) {
-          console.warn(`[analyze-contract-excel] Sheet "${sheetName}" has ${csvLines.length} non-empty rows, truncated to 800.`);
-        }
-        excelText += `--- SHEET: ${sheetName} ---\n${cappedCsv}\n\n`;
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      const csv = XLSX.utils.sheet_to_csv(sheet);
+      const allLines = csv.split("\n");
+      // Only strip lines that are 100% empty (no characters at all after removing commas)
+      // Keep lines with any data — even just a name or code — to preserve all employees
+      const csvLines = allLines.filter(line => line.replace(/,/g, "").trim().length > 0);
+      console.log(`[analyze-contract-excel] Sheet "${sheetName}": ${allLines.length} total CSV lines, ${csvLines.length} non-empty lines after filtering.`);
+      const cappedCsv = csvLines.slice(0, 800).join("\n");
+      if (csvLines.length > 800) {
+        console.warn(`[analyze-contract-excel] Sheet "${sheetName}" has ${csvLines.length} non-empty rows, truncated to 800.`);
       }
+      const excelText = `--- SHEET: ${sheetName} ---\n${cappedCsv}\n\n`;
       messages = [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: `${promptText}\n\n--- NỘI DUNG SHEET EXCEL ---\n${excelText}` },
@@ -251,28 +315,12 @@ Hãy trích xuất danh sách hợp đồng dạng JSON chứa mảng 'contracts
     let allContracts: any[] = [];
 
     // Helper: count actual data rows in a CSV batch (exclude pure header/group-header lines)
-    const countDataRows = (lines: string[], headerLine: string): number => {
+    const countDataRows = (lines: string[], codeColIdx: number, nameColIdx: number): number => {
       let count = 0;
       for (const line of lines) {
-        const stripped = line.replace(/,/g, "").trim();
-        if (stripped.length === 0) continue; // empty line
-        // Skip lines that look like group/department headers (1-2 non-empty cells, all caps, etc.)
-        const cells = line.split(",").map(c => c.trim());
-        const nonEmpty = cells.filter(c => c.length > 0);
-        if (nonEmpty.length <= 2) {
-          const first = nonEmpty[0] || "";
-          const isNumber = /^\d+$/.test(first);
-          const lower = first.toLowerCase();
-          const isGroupHeader =
-            lower.includes("bch") || lower.includes("đội") || lower.includes("ban") ||
-            lower.includes("phòng") || lower.includes("da ") || lower.includes("dự án") ||
-            lower.includes("công trình") ||
-            (first === first.toUpperCase() && !isNumber && first.length > 3);
-          if (isGroupHeader) continue;
+        if (isLineDataRow(line, codeColIdx, nameColIdx)) {
+          count++;
         }
-        // Skip the column header line itself
-        if (line === headerLine) continue;
-        count++;
       }
       return count;
     };
@@ -292,18 +340,18 @@ Hãy trích xuất danh sách hợp đồng dạng JSON chứa mảng 'contracts
         // Find the line that looks like the column headers (usually line containing "Họ và tên", "Họ tên" or "Nhân viên")
         let headerRowIndex = 0;
         for (let idx = 0; idx < Math.min(csvLines.length, 15); idx++) {
-          const line = csvLines[idx].toLowerCase();
-          if (
-            line.includes("họ và tên") ||
-            line.includes("họ tên") ||
-            line.includes("nhân viên") ||
-            line.includes("ngày nhận việc") ||
-            line.includes("ngày vào")
-          ) {
+          if (isLineHeaderOrSubHeader(csvLines[idx]) && !isLineGroupHeader(csvLines[idx])) {
             headerRowIndex = idx;
             break;
           }
         }
+
+        const headerLine = csvLines[headerRowIndex];
+        const headerCells = headerLine.split(",").map(c => c.trim().toLowerCase());
+        let codeColIdx = headerCells.findIndex(c => c.includes("mã") || c.includes("ma nv") || c.includes("code"));
+        let nameColIdx = headerCells.findIndex(c => c.includes("họ") || c.includes("tên") || c.includes("name"));
+        if (codeColIdx === -1) codeColIdx = 2;
+        if (nameColIdx === -1) nameColIdx = 3;
 
         // Keep all title and column header lines at the top of the CSV
         const headerRows = csvLines.slice(0, headerRowIndex + 1);
@@ -315,26 +363,8 @@ Hãy trích xuất danh sách hợp đồng dạng JSON chứa mảng 'contracts
         let currentGroupHeader = "";
         for (let idx = 0; idx < csvLines.length; idx++) {
           const line = csvLines[idx];
-          const cells = line.split(",").map(c => c.trim());
-          const nonEmptyCells = cells.filter(c => c.length > 0);
-
-          // A group/department header typically has 1 or 2 non-empty cells
-          if (nonEmptyCells.length >= 1 && nonEmptyCells.length <= 2) {
-            const firstCell = nonEmptyCells[0];
-            const isNumber = /^\d+$/.test(firstCell);
-            const lowerCell = firstCell.toLowerCase();
-            const isHeader =
-              lowerCell.includes("bch") ||
-              lowerCell.includes("đội") ||
-              lowerCell.includes("ban") ||
-              lowerCell.includes("phòng") ||
-              lowerCell.includes("da ") ||
-              lowerCell.includes("dự án") ||
-              lowerCell.includes("công trình") ||
-              (firstCell === firstCell.toUpperCase() && !isNumber && firstCell.length > 3);
-            if (isHeader) {
-              currentGroupHeader = line;
-            }
+          if (isLineGroupHeader(line)) {
+            currentGroupHeader = line;
           }
           activeGroupHeaders.push(currentGroupHeader);
         }
@@ -361,7 +391,7 @@ Hãy trích xuất danh sách hợp đồng dạng JSON chứa mảng 'contracts
 
           const batchNumber = Math.floor(i / MAX_ROWS_PER_BATCH) + 1;
           const totalBatches = Math.ceil(dataLines.length / MAX_ROWS_PER_BATCH);
-          const expectedRows = countDataRows(batchLines, headerCsv.split("\n").pop() || "");
+          const expectedRows = countDataRows(batchLines, codeColIdx, nameColIdx);
           console.log(`[analyze-contract-excel] Processing batch ${batchNumber}/${totalBatches} (expected ~${expectedRows} data rows)...`);
 
           try {
@@ -371,7 +401,7 @@ Hãy trích xuất danh sách hợp đồng dạng JSON chứa mảng 'contracts
             console.log(`[analyze-contract-excel] Batch ${batchNumber} parsed ${batchContracts.length} contracts (expected ~${expectedRows}).`);
 
             // Validation & Retry: if AI returned significantly fewer rows than expected, retry once with a stricter prompt
-            if (expectedRows > 0 && batchContracts.length < expectedRows - 1) {
+            if (expectedRows > 0 && batchContracts.length < expectedRows) {
               console.warn(`[analyze-contract-excel] Batch ${batchNumber}: AI returned ${batchContracts.length} but expected ~${expectedRows}. Retrying with stricter prompt...`);
               const retryMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
                 { role: "system", content: SYSTEM_PROMPT },
