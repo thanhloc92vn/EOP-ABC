@@ -1493,6 +1493,10 @@ export default function CBPage() {
         let savedCount = 0;
         let failCount = 0;
         let firstError = "";
+
+        // Track processed contracts in this batch to detect internal collisions
+        const processedContracts: { contract_number: string, employee_name: string }[] = [];
+
         for (const item of hydrated) {
           // Skip completely empty rows (no name and no contract number)
           if (!item.employee_name && !item.contract_number && !item.employee_code) continue;
@@ -1568,11 +1572,16 @@ export default function CBPage() {
               dbError = error;
             } else {
               const contractNum = (item.contract_number || "").trim();
-              const isTakenByOther = contractNum && contracts.some(c => 
+              const isTakenByOtherInDB = contractNum && contracts.some(c => 
                 c.contract_number === contractNum && 
                 c.employee_name && 
                 cleanName(c.employee_name) !== cleanName(item.employee_name)
               );
+              const isTakenByOtherInBatch = contractNum && processedContracts.some(c =>
+                c.contract_number === contractNum &&
+                cleanName(c.employee_name) !== cleanName(item.employee_name)
+              );
+              const isTakenByOther = isTakenByOtherInDB || isTakenByOtherInBatch;
               
               const isFallback = !contractNum || isTakenByOther;
               const generateUniqueId = () => `IMPORT-${crypto.randomUUID()}`;
@@ -1584,7 +1593,7 @@ export default function CBPage() {
               }
 
               if (isFallback) {
-                // For auto-generated contract numbers, use plain insert to avoid constraint conflicts
+                // For auto-generated or collision fallback contract numbers, use plain insert
                 const { error } = await supabase
                   .from("contracts")
                   .insert([dbData]);
@@ -1609,12 +1618,12 @@ export default function CBPage() {
                     .from("contracts")
                     .insert([dbData]);
                   if (insertError && insertError.message?.includes("duplicate key")) {
-                    // Try update by matching contract_number directly
-                    const { error: updateError } = await supabase
+                    // Generate fallback ID since the contract number is taken by another record in DB
+                    dbData.contract_number = `IMPORT-COLLISION-${crypto.randomUUID()}`;
+                    const { error: retryError } = await supabase
                       .from("contracts")
-                      .update(dbData)
-                      .eq("contract_number", contractNum);
-                    dbError = updateError;
+                      .insert([dbData]);
+                    dbError = retryError;
                   } else {
                     dbError = insertError;
                   }
@@ -1628,6 +1637,12 @@ export default function CBPage() {
               failCount++;
             } else {
               savedCount++;
+              if (dbData.contract_number) {
+                processedContracts.push({
+                  contract_number: dbData.contract_number,
+                  employee_name: item.employee_name || ""
+                });
+              }
             }
           } catch (e: any) {
             console.error("Lỗi không xác định:", e);
@@ -5031,142 +5046,6 @@ export default function CBPage() {
                 </div>
               </div>
 
-              {/* Upload Panel (Excel Drag & Drop + AI Individual Contract Scanner) */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Excel Drag & Drop */}
-                <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium flex flex-col space-y-4">
-                  <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-                    <span className="p-2 bg-blue-50 text-blue-600 rounded-xl"><FileText size={16} /></span>
-                    <div>
-                      <h4 className="font-heading font-black text-slate-800 text-xs uppercase tracking-wider">Nhập dữ liệu theo dõi từ file Excel</h4>
-                      <p className="text-slate-400 text-[10px] font-semibold mt-0.5">Kéo thả danh sách Excel ký HĐ để AI phân tích cấu trúc cột và tự động nạp</p>
-                    </div>
-                  </div>
-
-                  {isExcelImporting ? (
-                    <div className="flex-1 flex flex-col items-center justify-center p-6 border-2 border-dashed border-blue-200 rounded-2xl bg-blue-50/5 gap-3 min-h-[140px]">
-                      {/* Animated step indicators */}
-                      <div className="flex items-center gap-2 w-full max-w-xs">
-                        {([
-                          { key: "reading",   label: "Đọc file",     icon: "📂" },
-                          { key: "sending",   label: "Gửi lên AI",   icon: "☁️" },
-                          { key: "receiving", label: "Nhận kết quả", icon: "⚡" },
-                        ] as const).map((step, idx) => {
-                          const stages = ["reading", "sending", "receiving", "done"] as const;
-                          const currentIdx = stages.indexOf(excelImportStage);
-                          const stepIdx = ["reading", "sending", "receiving"].indexOf(step.key);
-                          const isDone    = currentIdx > stepIdx;
-                          const isActive  = currentIdx === stepIdx;
-                          return (
-                            <>
-                              {idx > 0 && (
-                                <div key={`line-${idx}`} className={`flex-1 h-0.5 rounded-full transition-all duration-500 ${isDone ? "bg-blue-400" : "bg-slate-200"}`} />
-                              )}
-                              <div key={step.key} className={`flex flex-col items-center gap-0.5`}>
-                                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm transition-all duration-300 ${
-                                  isDone   ? "bg-blue-500 text-white shadow-md shadow-blue-200" :
-                                  isActive ? "bg-blue-100 ring-2 ring-blue-400 ring-offset-1 animate-pulse" :
-                                             "bg-slate-100 text-slate-400"
-                                }`}>
-                                  {isDone ? "✓" : step.icon}
-                                </div>
-                                <span className={`text-[9px] font-bold ${
-                                  isDone ? "text-blue-500" : isActive ? "text-[#005BAC]" : "text-slate-400"
-                                }`}>{step.label}</span>
-                              </div>
-                            </>
-                          );
-                        })}
-                      </div>
-                      <div className="flex items-center gap-2 mt-1">
-                        <Loader2 className="animate-spin text-[#005BAC] flex-shrink-0" size={16} />
-                        <span className="text-xs font-bold text-[#005BAC]">
-                          {excelImportStage === "reading"   && "Đang đọc và tối ưu dữ liệu từ file Excel..."}
-                          {excelImportStage === "sending"   && "Đang gửi dữ liệu lên ChatGPT để phân tích..."}
-                          {excelImportStage === "receiving" && "AI đang phân tích hợp đồng theo từng lô dữ liệu..."}
-                          {(excelImportStage as string) === "saving" && "Đang lưu toàn bộ hợp đồng vào hệ thống..."}
-                        </span>
-                      </div>
-                      <span className="text-[9px] text-slate-400 font-semibold">File lớn sẽ được chia nhỏ và xử lý theo từng lô tự động</span>
-                    </div>
-                  ) : (
-                    <>
-                      <input
-                        type="file"
-                        accept=".xlsx,.xls"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) handleExcelContractUpload(file);
-                        }}
-                        className="hidden"
-                        id="excel-contract-input-tab"
-                      />
-                      <label
-                        htmlFor="excel-contract-input-tab"
-                        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
-                        onDrop={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          const files = e.dataTransfer.files;
-                          if (files && files[0]) handleExcelContractUpload(files[0]);
-                        }}
-                        className="flex-1 border-2 border-dashed border-slate-200 hover:border-[#005BAC] rounded-2xl p-6 flex flex-col items-center justify-center text-center cursor-pointer transition-all bg-slate-50/50 hover:bg-blue-50/10 min-h-[140px]"
-                      >
-                        <UploadCloud size={32} className="text-slate-400 mb-2" />
-                        <span className="text-xs font-bold text-slate-700">Kéo thả file Excel theo dõi hợp đồng vào đây</span>
-                        <span className="text-[10px] text-slate-400 font-semibold mt-1">Hoặc click để chọn file Excel từ máy tính (.xlsx, .xls)</span>
-                      </label>
-                    </>
-                  )}
-                </div>
-
-                {/* AI Document Scanner */}
-                <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium flex flex-col space-y-4">
-                  <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-                    <span className="p-2 bg-purple-50 text-purple-600 rounded-xl"><FileText size={16} /></span>
-                    <div>
-                      <h4 className="font-heading font-black text-slate-800 text-xs uppercase tracking-wider">Đọc hợp đồng lao động bằng AI</h4>
-                      <p className="text-slate-400 text-[10px] font-semibold mt-0.5">Tải lên file PDF/Word hợp đồng thực tế, AI tự trích xuất lương, thưởng và phụ cấp</p>
-                    </div>
-                  </div>
-
-                  {isContractReading ? (
-                    <div className="flex-1 flex flex-col items-center justify-center p-6 border-2 border-dashed border-purple-200 rounded-2xl bg-purple-50/5 gap-2 min-h-[140px]">
-                      <Loader2 className="animate-spin text-purple-600" size={24} />
-                      <span className="text-xs font-bold text-purple-600">AI đang đọc nội dung hợp đồng lao động...</span>
-                      <span className="text-[9px] text-slate-400 font-semibold">AI sẽ trích xuất thông tin lương chính thức, phụ cấp và ngày hiệu lực</span>
-                    </div>
-                  ) : (
-                    <>
-                      <input
-                        type="file"
-                        accept=".pdf,.docx,.doc,.png,.jpg,.jpeg,.txt"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) handleIndividualContractReader(file);
-                        }}
-                        className="hidden"
-                        id="individual-contract-input"
-                      />
-                      <label
-                        htmlFor="individual-contract-input"
-                        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
-                        onDrop={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          const files = e.dataTransfer.files;
-                          if (files && files[0]) handleIndividualContractReader(files[0]);
-                        }}
-                        className="flex-1 border-2 border-dashed border-slate-200 hover:border-purple-500 rounded-2xl p-6 flex flex-col items-center justify-center text-center cursor-pointer transition-all bg-slate-50/50 hover:bg-purple-50/10 min-h-[140px]"
-                      >
-                        <UploadCloud size={32} className="text-purple-400 mb-2" />
-                        <span className="text-xs font-bold text-slate-700">Kéo thả hợp đồng lao động vào đây (PDF/Word/Ảnh)</span>
-                        <span className="text-[10px] text-slate-400 font-semibold mt-1">Hoặc click để tải lên file hợp đồng của nhân viên</span>
-                      </label>
-                    </>
-                  )}
-                </div>
-              </div>
 
               {/* Data Grid Table */}
               <div className="glass bg-white rounded-2xl border border-slate-200/50 shadow-premium overflow-hidden">
@@ -5187,10 +5066,6 @@ export default function CBPage() {
                         <th className="py-2.5 px-2 w-40 bg-slate-50 border-r border-slate-200">Phòng ban</th>
                         <th className="py-2.5 px-2 w-32 text-center bg-slate-50 border-r border-slate-200">Ngày nhận việc</th>
                         <th className="py-2.5 px-2 w-44 bg-slate-50 border-r border-slate-200">Số HĐTV</th>
-                        <th className="py-2.5 px-2 w-32 text-center bg-slate-50 border-r border-slate-200">HĐTV Từ ngày</th>
-                        <th className="py-2.5 px-2 w-32 text-center bg-slate-50 border-r border-slate-200">HĐTV Đến ngày</th>
-                        <th className="py-2.5 px-2 w-44 bg-slate-50 border-r border-slate-200 text-[#005BAC]">Số HĐLĐ</th>
-                        <th className="py-2.5 px-2 w-44 bg-slate-50 border-r border-slate-200">Loại HĐLĐ</th>
                         <th className="py-2.5 px-2 w-32 text-center bg-slate-50 border-r border-slate-200">HĐLĐ Hiệu lực</th>
                         <th className="py-2.5 px-2 w-32 text-center bg-slate-50 border-r border-slate-200">HĐLĐ Hết hạn</th>
                         <th className="py-2.5 px-2 w-32 text-right bg-slate-50 border-r border-slate-200">Lương BHXH</th>
@@ -5203,14 +5078,14 @@ export default function CBPage() {
                     <tbody className="divide-y divide-slate-100 font-medium text-slate-700 bg-white">
                       {loadingContracts ? (
                         <tr>
-                          <td colSpan={17} className="py-12 text-center text-slate-400 gap-2">
+                          <td colSpan={13} className="py-12 text-center text-slate-400 gap-2">
                             <Loader2 className="animate-spin text-[#005BAC] mx-auto mb-2" size={20} />
                             <span>Đang tải danh sách hợp đồng lao động...</span>
                           </td>
                         </tr>
                       ) : tempContracts.length === 0 ? (
                         <tr>
-                          <td colSpan={19} className="py-12 text-center text-slate-400">
+                          <td colSpan={13} className="py-12 text-center text-slate-400">
                             Không tìm thấy dữ liệu hợp đồng nào. Hãy tải lên Excel hoặc thêm dòng hợp đồng mới!
                           </td>
                         </tr>
@@ -5301,49 +5176,7 @@ export default function CBPage() {
                                     className="w-full bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 px-1 font-mono text-[10px]"
                                   />
                                 </td>
-                                {/* HĐTV Từ ngày */}
-                                <td className="py-1 px-1 border-r border-slate-100 text-center">
-                                  <input
-                                    type="date"
-                                    value={c.probation_start_date || ""}
-                                    onChange={(e) => handleContractCellChange(actualIdx, "probation_start_date", e.target.value)}
-                                    className="bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 px-1 w-full text-center"
-                                  />
-                                </td>
-                                {/* HĐTV Đến ngày */}
-                                <td className="py-1 px-1 border-r border-slate-100 text-center">
-                                  <input
-                                    type="date"
-                                    value={c.probation_end_date || ""}
-                                    onChange={(e) => handleContractCellChange(actualIdx, "probation_end_date", e.target.value)}
-                                    className="bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 px-1 w-full text-center"
-                                  />
-                                </td>
-                                {/* Số HĐLĐ */}
-                                <td className="py-1 px-1 border-r border-slate-100 font-bold text-[#005BAC]">
-                                  <input
-                                    type="text"
-                                    value={c.contract_number || ""}
-                                    onChange={(e) => handleContractCellChange(actualIdx, "contract_number", e.target.value)}
-                                    placeholder="HDLD-..."
-                                    className="w-full bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 px-1 font-mono text-[10px] font-bold text-[#005BAC]"
-                                  />
-                                </td>
-                                {/* Loại HĐLĐ */}
-                                <td className="py-1 px-1 border-r border-slate-100">
-                                  <select
-                                    value={c.type || "Thử việc"}
-                                    onChange={(e) => handleContractCellChange(actualIdx, "type", e.target.value)}
-                                    className="w-full bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 text-[10px] cursor-pointer font-bold text-slate-800"
-                                  >
-                                    <option value="Thử việc">Thử việc</option>
-                                    <option value="Không xác định thời hạn">Không xác định thời hạn</option>
-                                    <option value="Xác định thời hạn 1 năm">Xác định thời hạn 1 năm</option>
-                                    <option value="Xác định thời hạn 2 năm">Xác định thời hạn 2 năm</option>
-                                    <option value="Xác định thời hạn 3 năm">Xác định thời hạn 3 năm</option>
-                                    <option value="Xác định thời hạn khác">Xác định thời hạn khác</option>
-                                  </select>
-                                </td>
+
                                 {/* HĐLĐ Hiệu lực */}
                                 <td className="py-1 px-1 border-r border-slate-100 text-center">
                                   <input
