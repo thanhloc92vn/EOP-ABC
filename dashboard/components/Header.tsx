@@ -87,14 +87,28 @@ export default function Header({ title, subtitle }: Props) {
   const fetchNotifications = async (userObj: any) => {
     if (!userObj) return;
     try {
-      const { data, error } = await supabase
+      // 1. Fetch tasks pending approval (leaves & business trips)
+      const { data: tasksData, error: tasksError } = await supabase
         .from("tasks")
         .select("*")
         .eq("status", "pending_approval")
         .order("created_at", { ascending: false });
 
-      if (error) throw error;
-      if (!data) return;
+      if (tasksError) throw tasksError;
+
+      // 2. Fetch justifications pending approval (Chờ duyệt or Chưa duyệt)
+      let justificationsData: any[] = [];
+      try {
+        const { data, error } = await supabase
+          .from("attendance_justifications")
+          .select("*")
+          .in("status", ["Chờ duyệt", "Chưa duyệt"]);
+        if (!error && data) {
+          justificationsData = data;
+        }
+      } catch (err) {
+        console.warn("Could not fetch justifications for header:", err);
+      }
 
       const isUserAdmin = userObj.isAdmin || (userObj.role || "").toLowerCase() === "admin";
       const isUserManager = (userObj.role || "").toLowerCase().includes("trưởng phòng") || 
@@ -104,7 +118,9 @@ export default function Header({ title, subtitle }: Props) {
                             (userObj.role || "").toLowerCase().includes("quản lý") ||
                             (userObj.role || "").toLowerCase().includes("quan ly") ||
                             (userObj.role || "").toLowerCase().includes("quyền trưởng phòng") ||
-                            (userObj.role || "").toLowerCase().includes("quyen truong phong");
+                            (userObj.role || "").toLowerCase().includes("quyen truong phong") ||
+                            (userObj.role || "").toLowerCase().startsWith("tp.") ||
+                            (userObj.role || "").toLowerCase().startsWith("tp ");
 
       const isUserDeputy = (userObj.role || "").toLowerCase().includes("phó phòng") || 
                            (userObj.role || "").toLowerCase().includes("pho phong") ||
@@ -112,48 +128,65 @@ export default function Header({ title, subtitle }: Props) {
                            (userObj.role || "").toLowerCase().includes("pho truong phong") ||
                            (userObj.role || "").toLowerCase().includes("leader");
 
-      const hasApprovalPrivileges = isUserAdmin || isUserManager || isUserDeputy;
+      const isUserHR = userObj.name === "Lại Nguyễn Lan Phương" || 
+                       userObj.name === "Dương Nhật Hoành Anh" ||
+                       (userObj.role || "").toLowerCase().includes("nhân sự") ||
+                       (userObj.role || "").toLowerCase().includes("nhan su");
+
+      const hasApprovalPrivileges = isUserAdmin || isUserManager || isUserDeputy || isUserHR;
       if (!hasApprovalPrivileges) {
         setNotifications([]);
         return;
       }
 
-      const filtered = data.filter(t => {
+      // Filter tasks notifications
+      const filteredTasks = (tasksData || []).filter(t => {
         const titleLower = t.title.toLowerCase();
         const isLeave = titleLower.startsWith("nghỉ phép") || titleLower.includes("nghi phep");
         const isTrip = titleLower.startsWith("công tác") || titleLower.includes("cong tac");
 
         if (isLeave) {
-          // 1. Explicitly designated approver in notes
           if (t.notes && t.notes.includes(`Người duyệt: ${userObj.name}`)) return true;
 
           const assigneeLower = t.assignee.toLowerCase();
           const currentUserNameLower = userObj.name.toLowerCase();
 
-          // 2. Quỳnh approves Hằng's 1-day leave
           const isQuynh = currentUserNameLower.includes("quỳnh") || currentUserNameLower.includes("quynh");
           const isHang = assigneeLower.includes("hằng") || assigneeLower.includes("hang");
           const isOneDay = titleLower.includes("1 ngày") || titleLower.includes("1 ngay");
           if (isQuynh && isHang && isOneDay) return true;
 
-          // 3. Hoành Anh approves Quyên's 1-day leave
           const isHoanhAnh = currentUserNameLower.includes("hoành anh") || currentUserNameLower.includes("hoanh anh");
           const isQuyen = assigneeLower.includes("quyên") || assigneeLower.includes("quuyên") || assigneeLower.includes("quyen");
           if (isHoanhAnh && isQuyen && isOneDay) return true;
 
-          // 4. Managers/Admins see all leaves
-          if (isUserAdmin || isUserManager) return true;
+          if (isUserAdmin || isUserManager || isUserHR) return true;
         }
 
         if (isTrip) {
-          // Managers/Admins see all trips
-          if (isUserAdmin || isUserManager) return true;
+          if (isUserAdmin || isUserManager || isUserHR) return true;
         }
 
         return false;
       });
 
-      const mapped = filtered.map(t => {
+      // Filter justifications notifications (Admin, HR, Director, or the specifically designated approver, or department managers/deputies)
+      const isDirector = (userObj.role || "").toLowerCase().includes("giám đốc") ||
+                         (userObj.role || "").toLowerCase().includes("giam doc");
+
+      const filteredJustifications = justificationsData.filter(e => {
+        if (isUserAdmin || isUserHR || isDirector) return true;
+        if (userObj && e.approver === userObj.name) return true;
+        
+        // Department manager or deputy manager of the same department
+        const isManagerOfSameDept = (isUserManager || isUserDeputy) && userObj && userObj.department === e.department;
+        if (isManagerOfSameDept) return true;
+
+        return false;
+      });
+
+      // Map tasks to notification format
+      const mappedTasks = filteredTasks.map(t => {
         const titleLower = t.title.toLowerCase();
         const isLeave = titleLower.startsWith("nghỉ phép") || titleLower.includes("nghi phep");
         let typeText = isLeave ? "Đơn nghỉ phép" : "Yêu cầu công tác";
@@ -180,11 +213,26 @@ export default function Header({ title, subtitle }: Props) {
           type: isLeave ? "leave" : "trip",
           typeText,
           message: messageText,
-          time: t.created_at ? new Date(t.created_at).toLocaleTimeString("vi-VN", { hour: '2-digit', minute: '2-digit' }) + " " + new Date(t.created_at).toLocaleDateString("vi-VN") : ""
+          time: t.created_at ? new Date(t.created_at).toLocaleTimeString("vi-VN", { hour: '2-digit', minute: '2-digit' }) + " " + new Date(t.created_at).toLocaleDateString("vi-VN") : "",
+          timestamp: t.created_at ? new Date(t.created_at).getTime() : 0
         };
       });
 
-      setNotifications(mapped);
+      // Map justifications to notification format
+      const mappedJustifications = filteredJustifications.map(e => {
+        return {
+          id: e.id,
+          type: "justification",
+          typeText: "Giải trình công",
+          message: `${e.name} xin giải trình công ngày ${new Date(e.date).toLocaleDateString("vi-VN")}: ${e.reason} (${e.propose})`,
+          time: e.created_at ? new Date(e.created_at).toLocaleTimeString("vi-VN", { hour: '2-digit', minute: '2-digit' }) + " " + new Date(e.created_at).toLocaleDateString("vi-VN") : "",
+          timestamp: e.created_at ? new Date(e.created_at).getTime() : 0
+        };
+      });
+
+      // Combine and sort by timestamp descending
+      const allNotifications = [...mappedTasks, ...mappedJustifications].sort((a, b) => b.timestamp - a.timestamp);
+      setNotifications(allNotifications);
     } catch (err) {
       console.error("Error fetching notifications for header:", err);
     }
@@ -208,10 +256,17 @@ export default function Header({ title, subtitle }: Props) {
       fetchNotifications(currentUser);
 
       const channel = supabase
-        .channel("tasks_realtime_header")
+        .channel("realtime_header_notifications")
         .on(
           "postgres_changes",
           { event: "*", schema: "public", table: "tasks" },
+          () => {
+            fetchNotifications(currentUser);
+          }
+        )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "attendance_justifications" },
           () => {
             fetchNotifications(currentUser);
           }
@@ -296,13 +351,17 @@ export default function Header({ title, subtitle }: Props) {
                   notifications.map((notif) => (
                     <a
                       key={notif.id}
-                      href="/settings?tab=approvals"
+                      href={notif.type === "justification" ? "/settings?tab=approvals&subtab=explanation" : "/settings?tab=approvals"}
                       onClick={() => setShowDropdown(false)}
                       className="block p-4 hover:bg-slate-50/80 transition-colors space-y-1 text-left"
                     >
                       <div className="flex items-center justify-between">
                         <span className={`text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full ${
-                          notif.type === "leave" ? "bg-emerald-50 text-emerald-700" : "bg-indigo-50 text-indigo-700"
+                          notif.type === "leave" 
+                            ? "bg-emerald-50 text-emerald-700" 
+                            : notif.type === "trip"
+                            ? "bg-indigo-50 text-indigo-700"
+                            : "bg-amber-50 text-amber-700"
                         }`}>
                           {notif.typeText}
                         </span>

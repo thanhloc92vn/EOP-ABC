@@ -1205,6 +1205,25 @@ export default function RecruitmentPage() {
     const newResults: ScoringResult[] = [];
 
     for (const item of files) {
+      // Kiểm tra dung lượng file trước khi gửi lên server (tránh lỗi Payload Too Large 413)
+      if (item.file.size > 4.5 * 1024 * 1024) {
+        newResults.push({
+          file_name: item.file.name,
+          score: 0,
+          recommendation: "Error",
+          trang_thai: "FAIL",
+          matching_skills: [],
+          missing_skills: [],
+          summary: "",
+          extracted_info: {},
+          submitted: false,
+          saved_db: false,
+          error: "Dung lượng file CV quá lớn (tối đa 4MB). Vui lòng nén file trước khi chấm."
+        });
+        setProgress((p) => ({ ...p, done: p.done + 1 }));
+        continue;
+      }
+
       const formData = new FormData();
       formData.append("cv_file", item.file);
       formData.append("jd_text", jdText);
@@ -1222,6 +1241,16 @@ export default function RecruitmentPage() {
           body: formData,
           headers
         });
+
+        // Kiểm tra phản hồi trước khi giải mã JSON để tránh lỗi parsing text/html error
+        if (!res.ok) {
+          const errorText = await res.text();
+          if (res.status === 413 || errorText.includes("Payload Too Large") || errorText.includes("Request Entity Too Large")) {
+            throw new Error("Dung lượng file CV vượt quá giới hạn của máy chủ. Vui lòng nén file dưới 4MB.");
+          }
+          throw new Error(errorText || `Lỗi kết nối máy chủ (Mã lỗi: ${res.status})`);
+        }
+
         const data = await res.json();
         if (data.error) throw new Error(data.error);
         const r: ScoringResult = {

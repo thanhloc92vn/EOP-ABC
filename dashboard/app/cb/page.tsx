@@ -128,8 +128,8 @@ const MOCK_ATTENDANCE_LOGS = [
 ];
 
 const MOCK_EXPLANATIONS = [
-  { date: "2026-06-08", name: "Phạm Thành Lộc", reason: "Quên quét vân tay lúc về", propose: "Checkout 17:00", status: "Chờ duyệt" },
-  { date: "2026-06-05", name: "Trần Nghiệp Quang", reason: "Đi gặp đối tác trực tiếp tại công trường", propose: "Cả ngày công tác", status: "Đã duyệt" }
+  { date: "2026-06-08", name: "Phạm Thành Lộc", department: "Phòng HCNS", reason: "Quên quét vân tay lúc về", propose: "Checkout 17:00", approver: "Lê Thị Hoa Đào", status: "Chờ duyệt" },
+  { date: "2026-06-05", name: "Trần Nghiệp Quang", department: "Phòng Kỹ thuật", reason: "Đi gặp đối tác trực tiếp tại công trường", propose: "Cả ngày công tác", approver: "Lê Văn Tám", status: "Đã duyệt" }
 ];
 
 const MOCK_LEAVES: any[] = [];
@@ -564,6 +564,22 @@ export default function CBPage() {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [hasFullAccess, setHasFullAccess] = useState(false);
   const [loadingAuth, setLoadingAuth] = useState(true);
+
+  // Attendance Justification (Explanation) states
+  const [explanations, setExplanations] = useState<any[]>(MOCK_EXPLANATIONS);
+  const [loadingExplanations, setLoadingExplanations] = useState(false);
+  const [isUsingDbForExplanations, setIsUsingDbForExplanations] = useState(false);
+  
+  // Explanation Add Form states
+  const [showExplanationAddForm, setShowExplanationAddForm] = useState(false);
+  const [expFormDate, setExpFormDate] = useState(new Date().toISOString().substring(0, 10));
+  const [expFormEmployeeId, setExpFormEmployeeId] = useState("");
+  const [expFormEmployeeName, setExpFormEmployeeName] = useState("");
+  const [expFormDepartment, setExpFormDepartment] = useState("");
+  const [expFormReason, setExpFormReason] = useState("");
+  const [expFormPropose, setExpFormPropose] = useState("");
+  const [expFormApprover, setExpFormApprover] = useState("");
+  const [isSubmittingExplanation, setIsSubmittingExplanation] = useState(false);
 
   // Filter employees for Women's Day (8/3 and 20/10)
   const holidayFilteredEmployees = useMemo(() => {
@@ -2090,6 +2106,7 @@ export default function CBPage() {
       const loadedEmployees = await loadEmployeesData(email, fullAccess, userInfo.name, empData);
       await fetchContracts(loadedEmployees);
       await fetchLeavesFromSupabase();
+      await fetchExplanations();
     } catch (err) {
       console.error("Error checking user access:", err);
     } finally {
@@ -2212,6 +2229,20 @@ export default function CBPage() {
 
   useEffect(() => {
     checkAccessAndLoad();
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const subtab = params.get("subtab");
+      if (subtab) {
+        setActiveSubTab(subtab);
+        if (["machine", "explanation", "leave", "travel", "regime", "allowances"].includes(subtab)) {
+          setActiveTab("attendance");
+        } else if (["calculation", "insurance", "policy_rates"].includes(subtab)) {
+          setActiveTab("payroll_insurance");
+        } else if (["birthday", "funeral_wedding", "holiday_bonus"].includes(subtab)) {
+          setActiveTab("benefits");
+        }
+      }
+    }
   }, []);
 
   // Sync fingerprint machine mock
@@ -2252,9 +2283,236 @@ export default function CBPage() {
     return MOCK_ATTENDANCE_LOGS.filter(log => hasFullAccess || log.name === currentUser?.name);
   }, [hasFullAccess, currentUser]);
 
+  // Helper to determine if a role represents a manager/department head
+  const isManagerRole = (role: string): boolean => {
+    if (!role) return false;
+    const lower = role.trim().toLowerCase();
+    
+    // Check for common abbreviation prefixes like "tp." or "tp " or matching phrases
+    return lower.startsWith("tp.") || 
+           lower.startsWith("tp ") || 
+           lower === "tp" ||
+           lower.includes("trưởng phòng") || 
+           lower.includes("trưởng bộ phận") || 
+           lower.includes("chỉ huy trưởng") || 
+           lower.includes("kế toán trưởng") || 
+           lower.includes("ktt") ||
+           lower.includes("phó giám đốc") || 
+           lower.includes("pgđ") ||
+           lower.includes("chỉ huy phó") || 
+           lower.includes("chỉ huy");
+  };
+
+  // Helper to find department manager for autofill (robust, systematic & intelligent)
+  const getManagerForDepartment = (deptName: string) => {
+    const normalizedTarget = normalizeDeptClient(deptName);
+    
+    // 1. Filter employees in the same normalized department
+    const deptMembers = employees.filter(emp => normalizeDeptClient(emp.department) === normalizedTarget);
+    
+    // 2. Search systematically for a department head based on title/role (like TP. HCNS)
+    let manager = deptMembers.find(m => isManagerRole(m.role));
+
+    // 3. Specific override for HCNS (Hành chính Nhân sự) as requested by user
+    if (normalizedTarget === "Phòng Hành Chính Nhân Sự") {
+      const daoEmp = deptMembers.find(m => {
+        const nameLower = (m.name || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[đĐ]/g, "d");
+        return nameLower.includes("dao");
+      });
+      if (daoEmp) manager = daoEmp;
+    }
+
+    // 4. Fallback search for assistant / team leader / deputy head
+    if (!manager) {
+      manager = deptMembers.find(m => {
+        const roleLower = (m.role || "").toLowerCase();
+        return roleLower.includes("tổ trưởng") || roleLower.includes("phó phòng") || roleLower.includes("phó bộ phận");
+      });
+    }
+
+    if (manager) return manager.name;
+
+    // 5. Hardcoded fallbacks if no employee record is found in DB matching department head
+    if (normalizedTarget === "Phòng Hành Chính Nhân Sự") {
+      return "Lê Thị Hoa Đào"; // Trưởng phòng HCNS thực tế trong DB
+    }
+    if (normalizedTarget === "Phòng Kỹ Thuật") {
+      return "Phó Giám Đốc";
+    }
+    if (normalizedTarget === "Phòng Vật Tư Thiết Bị") {
+      return "TP Vật Tư Thiết Bị";
+    }
+    if (normalizedTarget === "Phòng Kế Hoạch Đấu Thầu" || normalizedTarget === "Phòng Kế Hoạch") {
+      return "TP Kế Hoạch";
+    }
+    if (normalizedTarget === "Phòng An Toàn Lao Động" || normalizedTarget === "Phòng ATLĐ") {
+      return "TP ATLĐ";
+    }
+    if (normalizedTarget === "Phòng Tài Chính Kế Toán") {
+      return "Kế Toán Trưởng";
+    }
+    if (normalizedTarget === "Phòng Dự Án" || normalizedTarget === "Phòng Quản Lý Dự Án") {
+      return "PP Dự Án";
+    }
+
+    // Hard fallback to the first employee in the department list
+    if (deptMembers.length > 0) {
+      return deptMembers[0].name;
+    }
+    return "";
+  };
+
+  const fetchExplanations = async () => {
+    setLoadingExplanations(true);
+    try {
+      const { data, error } = await supabase
+        .from("attendance_justifications")
+        .select("*")
+        .order("date", { ascending: false });
+      if (error) {
+        console.warn("Table attendance_justifications error, using local storage or mock:", error.message);
+        const stored = localStorage.getItem("attendance_justifications");
+        if (stored) {
+          setExplanations(JSON.parse(stored));
+        } else {
+          setExplanations(MOCK_EXPLANATIONS);
+        }
+        setIsUsingDbForExplanations(false);
+      } else if (data) {
+        setExplanations(data);
+        setIsUsingDbForExplanations(true);
+      }
+    } catch (e: any) {
+      console.warn("Error fetching explanations:", e);
+      const stored = localStorage.getItem("attendance_justifications");
+      if (stored) {
+        setExplanations(JSON.parse(stored));
+      } else {
+        setExplanations(MOCK_EXPLANATIONS);
+      }
+      setIsUsingDbForExplanations(false);
+    } finally {
+      setLoadingExplanations(false);
+    }
+  };
+
+  const handleAddExplanation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!expFormEmployeeName.trim()) {
+      alert("Vui lòng chọn hoặc nhập tên nhân viên!");
+      return;
+    }
+    if (!expFormDepartment.trim()) {
+      alert("Vui lòng nhập phòng ban!");
+      return;
+    }
+    if (!expFormReason.trim()) {
+      alert("Vui lòng nhập lý do giải trình!");
+      return;
+    }
+    if (!expFormPropose.trim()) {
+      alert("Vui lòng nhập khung giờ đề xuất!");
+      return;
+    }
+    if (!expFormApprover.trim()) {
+      alert("Vui lòng nhập người phê duyệt!");
+      return;
+    }
+
+    setIsSubmittingExplanation(true);
+    const newRecord = {
+      date: expFormDate,
+      name: expFormEmployeeName.trim(),
+      department: expFormDepartment.trim(),
+      reason: expFormReason.trim(),
+      propose: expFormPropose.trim(),
+      approver: expFormApprover.trim(),
+      status: "Chưa duyệt"
+    };
+
+    if (isUsingDbForExplanations) {
+      try {
+        const { data, error } = await supabase
+          .from("attendance_justifications")
+          .insert([newRecord])
+          .select();
+        if (error) throw error;
+        if (data) {
+          setExplanations(prev => [data[0], ...prev]);
+        }
+      } catch (err: any) {
+        console.error("Error inserting justification:", err);
+        alert("Lỗi khi lưu vào database: " + err.message);
+      }
+    } else {
+      // Fallback
+      const updated = [newRecord, ...explanations];
+      setExplanations(updated);
+      localStorage.setItem("attendance_justifications", JSON.stringify(updated));
+    }
+
+    // Reset form
+    setExpFormReason("");
+    setExpFormPropose("");
+    setShowExplanationAddForm(false);
+    setIsSubmittingExplanation(false);
+  };
+
+  const handleToggleExplanationApproval = async (idOrIndex: any, currentStatus: string) => {
+    const newStatus = currentStatus === "Đã duyệt" ? "Chờ duyệt" : "Đã duyệt";
+    if (isUsingDbForExplanations) {
+      try {
+        const { error } = await supabase
+          .from("attendance_justifications")
+          .update({ status: newStatus })
+          .eq("id", idOrIndex);
+        if (error) throw error;
+        setExplanations(prev => prev.map(e => e.id === idOrIndex ? { ...e, status: newStatus } : e));
+      } catch (err: any) {
+        console.error("Error updating justification status:", err);
+        alert("Lỗi khi cập nhật trạng thái: " + err.message);
+      }
+    } else {
+      // Local state update
+      const updated = explanations.map((e, idx) => {
+        const match = e.id ? e.id === idOrIndex : idx === idOrIndex;
+        return match ? { ...e, status: newStatus } : e;
+      });
+      setExplanations(updated);
+      localStorage.setItem("attendance_justifications", JSON.stringify(updated));
+    }
+  };
+
+  const handleDeleteExplanation = async (idOrIndex: any) => {
+    if (!window.confirm("Bạn có chắc chắn muốn xóa bản ghi giải trình này không?")) {
+      return;
+    }
+    if (isUsingDbForExplanations) {
+      try {
+        const { error } = await supabase
+          .from("attendance_justifications")
+          .delete()
+          .eq("id", idOrIndex);
+        if (error) throw error;
+        setExplanations(prev => prev.filter(e => e.id !== idOrIndex));
+      } catch (err: any) {
+        console.error("Error deleting justification:", err);
+        alert("Lỗi khi xóa giải trình: " + err.message);
+      }
+    } else {
+      // Local state delete
+      const updated = explanations.filter((e, idx) => {
+        const match = e.id ? e.id !== idOrIndex : idx !== idOrIndex;
+        return !match;
+      });
+      setExplanations(updated);
+      localStorage.setItem("attendance_justifications", JSON.stringify(updated));
+    }
+  };
+
   const filteredExplanations = useMemo(() => {
-    return MOCK_EXPLANATIONS.filter(e => hasFullAccess || e.name === currentUser?.name);
-  }, [hasFullAccess, currentUser]);
+    return explanations.filter(e => hasFullAccess || e.name === currentUser?.name || e.approver === currentUser?.name);
+  }, [explanations, hasFullAccess, currentUser]);
 
   const filteredLeaves = useMemo(() => {
     return leaves.filter(l => hasFullAccess || l.name === currentUser?.name);
@@ -3620,35 +3878,251 @@ export default function CBPage() {
 
               {activeSubTab === "explanation" && (
                 <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium space-y-4">
-                  <div className="border-b border-slate-100 pb-3">
-                    <h3 className="font-heading font-extrabold text-slate-800 text-sm">GIẢI TRÌNH SAI LỆCH CÔNG TÁC / QUÊN QUÉT THẺ</h3>
-                    <p className="text-slate-400 text-[10px] font-semibold mt-1">Nơi phê duyệt và đối soát lý do sai lệch hoặc bổ sung thời gian checkin/checkout của nhân viên</p>
+                  <div className="flex flex-col sm:flex-row justify-between sm:items-center border-b border-slate-100 pb-3 gap-2">
+                    <div>
+                      <h3 className="font-heading font-extrabold text-slate-800 text-sm">GIẢI TRÌNH SAI LỆCH CÔNG TÁC / QUÊN QUÉT THẺ</h3>
+                      <p className="text-slate-400 text-[10px] font-semibold mt-1">Nơi phê duyệt và đối soát lý do sai lệch hoặc bổ sung thời gian checkin/checkout của nhân viên</p>
+                    </div>
+                    <button
+                      onClick={() => setShowExplanationAddForm(!showExplanationAddForm)}
+                      className="flex items-center justify-center gap-1.5 px-3.5 py-1.5 bg-[#005BAC] hover:bg-[#004b90] text-white font-bold rounded-lg cursor-pointer text-[10px] transition-all shadow-md shadow-blue-500/10 active:scale-95 shrink-0"
+                    >
+                      {showExplanationAddForm ? <X size={12} /> : <Plus size={12} />}
+                      {showExplanationAddForm ? "Đóng biểu mẫu" : "Thêm mới giải trình"}
+                    </button>
                   </div>
+
+                  {/* Biểu mẫu Thêm mới giải trình */}
+                  {showExplanationAddForm && (
+                    <form onSubmit={handleAddExplanation} className="bg-slate-50/60 border border-slate-200/60 rounded-xl p-4 space-y-3 transition-all">
+                      <div className="text-xs font-bold text-[#005BAC] uppercase tracking-wider border-b border-slate-200/50 pb-1.5 flex items-center gap-1.5">
+                        <Plus size={13} /> Thêm mới thông tin giải trình
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        {/* Ngày giải trình */}
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">Ngày giải trình *</label>
+                          <div className="relative">
+                            <Calendar size={13} className="absolute left-2.5 top-2.5 text-slate-400" />
+                            <input
+                              type="date"
+                              required
+                              value={expFormDate}
+                              onChange={(e) => setExpFormDate(e.target.value)}
+                              className="w-full pl-8 pr-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Chọn nhân viên */}
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">Chọn nhân viên *</label>
+                          <select
+                            value={expFormEmployeeId}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setExpFormEmployeeId(val);
+                              if (val === "custom") {
+                                setExpFormEmployeeName("");
+                                setExpFormDepartment("");
+                                setExpFormApprover("");
+                              } else {
+                                const emp = employees.find(emp => emp.id === val);
+                                if (emp) {
+                                  setExpFormEmployeeName(emp.name);
+                                  setExpFormDepartment(emp.department || "Phòng HCNS");
+                                  // Auto-fill manager
+                                  const managerName = getManagerForDepartment(emp.department);
+                                  setExpFormApprover(managerName);
+                                }
+                              }
+                            }}
+                            className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none"
+                          >
+                            <option value="">-- Chọn nhân viên --</option>
+                            {employees.map(emp => (
+                              <option key={emp.id} value={emp.id}>
+                                {emp.name} ({emp.department})
+                              </option>
+                            ))}
+                            <option value="custom">Khác (Nhập thủ công)</option>
+                          </select>
+                        </div>
+
+                        {/* Tên nhân viên (nếu nhập thủ công) */}
+                        {expFormEmployeeId === "custom" ? (
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">Họ và tên nhân viên *</label>
+                            <input
+                              type="text"
+                              required
+                              placeholder="Nhập họ tên..."
+                              value={expFormEmployeeName}
+                              onChange={(e) => setExpFormEmployeeName(e.target.value)}
+                              className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none"
+                            />
+                          </div>
+                        ) : (
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">Phòng ban (Tự động)</label>
+                            <input
+                              type="text"
+                              disabled
+                              value={expFormDepartment}
+                              className="w-full px-3 py-1.5 bg-slate-100 border border-slate-200 rounded-lg text-xs font-semibold text-slate-500 outline-none"
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        {/* Phòng ban (nếu nhập thủ công) */}
+                        {expFormEmployeeId === "custom" && (
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">Phòng ban *</label>
+                            <input
+                              type="text"
+                              required
+                              placeholder="Nhập tên phòng ban..."
+                              value={expFormDepartment}
+                              onChange={(e) => setExpFormDepartment(e.target.value)}
+                              className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none"
+                            />
+                          </div>
+                        )}
+
+                        {/* Lý do giải trình */}
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">Lý do giải trình *</label>
+                          <input
+                            type="text"
+                            required
+                            placeholder="Ví dụ: Quên quét vân tay lúc về..."
+                            value={expFormReason}
+                            onChange={(e) => setExpFormReason(e.target.value)}
+                            className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none"
+                          />
+                        </div>
+
+                        {/* Khung giờ đề xuất */}
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">Khung giờ đề xuất *</label>
+                          <input
+                            type="text"
+                            required
+                            placeholder="Ví dụ: Checkout 17:00, Cả ngày công tác..."
+                            value={expFormPropose}
+                            onChange={(e) => setExpFormPropose(e.target.value)}
+                            className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none"
+                          />
+                        </div>
+
+                        {/* Người phê duyệt */}
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">Người phê duyệt (Trưởng phòng) *</label>
+                          <input
+                            type="text"
+                            required
+                            placeholder="Tên trưởng phòng phê duyệt..."
+                            value={expFormApprover}
+                            onChange={(e) => setExpFormApprover(e.target.value)}
+                            className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex justify-end gap-2 pt-2 border-t border-slate-200/50">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowExplanationAddForm(false);
+                            setExpFormReason("");
+                            setExpFormPropose("");
+                          }}
+                          className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg cursor-pointer text-[10px] transition-all"
+                        >
+                          Hủy bỏ
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={isSubmittingExplanation}
+                          className="flex items-center gap-1.5 px-4 py-1.5 bg-[#005BAC] hover:bg-[#004b90] text-white font-bold rounded-lg cursor-pointer text-[10px] transition-all disabled:opacity-50 shadow-md shadow-blue-500/5"
+                        >
+                          {isSubmittingExplanation ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />}
+                          Lưu giải trình
+                        </button>
+                      </div>
+                    </form>
+                  )}
+
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs text-left border-collapse">
                       <thead>
                         <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 font-extrabold uppercase tracking-wider text-[10px]">
                           <th className="py-3 px-3">Ngày giải trình</th>
                           <th className="py-3 px-3">Nhân viên</th>
+                          <th className="py-3 px-3">Phòng ban</th>
                           <th className="py-3 px-3">Lý do giải trình</th>
                           <th className="py-3 px-3">Khung giờ đề xuất</th>
-                          <th className="py-3 px-3 w-32 text-center">Trạng thái duyệt</th>
+                          <th className="py-3 px-3">Người phê duyệt</th>
+                          <th className="py-3 px-3 w-28 text-center">Trạng thái</th>
+                          <th className="py-3 px-3 w-28 text-center">Thao tác</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
-                        {filteredExplanations.map((e, idx) => (
-                          <tr key={idx} className="hover:bg-slate-50/50">
-                            <td className="py-3.5 px-3 font-semibold">{new Date(e.date).toLocaleDateString("vi-VN")}</td>
-                            <td className="py-3.5 px-3 text-slate-800 font-bold">{e.name}</td>
-                            <td className="py-3.5 px-3 text-slate-550 italic font-medium">{e.reason}</td>
-                            <td className="py-3.5 px-3 font-mono text-[#005BAC]">{e.propose}</td>
-                            <td className="py-3.5 px-3 text-center">
-                              <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
-                                e.status === "Đã duyệt" ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"
-                              }`}>{e.status}</span>
+                        {loadingExplanations ? (
+                          <tr>
+                            <td colSpan={8} className="py-6 text-center text-slate-400">
+                              <div className="flex justify-center items-center gap-2">
+                                <Loader2 size={14} className="animate-spin text-[#005BAC]" />
+                                Đang tải danh sách giải trình...
+                              </div>
                             </td>
                           </tr>
-                        ))}
+                        ) : filteredExplanations.length === 0 ? (
+                          <tr>
+                            <td colSpan={8} className="py-6 text-center text-slate-400 italic">
+                              Chưa có thông tin giải trình nào phù hợp.
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredExplanations.map((e, idx) => {
+                            const canApprove = hasFullAccess || (currentUser && currentUser.name === e.approver);
+                            const canDelete = hasFullAccess || (currentUser && currentUser.name === e.name);
+                            const recordId = e.id || idx;
+                            return (
+                              <tr key={recordId} className="hover:bg-slate-50/50">
+                                <td className="py-3.5 px-3 font-semibold">{new Date(e.date).toLocaleDateString("vi-VN")}</td>
+                                <td className="py-3.5 px-3 text-slate-800 font-bold">{e.name}</td>
+                                <td className="py-3.5 px-3 text-slate-500 font-medium">{e.department || "Phòng HCNS"}</td>
+                                <td className="py-3.5 px-3 text-slate-550 italic font-medium">{e.reason}</td>
+                                <td className="py-3.5 px-3 font-mono text-[#005BAC]">{e.propose}</td>
+                                <td className="py-3.5 px-3 text-slate-650 font-medium">{e.approver || "Lê Thị Hoa Đào"}</td>
+                                <td className="py-3.5 px-3 text-center">
+                                  <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                                    e.status === "Đã duyệt" ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"
+                                  }`}>{e.status === "Chờ duyệt" ? "Chưa duyệt" : (e.status || "Chưa duyệt")}</span>
+                                </td>
+                                <td className="py-3.5 px-3 text-center">
+                                  <div className="flex items-center justify-center">
+                                    {canDelete ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteExplanation(recordId)}
+                                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg border border-slate-200/60 hover:border-rose-200 transition-all cursor-pointer flex items-center justify-center shadow-sm active:scale-90"
+                                        title="Xóa giải trình"
+                                      >
+                                        <Trash2 size={13} />
+                                      </button>
+                                    ) : (
+                                      <span className="text-[9px] text-slate-400 italic">Không có quyền</span>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
                       </tbody>
                     </table>
                   </div>

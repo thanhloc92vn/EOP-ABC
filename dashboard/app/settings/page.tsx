@@ -27,7 +27,11 @@ function SettingsContent() {
   } | null>(null);
   const [tasks, setTasks] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  const [activeApprovalTab, setActiveApprovalTab] = useState<"trip" | "leave">("trip");
+  const [activeApprovalTab, setActiveApprovalTab] = useState<"trip" | "leave" | "explanation">("trip");
+
+  // Justifications States
+  const [explanations, setExplanations] = useState<any[]>([]);
+  const [loadingExplanations, setLoadingExplanations] = useState(false);
 
   // Load configuration from local storage on mount
   useEffect(() => {
@@ -38,8 +42,17 @@ function SettingsContent() {
       
       fetchUserRoleAndDept();
       fetchTasks();
+      fetchExplanations();
     }
   }, []);
+
+  // Handle URL subtab parameter
+  const subtabParam = searchParams.get("subtab");
+  useEffect(() => {
+    if (subtabParam === "explanation" || subtabParam === "trip" || subtabParam === "leave") {
+      setActiveApprovalTab(subtabParam as any);
+    }
+  }, [subtabParam]);
 
   const fetchUserRoleAndDept = async () => {
     try {
@@ -96,6 +109,26 @@ function SettingsContent() {
     }
   };
 
+  const fetchExplanations = async () => {
+    try {
+      setLoadingExplanations(true);
+      const { data, error } = await supabase
+        .from("attendance_justifications")
+        .select("*")
+        .in("status", ["Chờ duyệt", "Chưa duyệt"])
+        .order("date", { ascending: false });
+      
+      if (error) throw error;
+      if (data) {
+        setExplanations(data);
+      }
+    } catch (err) {
+      console.error("Error fetching justifications in settings:", err);
+    } finally {
+      setLoadingExplanations(false);
+    }
+  };
+
   const handleApprove = async (taskId: string, isTrip: boolean) => {
     try {
       const { error } = await supabase
@@ -128,6 +161,38 @@ function SettingsContent() {
     } catch (err) {
       console.error("Error rejecting task:", err);
       alert("Lỗi khi từ chối yêu cầu!");
+    }
+  };
+
+  const handleApproveJustification = async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from("attendance_justifications")
+        .update({ status: "Đã duyệt" })
+        .eq("id", id);
+      
+      if (error) throw error;
+      alert("Đã phê duyệt giải trình công thành công!");
+      fetchExplanations();
+    } catch (err) {
+      console.error("Error approving justification:", err);
+      alert("Lỗi khi phê duyệt giải trình công!");
+    }
+  };
+
+  const handleRejectJustification = async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from("attendance_justifications")
+        .update({ status: "Chưa duyệt" })
+        .eq("id", id);
+      
+      if (error) throw error;
+      alert("Đã từ chối giải trình công!");
+      fetchExplanations();
+    } catch (err) {
+      console.error("Error rejecting justification:", err);
+      alert("Lỗi khi từ chối giải trình!");
     }
   };
 
@@ -213,6 +278,45 @@ function SettingsContent() {
       return false;
     });
   }, [tasks, currentUser, isApprover]);
+
+  // Justifications approvals list (Admin, HR, Director, or department manager/deputy)
+  const pendingExplanations = useMemo(() => {
+    if (!currentUser || !isApprover) return [];
+    
+    const isUserAdmin = currentUser.isAdmin || (currentUser.role || "").toLowerCase() === "admin";
+    const isUserHR = currentUser.name === "Lại Nguyễn Lan Phương" || 
+                     currentUser.name === "Dương Nhật Hoành Anh" ||
+                     (currentUser.role || "").toLowerCase().includes("nhân sự") ||
+                     (currentUser.role || "").toLowerCase().includes("nhan su");
+    const isDirector = (currentUser.role || "").toLowerCase().includes("giám đốc") ||
+                       (currentUser.role || "").toLowerCase().includes("giam doc");
+
+    const isUserManager = (currentUser.role || "").toLowerCase().includes("trưởng phòng") || 
+                          (currentUser.role || "").toLowerCase().includes("truong phong") ||
+                          (currentUser.role || "").toLowerCase().includes("quản lý") ||
+                          (currentUser.role || "").toLowerCase().includes("quan ly") ||
+                          (currentUser.role || "").toLowerCase().includes("quyền trưởng phòng") ||
+                          (currentUser.role || "").toLowerCase().includes("quyen truong phong") ||
+                          (currentUser.role || "").toLowerCase().startsWith("tp.") ||
+                          (currentUser.role || "").toLowerCase().startsWith("tp ");
+
+    const isUserDeputy = (currentUser.role || "").toLowerCase().includes("phó phòng") || 
+                         (currentUser.role || "").toLowerCase().includes("pho phong") ||
+                         (currentUser.role || "").toLowerCase().includes("phó trưởng phòng") || 
+                         (currentUser.role || "").toLowerCase().includes("pho truong phong") ||
+                         (currentUser.role || "").toLowerCase().includes("leader");
+
+    return explanations.filter(e => {
+      if (isUserAdmin || isUserHR || isDirector) return true;
+      if (e.approver === currentUser.name) return true;
+      
+      // Department manager or deputy manager of the same department
+      const isManagerOfSameDept = (isUserManager || isUserDeputy) && currentUser.department === e.department;
+      if (isManagerOfSameDept) return true;
+
+      return false;
+    });
+  }, [explanations, currentUser, isApprover]);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
@@ -368,6 +472,17 @@ function SettingsContent() {
                   >
                     2. Duyệt Nghỉ Phép ({pendingLeaves.length})
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveApprovalTab("explanation")}
+                    className={`px-3 py-1.5 rounded-lg cursor-pointer transition-all ${
+                      activeApprovalTab === "explanation"
+                        ? "bg-white text-blue-600 shadow-sm border border-slate-200/20"
+                        : "text-slate-500 hover:text-slate-800"
+                    }`}
+                  >
+                    3. Duyệt Giải Trình ({pendingExplanations.length})
+                  </button>
                 </div>
               </div>
 
@@ -444,7 +559,7 @@ function SettingsContent() {
                     </div>
                   )}
                 </div>
-              ) : (
+              ) : activeApprovalTab === "leave" ? (
                 <div className="space-y-4">
                   {pendingLeaves.length === 0 ? (
                     <p className="text-center text-slate-400 text-xs italic py-8">Không có yêu cầu nghỉ phép nào chờ bạn phê duyệt.</p>
@@ -500,6 +615,66 @@ function SettingsContent() {
                               </tr>
                             );
                           })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {loadingExplanations ? (
+                    <div className="flex items-center justify-center py-8 text-slate-400 text-xs font-semibold gap-2">
+                      <span className="w-4 h-4 border-2 border-slate-300 border-t-blue-600 rounded-full animate-spin" />
+                      Đang tải danh sách giải trình chờ duyệt...
+                    </div>
+                  ) : pendingExplanations.length === 0 ? (
+                    <p className="text-center text-slate-400 text-xs italic py-8">Không có yêu cầu giải trình công nào chờ bạn phê duyệt.</p>
+                  ) : (
+                    <div className="overflow-x-auto rounded-xl border border-slate-200/60 bg-white">
+                      <table className="w-full text-xs text-left border-collapse">
+                        <thead>
+                          <tr className="bg-slate-50/75 border-b border-slate-100 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                            <th className="py-3 px-4">Nhân sự</th>
+                            <th className="py-3 px-4">Bộ phận</th>
+                            <th className="py-3 px-4">Ngày giải trình</th>
+                            <th className="py-3 px-4">Lý do</th>
+                            <th className="py-3 px-4">Khung giờ đề xuất</th>
+                            <th className="py-3 px-4 text-center">Thao tác</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 font-semibold text-slate-600">
+                          {pendingExplanations.map((exp) => (
+                            <tr key={exp.id} className="hover:bg-slate-50/50 transition-all duration-150">
+                              <td className="py-3.5 px-4 font-bold text-slate-800 flex items-center gap-2">
+                                <div className="w-6 h-6 rounded-full bg-amber-500 text-white text-[9px] font-bold flex items-center justify-center">
+                                  {exp.name ? exp.name.split(" ").filter(Boolean).map((n: string) => n[0]).join("").slice(0, 2).toUpperCase() : "NV"}
+                                </div>
+                                <span>{exp.name}</span>
+                              </td>
+                              <td className="py-3.5 px-4 text-slate-500">{exp.department}</td>
+                              <td className="py-3.5 px-4 text-slate-500">{new Date(exp.date).toLocaleDateString("vi-VN")}</td>
+                              <td className="py-3.5 px-4 text-slate-450 font-normal max-w-[200px] truncate" title={exp.reason}>{exp.reason}</td>
+                              <td className="py-3.5 px-4 font-mono text-[#005BAC]">{exp.propose}</td>
+                              <td className="py-3.5 px-4">
+                                <div className="flex items-center justify-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleApproveJustification(exp.id)}
+                                    className="bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 shadow-sm cursor-pointer"
+                                  >
+                                    Duyệt
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRejectJustification(exp.id)}
+                                    className="bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 shadow-sm cursor-pointer"
+                                  >
+                                    Từ chối
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
                         </tbody>
                       </table>
                     </div>
