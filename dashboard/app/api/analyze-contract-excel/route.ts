@@ -35,17 +35,22 @@ Mỗi hợp đồng trong danh sách cần có các trường dữ liệu sau:
 - Hãy cố gắng đọc và phân tích kỹ cấu trúc tiêu đề cột và các nhóm phòng ban để gán đúng giá trị.
 - Đối với tất cả các ngày (ngày nhận việc, ngày hiệu lực, ngày hết hạn, ngày thử việc, ngày điều chỉnh lương), hãy chuyển sang định dạng YYYY-MM-DD. Ví dụ "1/2/2025" -> "2025-02-01", "06/01/2025" -> "2025-01-06".
 - Đối với các số tiền (lương, thưởng, phụ cấp, tổng thu nhập), hãy loại bỏ các ký tự dấu phân cách nghìn (dấu chấm hoặc dấu phẩy) và chuyển sang dạng số nguyên.
-- Trả về kết quả CHỈ dạng JSON chứa mảng "contracts", không kèm bất kỳ giải thích nào khác.
+- Trả về kết quả CHỈ dạng JSON chứa mảng "contracts" và trường "_data_row_count", không kèm bất kỳ giải thích nào khác.
 
-━━━ QUY TẮC BẮT BUỘC ĐỂ KHÔNG BỎ SÓT NHÂN VIÊN ━━━
-1. BẮT BUỘC TRÍCH XUẤT ĐỦ 100% CÁC DÒNG CÓ TÊN NHÂN VIÊN: Không được phép bỏ sót bất kỳ nhân viên nào có tên hoặc mã nhân viên xuất hiện trong dữ liệu được cung cấp. Số lượng hợp đồng trả về trong mảng JSON phải khớp chính xác và đầy đủ số dòng nhân sự thực tế.
-2. XỬ LÝ CỘT TRỐNG / DÒNG THIẾU THÔNG TIN:
-   - Nếu một nhân viên chỉ có Họ tên hoặc Mã nhân viên mà các cột thông tin khác (số hợp đồng, ngày ký, ngày hết hạn, các khoản lương, phụ cấp, v.v.) bị bỏ trống, bạn VẪN PHẢI trích xuất và trả về đối tượng nhân viên đó.
-   - Với các trường dữ liệu trống hoặc không có thông tin, hãy điền "" (đối với kiểu chuỗi/ngày tháng) hoặc null (đối với số). TUYỆT ĐỐI KHÔNG ĐƯỢC bỏ qua nhân viên đó chỉ vì thiếu thông tin hợp đồng hay thiếu lương. Người dùng sẽ tự điền tay sau.
-3. TUYỆT ĐỐI KHÔNG ĐƯỢC dừng trích xuất giữa chừng hoặc bỏ qua phần cuối danh sách với lý do "dòng trống không đọc". Phải trích xuất hết cho đến người cuối cùng.
+━━━ QUY TẮC BẮT BUỘC ĐỂ KHÔNG BỎ SÓT NHÂN VIÊN (TUYỆT ĐỐI PHẢI TUÂN THỦ) ━━━
+1. ĐẾM CHÍNH XÁC SỐ DÒNG DỮ LIỆU: Trước khi bắt đầu trích xuất, hãy đếm tổng số dòng CSV có chứa dữ liệu nhân viên (bất kỳ dòng nào có ít nhất 1 ô không trống và không phải dòng tiêu đề cột / tiêu đề phòng ban). Ghi nhớ con số này.
+2. BẮT BUỘC TRÍCH XUẤT ĐỦ 100% CÁC DÒNG: Mỗi dòng CSV có chứa bất kỳ thông tin nhân viên nào (tên, mã NV, ngày, số hợp đồng, lương...) đều PHẢI được chuyển thành 1 object trong mảng contracts. Số lượng object trong mảng contracts PHẢI BẰNG ĐÚNG số dòng dữ liệu bạn đã đếm ở bước 1.
+3. XỬ LÝ CỘT TRỐNG / DÒNG THIẾU THÔNG TIN:
+   - Nếu một dòng chỉ có Họ tên hoặc chỉ có Mã nhân viên mà TẤT CẢ các cột khác đều trống → bạn VẪN PHẢI tạo 1 object cho dòng đó.
+   - Với mỗi trường dữ liệu trống: điền "" (chuỗi/ngày) hoặc null (số). TUYỆT ĐỐI KHÔNG BỎ QUA dòng đó.
+   - Người dùng sẽ tự điền tay các ô trống sau. Việc của bạn là ĐỌC HẾT, không được tự ý lọc bỏ.
+4. KHÔNG ĐƯỢC dừng giữa chừng, bỏ phần cuối, hoặc gom nhóm nhiều người thành 1 dòng. Mỗi dòng CSV = 1 object JSON riêng biệt.
+5. SAU KHI HOÀN THÀNH: Kiểm tra lại số lượng object trong mảng contracts. Nếu ít hơn số dòng dữ liệu đã đếm ở bước 1, hãy bổ sung cho đến khi đủ.
+6. TRƯỜNG "_data_row_count": Luôn trả về trường này ở cấp cao nhất của JSON, ghi nhận số dòng dữ liệu nhân viên bạn đã đếm được. Ví dụ: "_data_row_count": 25.
 
 ━━━ OUTPUT FORMAT (JSON ONLY) ━━━
 {
+  "_data_row_count": 25,
   "contracts": [
     {
       "stt_ton": "...",
@@ -225,7 +230,7 @@ Hãy trích xuất danh sách hợp đồng dạng JSON chứa mảng 'contracts
             model: modelName,
             messages: msgPayload,
             temperature: 0,
-            max_tokens: 16000,
+            max_tokens: 32000,
             response_format: { type: "json_object" },
           });
           return completion;
@@ -244,6 +249,33 @@ Hãy trích xuất danh sách hợp đồng dạng JSON chứa mảng 'contracts
     // We use 20 rows per batch with max_tokens=16000 to ensure the full JSON output is never truncated.
     const MAX_ROWS_PER_BATCH = 20;
     let allContracts: any[] = [];
+
+    // Helper: count actual data rows in a CSV batch (exclude pure header/group-header lines)
+    const countDataRows = (lines: string[], headerLine: string): number => {
+      let count = 0;
+      for (const line of lines) {
+        const stripped = line.replace(/,/g, "").trim();
+        if (stripped.length === 0) continue; // empty line
+        // Skip lines that look like group/department headers (1-2 non-empty cells, all caps, etc.)
+        const cells = line.split(",").map(c => c.trim());
+        const nonEmpty = cells.filter(c => c.length > 0);
+        if (nonEmpty.length <= 2) {
+          const first = nonEmpty[0] || "";
+          const isNumber = /^\d+$/.test(first);
+          const lower = first.toLowerCase();
+          const isGroupHeader =
+            lower.includes("bch") || lower.includes("đội") || lower.includes("ban") ||
+            lower.includes("phòng") || lower.includes("da ") || lower.includes("dự án") ||
+            lower.includes("công trình") ||
+            (first === first.toUpperCase() && !isNumber && first.length > 3);
+          if (isGroupHeader) continue;
+        }
+        // Skip the column header line itself
+        if (line === headerLine) continue;
+        count++;
+      }
+      return count;
+    };
 
     if (messages.length > 0) {
       const userMsg = messages[messages.length - 1];
@@ -329,13 +361,40 @@ Hãy trích xuất danh sách hợp đồng dạng JSON chứa mảng 'contracts
 
           const batchNumber = Math.floor(i / MAX_ROWS_PER_BATCH) + 1;
           const totalBatches = Math.ceil(dataLines.length / MAX_ROWS_PER_BATCH);
-          console.log(`[analyze-contract-excel] Processing batch ${batchNumber}/${totalBatches}...`);
+          const expectedRows = countDataRows(batchLines, headerCsv.split("\n").pop() || "");
+          console.log(`[analyze-contract-excel] Processing batch ${batchNumber}/${totalBatches} (expected ~${expectedRows} data rows)...`);
 
           try {
             const completion = await callOpenAIWithRetry(openai, model, batchMessages);
             const reply = completion.choices[0]?.message?.content || "{}";
-            const batchContracts = safeParseContracts(reply);
-            console.log(`[analyze-contract-excel] Batch ${batchNumber} parsed ${batchContracts.length} contracts.`);
+            let batchContracts = safeParseContracts(reply);
+            console.log(`[analyze-contract-excel] Batch ${batchNumber} parsed ${batchContracts.length} contracts (expected ~${expectedRows}).`);
+
+            // Validation & Retry: if AI returned significantly fewer rows than expected, retry once with a stricter prompt
+            if (expectedRows > 0 && batchContracts.length < expectedRows - 1) {
+              console.warn(`[analyze-contract-excel] Batch ${batchNumber}: AI returned ${batchContracts.length} but expected ~${expectedRows}. Retrying with stricter prompt...`);
+              const retryMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+                { role: "system", content: SYSTEM_PROMPT },
+                { role: "user", content: `${headerPart}\n${batchCsv}` },
+                {
+                  role: "user",
+                  content: `⚠️ QUAN TRỌNG: Trong dữ liệu CSV phía trên có CHÍNH XÁC ${expectedRows} dòng chứa dữ liệu nhân viên. Bạn PHẢI trả về ĐÚNG ${expectedRows} object trong mảng "contracts". Mỗi dòng CSV có bất kỳ thông tin gì (dù chỉ có tên hoặc mã NV) đều phải trở thành 1 object. Dòng nào thiếu cột thì điền "" hoặc null. KHÔNG ĐƯỢC BỎ SÓT BẤT KỲ DÒNG NÀO.`
+                },
+              ];
+              try {
+                const retryCompletion = await callOpenAIWithRetry(openai, model, retryMessages, 2, 2000);
+                const retryReply = retryCompletion.choices[0]?.message?.content || "{}";
+                const retryContracts = safeParseContracts(retryReply);
+                console.log(`[analyze-contract-excel] Batch ${batchNumber} RETRY parsed ${retryContracts.length} contracts.`);
+                // Use whichever result has more contracts (closer to expected)
+                if (retryContracts.length > batchContracts.length) {
+                  batchContracts = retryContracts;
+                }
+              } catch (retryErr: any) {
+                console.warn(`[analyze-contract-excel] Batch ${batchNumber} retry failed, using original result:`, retryErr.message);
+              }
+            }
+
             allContracts = allContracts.concat(batchContracts);
           } catch (err: any) {
             console.error(`[analyze-contract-excel] Batch ${batchNumber} parsing failed completely:`, err);
@@ -348,7 +407,7 @@ Hãy trích xuất danh sách hợp đồng dạng JSON chứa mảng 'contracts
           model,
           messages,
           temperature: 0,
-          max_tokens: 16000,
+          max_tokens: 32000,
           response_format: { type: "json_object" },
         });
 

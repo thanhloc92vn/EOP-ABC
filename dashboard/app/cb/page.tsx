@@ -1549,14 +1549,47 @@ export default function CBPage() {
               dbError = error;
             } else {
               const contractNum = (item.contract_number || "").trim();
-              const uniqueFallback = `IMPORT-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
-              dbData.contract_number = contractNum || uniqueFallback;
+              const isFallback = !contractNum;
+              const generateUniqueId = () => `IMPORT-${crypto.randomUUID()}`;
+              dbData.contract_number = contractNum || generateUniqueId();
 
-              // Use upsert on conflict of contract_number so duplicate rows in the Excel file overwrite each other
-              const { error } = await supabase
-                .from("contracts")
-                .upsert([dbData], { onConflict: "contract_number", ignoreDuplicates: false });
-              dbError = error;
+              if (isFallback) {
+                // For auto-generated contract numbers, use plain insert to avoid constraint conflicts
+                const { error } = await supabase
+                  .from("contracts")
+                  .insert([dbData]);
+                dbError = error;
+                // If duplicate key error, retry once with a fresh unique ID
+                if (dbError && dbError.message?.includes("duplicate key")) {
+                  dbData.contract_number = generateUniqueId();
+                  const { error: retryError } = await supabase
+                    .from("contracts")
+                    .insert([dbData]);
+                  dbError = retryError;
+                }
+              } else {
+                // Real contract number from Excel: use upsert to overwrite duplicates
+                const { error } = await supabase
+                  .from("contracts")
+                  .upsert([dbData], { onConflict: "contract_number", ignoreDuplicates: false });
+                dbError = error;
+                // If upsert fails due to composite constraint mismatch, try plain insert
+                if (dbError && dbError.message?.includes("duplicate key")) {
+                  const { error: insertError } = await supabase
+                    .from("contracts")
+                    .insert([dbData]);
+                  if (insertError && insertError.message?.includes("duplicate key")) {
+                    // Try update by matching contract_number directly
+                    const { error: updateError } = await supabase
+                      .from("contracts")
+                      .update(dbData)
+                      .eq("contract_number", contractNum);
+                    dbError = updateError;
+                  } else {
+                    dbError = insertError;
+                  }
+                }
+              }
             }
 
             if (dbError) {
