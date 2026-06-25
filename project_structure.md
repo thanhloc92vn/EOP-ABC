@@ -98,3 +98,23 @@ Trang web quản trị tập trung dành cho các cấp quản lý và nhân s�
 3.  **Đồng bộ Sheets**: `apps_script_caller.py` gọi Webhook Apps Script để lưu kết quả vào Google Sheet `Tổng Hợp`.
 4.  **Tự động phân luồng**: Google Apps Script phát hiện dòng mới có kết quả `PASS CV`, tự động nhân bản thông tin dòng đó sang sheet `Vòng 1` để sẵn sàng cho quy trình phỏng vấn chuyên môn.
 5.  **Báo cáo Quản trị**: Toàn bộ hồ sơ sau đó được đưa lên Supabase, phục vụ hiển thị trên Next.js Web Dashboard và làm đầu vào cho script `generate_reports.py` để xuất báo cáo định kỳ hàng tuần/tháng.
+
+---
+
+## ✈️ Luồng Đi Của Dữ Liệu Công Tác & Quyết Toán (Business Trip Data Flow)
+
+1.  **Đăng ký công tác (`/calendar` hoặc `/tasks`)**:
+    *   Nhân viên tạo đơn đi công tác trên giao diện Lịch trình. Hệ thống tự động tính toán phụ cấp công tác phí, tiền khách sạn tạm tính, vé di chuyển và chi phí khác.
+    *   Toàn bộ chi tiết tính toán và tổng số tiền được đóng gói dưới dạng comment JSON Metadata (`<!--METADATA:{"employeeName":"...","totalAmount":690000,...}-->`) ở cuối trường `notes` và lưu vào bảng `tasks` với trạng thái `pending_approval`.
+2.  **Phê duyệt công tác (`/settings?tab=approvals`)**:
+    *   Trưởng phòng hoặc Admin tiến hành phê duyệt đơn đi công tác trong danh sách chờ duyệt.
+    *   Hàm `handleApprove` trong [settings/page.tsx](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/dashboard/app/settings/page.tsx) sẽ:
+        *   Trích xuất dữ liệu chi phí `totalAmount` từ JSON Metadata nằm trong `notes`.
+        *   Nếu không có Metadata, hệ thống sử dụng Regex để tìm cụm từ hiển thị `**TỔNG ĐỀ NGHỊ THANH TOÁN**: [số tiền]`, hoặc tự động tính toán lại chi phí dự phòng dựa trên thời gian đi công tác (`số ngày * 120.000đ + số đêm * 350.000đ`).
+        *   Tạo bản ghi mới trong bảng `business_trips` trên Supabase với thuộc tính `cost` bằng số tiền đề nghị được duyệt, `status` là `'Đã duyệt'` và `task_id` liên kết.
+        *   Cập nhật trạng thái công việc trong bảng `tasks` thành `in_progress` với tiến độ `50%`.
+3.  **Quyết toán & Chỉnh sửa thủ công (`/cb` - Tab Chấm công -> Công tác)**:
+    *   Giao diện C&B tải dữ liệu hành trình công tác từ bảng `business_trips` lên bảng theo dõi.
+    *   Nhân sự hoặc Admin có quyền `hasFullAccess` (được xác thực qua kiểm tra tài khoản Admin hoặc phòng ban HCNS trong [cb/page.tsx](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/dashboard/app/cb/page.tsx)) có thể nhấp trực tiếp vào ô số tiền của cột **"Tổng chi phí thực tế"** để mở chế độ nhập liệu thủ công (Inline Input) trong trường hợp có sai sót hoặc cần quyết toán lại.
+    *   Khi nhấn phím `Enter` hoặc click ra ngoài (`onBlur`), hệ thống gọi hàm `handleUpdateTravelCost` để ghi đè số tiền mới trực tiếp vào cơ sở dữ liệu Supabase.
+
