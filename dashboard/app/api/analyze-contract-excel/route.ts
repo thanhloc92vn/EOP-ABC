@@ -348,7 +348,8 @@ Hãy trích xuất danh sách hợp đồng dạng JSON chứa mảng 'contracts
           activeGroupHeaders.push(currentGroupHeader);
         }
 
-        // Process batches sequentially to respect rate limits and allow retries
+        // Process batches in parallel for faster speed
+        const promises: Promise<any[]>[] = [];
         for (let i = 0; i < dataLines.length; i += MAX_ROWS_PER_BATCH) {
           const batchLines = dataLines.slice(i, i + MAX_ROWS_PER_BATCH);
 
@@ -370,18 +371,25 @@ Hãy trích xuất danh sách hợp đồng dạng JSON chứa mảng 'contracts
 
           const batchNumber = Math.floor(i / MAX_ROWS_PER_BATCH) + 1;
           const totalBatches = Math.ceil(dataLines.length / MAX_ROWS_PER_BATCH);
-          console.log(`[analyze-contract-excel] Processing batch ${batchNumber}/${totalBatches}...`);
 
-          try {
-            const completion = await callOpenAIWithRetry(openai, model, batchMessages);
-            const reply = completion.choices[0]?.message?.content || "{}";
-            let batchContracts = safeParseContracts(reply);
-            console.log(`[analyze-contract-excel] Batch ${batchNumber} parsed ${batchContracts.length} contracts.`);
-            allContracts = allContracts.concat(batchContracts);
-          } catch (err: any) {
-            console.error(`[analyze-contract-excel] Batch ${batchNumber} parsing failed completely:`, err);
-            throw new Error(`Lỗi khi phân tích gói dữ liệu thứ ${batchNumber}/${totalBatches} của danh sách nhân sự: ${err.message || err}`);
-          }
+          promises.push((async () => {
+            console.log(`[analyze-contract-excel] Starting batch ${batchNumber}/${totalBatches}...`);
+            try {
+              const completion = await callOpenAIWithRetry(openai, model, batchMessages);
+              const reply = completion.choices[0]?.message?.content || "{}";
+              let batchContracts = safeParseContracts(reply);
+              console.log(`[analyze-contract-excel] Batch ${batchNumber} parsed ${batchContracts.length} contracts.`);
+              return batchContracts;
+            } catch (err: any) {
+              console.error(`[analyze-contract-excel] Batch ${batchNumber} parsing failed completely:`, err);
+              throw new Error(`Lỗi khi phân tích gói dữ liệu thứ ${batchNumber}/${totalBatches} của danh sách nhân sự: ${err.message || err}`);
+            }
+          })());
+        }
+
+        const results = await Promise.all(promises);
+        for (const batchContracts of results) {
+          allContracts = allContracts.concat(batchContracts);
         }
       } else {
         // Non-Excel path (PDF/Word/image): single call with higher token limit
