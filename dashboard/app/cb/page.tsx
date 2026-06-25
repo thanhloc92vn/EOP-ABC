@@ -525,10 +525,13 @@ export default function CBPage() {
   const [savingContracts, setSavingContracts] = useState(false);
   const [showAiSettingsModal, setShowAiSettingsModal] = useState(false);
   const [selectedAiModel, setSelectedAiModel] = useState("gpt-4o-mini");
+  const [selectedAiApiKey, setSelectedAiApiKey] = useState("");
 
   const openAiSettings = () => {
     const savedModel = localStorage.getItem("openai_model_nhan_su") || localStorage.getItem("openai_model_hanh_chinh") || "gpt-4o-mini";
+    const savedKey = localStorage.getItem("openai_api_key_hanh_chinh") || localStorage.getItem("openai_api_key") || "";
     setSelectedAiModel(savedModel);
+    setSelectedAiApiKey(savedKey);
     setShowAiSettingsModal(true);
   };
   const [singleContractForm, setSingleContractForm] = useState<Partial<Contract>>({
@@ -6133,8 +6136,19 @@ export default function CBPage() {
                       <option value="gpt-4o-mini">gpt-4o-mini (Khuyên dùng, Nhanh & Tối ưu chi phí)</option>
                       <option value="gpt-4o">gpt-4o (Đọc thông tin phức tạp, chính xác cao)</option>
                     </select>
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-slate-600">OpenAI API Key (sk-...):</label>
+                    <input
+                      type="password"
+                      value={selectedAiApiKey}
+                      onChange={(e) => setSelectedAiApiKey(e.target.value)}
+                      placeholder="Nhập API Key của bạn (sk-...)"
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none text-xs font-semibold text-slate-700 bg-slate-50"
+                    />
                     <p className="text-[10px] text-slate-400 font-medium">
-                      Mô hình được chọn sẽ áp dụng trực tiếp khi bạn tải lên file Excel hoặc PDF/Word để trích xuất thông tin hợp đồng.
+                      API Key này được lưu an toàn tại trình duyệt của bạn (local) và chỉ dùng để gửi yêu cầu phân tích trực tiếp tới OpenAI.
                     </p>
                   </div>
                 </div>
@@ -6150,8 +6164,10 @@ export default function CBPage() {
                     onClick={() => {
                       localStorage.setItem("openai_model_nhan_su", selectedAiModel);
                       localStorage.setItem("openai_model_hanh_chinh", selectedAiModel);
+                      localStorage.setItem("openai_api_key", selectedAiApiKey.trim());
+                      localStorage.setItem("openai_api_key_hanh_chinh", selectedAiApiKey.trim());
                       setShowAiSettingsModal(false);
-                      alert("Đã lưu cấu hình mô hình AI thành công!");
+                      alert("Đã lưu cấu hình mô hình AI và API Key thành công!");
                     }}
                     className="px-4 py-2 bg-[#005BAC] hover:bg-blue-700 text-white font-bold rounded-xl active:scale-95 transition-all cursor-pointer shadow-premium text-xs"
                   >
