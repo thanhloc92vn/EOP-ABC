@@ -230,7 +230,7 @@ Hãy trích xuất danh sách hợp đồng dạng JSON chứa mảng 'contracts
             model: modelName,
             messages: msgPayload,
             temperature: 0,
-            max_tokens: 32000,
+            max_tokens: 16384,
             response_format: { type: "json_object" },
           });
           return completion;
@@ -407,7 +407,7 @@ Hãy trích xuất danh sách hợp đồng dạng JSON chứa mảng 'contracts
           model,
           messages,
           temperature: 0,
-          max_tokens: 32000,
+          max_tokens: 16384,
           response_format: { type: "json_object" },
         });
 
