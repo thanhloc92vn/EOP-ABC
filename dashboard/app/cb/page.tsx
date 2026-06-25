@@ -523,6 +523,14 @@ export default function CBPage() {
   const [excelImportedContracts, setExcelImportedContracts] = useState<Contract[]>([]);
   const [showSingleContractModal, setShowSingleContractModal] = useState(false);
   const [savingContracts, setSavingContracts] = useState(false);
+  const [showAiSettingsModal, setShowAiSettingsModal] = useState(false);
+  const [selectedAiModel, setSelectedAiModel] = useState("gpt-4o-mini");
+
+  const openAiSettings = () => {
+    const savedModel = localStorage.getItem("openai_model_nhan_su") || localStorage.getItem("openai_model_hanh_chinh") || "gpt-4o-mini";
+    setSelectedAiModel(savedModel);
+    setShowAiSettingsModal(true);
+  };
   const [singleContractForm, setSingleContractForm] = useState<Partial<Contract>>({
     contract_number: "",
     type: "Thử việc",
@@ -5019,6 +5027,37 @@ export default function CBPage() {
                   </div>
                   
                   <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls,.pdf,.docx,.doc,.png,.jpg,.jpeg,.txt"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        const ext = file.name.split(".").pop()?.toLowerCase();
+                        if (ext === "xlsx" || ext === "xls") {
+                          handleExcelContractUpload(file);
+                        } else {
+                          handleIndividualContractReader(file);
+                        }
+                      }
+                    }}
+                    className="hidden"
+                    id="unified-contract-upload"
+                  />
+                  <label
+                    htmlFor="unified-contract-upload"
+                    className="flex items-center gap-1.5 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-premium active:scale-95"
+                  >
+                    <UploadCloud size={14} /> Nhập file (Excel/PDF)
+                  </label>
+
+                  <button
+                    onClick={openAiSettings}
+                    className="flex items-center gap-1.5 px-4 py-2.5 border border-slate-200 hover:bg-slate-50 text-slate-650 bg-white rounded-xl text-xs font-bold transition-all cursor-pointer active:scale-95"
+                  >
+                    <Settings size={14} /> Cấu hình AI
+                  </button>
+
                   <button
                     onClick={handleAddBlankContractRow}
                     className="flex items-center gap-1.5 px-4 py-2.5 bg-[#005BAC] hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-premium active:scale-95"
@@ -6063,6 +6102,86 @@ export default function CBPage() {
                   </div>
                 </div>
 
+              </div>
+            </div>
+          )}
+
+          {/* ─── MODAL CẤU HÌNH AI PHÂN TÍCH HỢP ĐỒNG ─── */}
+          {showAiSettingsModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fade-in">
+              <div className="bg-white rounded-2xl max-w-md w-full border border-slate-200 shadow-2xl p-6 flex flex-col gap-4 transform transition-all animate-scale-up">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <h3 className="font-heading font-black text-slate-800 text-sm uppercase tracking-wider flex items-center gap-2">
+                    <Settings className="text-[#005BAC]" size={18} /> Cấu hình mô hình AI phân tích
+                  </h3>
+                  <button
+                    onClick={() => setShowAiSettingsModal(false)}
+                    className="text-slate-400 hover:text-slate-600 transition-all cursor-pointer p-1.5 rounded-lg hover:bg-slate-100"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-slate-600">Mô hình AI sử dụng:</label>
+                    <select
+                      value={selectedAiModel}
+                      onChange={(e) => setSelectedAiModel(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none text-xs font-semibold text-slate-700 bg-slate-50 cursor-pointer"
+                    >
+                      <option value="gpt-4o-mini">gpt-4o-mini (Khuyên dùng, Nhanh & Tối ưu chi phí)</option>
+                      <option value="gpt-4o">gpt-4o (Đọc thông tin phức tạp, chính xác cao)</option>
+                      <option value="o1-mini">o1-mini (Khả năng suy luận logic nâng cao)</option>
+                      <option value="o3-mini">o3-mini (Mô hình suy luận thế hệ mới nhất)</option>
+                    </select>
+                    <p className="text-[10px] text-slate-400 font-medium">
+                      Mô hình được chọn sẽ áp dụng trực tiếp khi bạn tải lên file Excel hoặc PDF/Word để trích xuất thông tin hợp đồng.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 border-t border-slate-100 pt-3 mt-2">
+                  <button
+                    onClick={() => setShowAiSettingsModal(false)}
+                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-xl active:scale-95 transition-all cursor-pointer text-xs"
+                  >
+                    Hủy bỏ
+                  </button>
+                  <button
+                    onClick={() => {
+                      localStorage.setItem("openai_model_nhan_su", selectedAiModel);
+                      localStorage.setItem("openai_model_hanh_chinh", selectedAiModel);
+                      setShowAiSettingsModal(false);
+                      alert("Đã lưu cấu hình mô hình AI thành công!");
+                    }}
+                    className="px-4 py-2 bg-[#005BAC] hover:bg-blue-700 text-white font-bold rounded-xl active:scale-95 transition-all cursor-pointer shadow-premium text-xs"
+                  >
+                    Lưu cấu hình
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Floating Loading Indicator for AI / Excel import */}
+          {(isExcelImporting || isContractReading) && (
+            <div className="fixed bottom-6 right-6 z-50 bg-white rounded-2xl p-4 border border-slate-200 shadow-2xl flex items-center gap-3 animate-slide-in">
+              <div className="relative">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center">
+                  <Loader2 className="animate-spin text-[#005BAC]" size={20} />
+                </div>
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-slate-800">
+                  {isExcelImporting ? "Đang xử lý file Excel..." : "AI đang đọc hợp đồng..."}
+                </h4>
+                <p className="text-[10px] text-slate-400 font-semibold mt-0.5">
+                  {isExcelImporting 
+                    ? (excelImportStage === "reading" ? "Đang đọc & tối ưu dữ liệu..." :
+                       excelImportStage === "sending" ? "Đang phân tích cấu trúc cột..." : "Đang nạp dữ liệu từ AI...") 
+                    : "Đang trích xuất lương, thưởng và ngày hiệu lực..."}
+                </p>
               </div>
             </div>
           )}
