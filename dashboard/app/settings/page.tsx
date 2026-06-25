@@ -131,6 +131,47 @@ function SettingsContent() {
 
   const handleApprove = async (taskId: string, isTrip: boolean) => {
     try {
+      if (isTrip) {
+        // Fetch task details to copy to business_trips
+        const { data: taskData } = await supabase
+          .from("tasks")
+          .select("*")
+          .eq("id", taskId)
+          .maybeSingle();
+
+        if (taskData) {
+          let cleanDest = "Chưa xác định";
+          let cleanMission = "Đi công tác";
+          if (taskData.notes) {
+            const destMatch = taskData.notes.match(/-\s+\*\*Điểm công tác chính\*\*:\s*(.*)/i);
+            if (destMatch) cleanDest = destMatch[1].trim();
+
+            const missionMatch = taskData.notes.match(/-\s+\*\*Nhiệm vụ cụ thể\*\*:\s*(.*)/i);
+            if (missionMatch) cleanMission = missionMatch[1].trim();
+          }
+
+          const newTrip = {
+            name: taskData.assignee || "Nhân viên",
+            dest: cleanDest,
+            from_date: taskData.start_date || new Date().toISOString().split("T")[0],
+            to_date: taskData.due_date || new Date().toISOString().split("T")[0],
+            purpose: cleanMission,
+            cost: 1500000, // Default allowance / actual cost
+            status: "Đã duyệt",
+            task_id: taskId
+          };
+
+          // Insert into business_trips
+          const { error: insertError } = await supabase
+            .from("business_trips")
+            .insert([newTrip]);
+
+          if (insertError) {
+            console.error("Error inserting business trip:", insertError.message);
+          }
+        }
+      }
+
       const { error } = await supabase
         .from("tasks")
         .update({

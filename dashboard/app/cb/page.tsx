@@ -39,7 +39,8 @@ import {
   UploadCloud,
   Trash2,
   RefreshCw,
-  Save
+  Save,
+  Edit2
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import {
@@ -569,6 +570,10 @@ export default function CBPage() {
   const [explanations, setExplanations] = useState<any[]>(MOCK_EXPLANATIONS);
   const [loadingExplanations, setLoadingExplanations] = useState(false);
   const [isUsingDbForExplanations, setIsUsingDbForExplanations] = useState(false);
+
+  // Business Trip (Travel) states
+  const [travels, setTravels] = useState<any[]>(MOCK_TRAVELS);
+  const [editingTravelId, setEditingTravelId] = useState<string | null>(null);
   
   // Explanation Add Form states
   const [showExplanationAddForm, setShowExplanationAddForm] = useState(false);
@@ -2107,6 +2112,7 @@ export default function CBPage() {
       await fetchContracts(loadedEmployees);
       await fetchLeavesFromSupabase();
       await fetchExplanations();
+      await fetchTravels();
     } catch (err) {
       console.error("Error checking user access:", err);
     } finally {
@@ -2396,6 +2402,59 @@ export default function CBPage() {
     }
   };
 
+  const fetchTravels = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("business_trips")
+        .select("*")
+        .order("from_date", { ascending: false });
+      if (error) throw error;
+      if (data && data.length > 0) {
+        const normalized = data.map(d => ({
+          id: d.id,
+          name: d.name,
+          dest: d.dest,
+          from: d.from_date,
+          to: d.to_date,
+          purpose: d.purpose,
+          cost: d.cost,
+          allowance: d.cost,
+          status: d.status
+        }));
+        setTravels(normalized);
+      } else {
+        setTravels(MOCK_TRAVELS);
+      }
+    } catch (err) {
+      console.warn("Could not fetch business trips from DB, using mock:", err);
+      setTravels(MOCK_TRAVELS);
+    }
+  };
+
+  const handleUpdateTravelCost = async (idOrIndex: any, newCost: number) => {
+    const isUuid = typeof idOrIndex === "string" && idOrIndex.length > 8;
+    if (isUuid) {
+      try {
+        const { error } = await supabase
+          .from("business_trips")
+          .update({ cost: newCost })
+          .eq("id", idOrIndex);
+        if (error) throw error;
+        alert("Đã cập nhật chi phí chuyến đi thành công!");
+        fetchTravels();
+      } catch (err: any) {
+        console.error("Error updating travel cost:", err);
+        alert("Lỗi khi cập nhật chi phí: " + err.message);
+      }
+    } else {
+      const updated = travels.map((t, idx) => {
+        const match = t.id ? t.id === idOrIndex : idx === idOrIndex;
+        return match ? { ...t, cost: newCost, allowance: newCost } : t;
+      });
+      setTravels(updated);
+    }
+  };
+
   const handleAddExplanation = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!expFormEmployeeName.trim()) {
@@ -2583,8 +2642,8 @@ export default function CBPage() {
   }, [filteredLeaves, leaveSearchQuery]);
 
   const filteredTravels = useMemo(() => {
-    return MOCK_TRAVELS.filter(t => hasFullAccess || t.name === currentUser?.name);
-  }, [hasFullAccess, currentUser]);
+    return travels.filter(t => hasFullAccess || t.name === currentUser?.name);
+  }, [travels, hasFullAccess, currentUser]);
 
   const filteredRegimes = useMemo(() => {
     return MOCK_REGIMES.filter(r => hasFullAccess || r.name === currentUser?.name);
@@ -4557,7 +4616,7 @@ export default function CBPage() {
                           <th className="py-3 px-3">Từ ngày</th>
                           <th className="py-3 px-3">Đến ngày</th>
                           <th className="py-3 px-3">Mục đích công tác</th>
-                          <th className="py-3 px-3">Trợ cấp tiền xăng/di chuyển</th>
+                          <th className="py-3 px-3">Tổng chi phí thực tế</th>
                           <th className="py-3 px-3 w-28 text-center">Trạng thái</th>
                         </tr>
                       </thead>
@@ -4569,7 +4628,45 @@ export default function CBPage() {
                             <td className="py-3.5 px-3">{new Date(t.from).toLocaleDateString("vi-VN")}</td>
                             <td className="py-3.5 px-3">{new Date(t.to).toLocaleDateString("vi-VN")}</td>
                             <td className="py-3.5 px-3 text-slate-550 font-medium">{t.purpose}</td>
-                            <td className="py-3.5 px-3 text-emerald-600 font-bold">+{t.allowance.toLocaleString("vi-VN")} đ</td>
+                            <td className="py-3.5 px-3 text-emerald-600 font-bold">
+                              {editingTravelId === (t.id || idx) ? (
+                                <input
+                                  type="number"
+                                  defaultValue={t.cost !== undefined ? t.cost : t.allowance}
+                                  onBlur={(e) => {
+                                    const val = Number(e.target.value);
+                                    handleUpdateTravelCost(t.id || idx, val);
+                                    setEditingTravelId(null);
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      const val = Number((e.target as HTMLInputElement).value);
+                                      handleUpdateTravelCost(t.id || idx, val);
+                                      setEditingTravelId(null);
+                                    }
+                                  }}
+                                  className="w-24 px-1.5 py-0.5 border border-slate-300 rounded text-xs text-slate-800 font-semibold outline-none focus:border-blue-500"
+                                  autoFocus
+                                />
+                              ) : (
+                                <div
+                                  onClick={() => {
+                                    if (hasFullAccess) {
+                                      setEditingTravelId(t.id || idx);
+                                    }
+                                  }}
+                                  className={`px-1 py-0.5 rounded transition-colors flex items-center justify-between group ${
+                                    hasFullAccess ? "cursor-pointer hover:bg-slate-100" : ""
+                                  }`}
+                                  title={hasFullAccess ? "Nhấp để sửa số tiền" : undefined}
+                                >
+                                  <span>{((t.cost !== undefined ? t.cost : t.allowance) || 0).toLocaleString("vi-VN")} đ</span>
+                                  {hasFullAccess && (
+                                    <Edit2 size={10} className="text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity ml-1" />
+                                  )}
+                                </div>
+                              )}
+                            </td>
                             <td className="py-3.5 px-3 text-center">
                               <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-100 text-emerald-800">{t.status}</span>
                             </td>
