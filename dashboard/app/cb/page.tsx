@@ -1504,16 +1504,35 @@ export default function CBPage() {
               if (emp) empId = emp.id;
             }
 
-            // Look for duplicate/existing contract in the database to overwrite
+             // Look for duplicate/existing contract in the database to overwrite
             let existingContract = null;
-            if (item.contract_number) {
-              existingContract = contracts.find(c => c.contract_number === item.contract_number);
+            if (empId) {
+              existingContract = contracts.find(c => c.employee_id === empId);
+            }
+            if (!existingContract && item.employee_name) {
+              existingContract = contracts.find(c => c.employee_name && cleanName(c.employee_name) === cleanName(item.employee_name));
+            }
+            // If contract number matches, we ONLY match if the employee name matches (or is empty).
+            // This prevents overwriting employee A's contract with employee B's data when they have identical contract numbers in Excel.
+            if (!existingContract && item.contract_number) {
+              const matchByNum = contracts.find(c => c.contract_number === item.contract_number);
+              if (matchByNum) {
+                const sameEmp = !matchByNum.employee_name || 
+                               (item.employee_name && cleanName(matchByNum.employee_name) === cleanName(item.employee_name));
+                if (sameEmp) {
+                  existingContract = matchByNum;
+                }
+              }
             }
             if (!existingContract && item.probation_contract_number) {
-              existingContract = contracts.find(c => c.probation_contract_number === item.probation_contract_number);
-            }
-            if (!existingContract && empId) {
-              existingContract = contracts.find(c => c.employee_id === empId);
+              const matchByProbNum = contracts.find(c => c.probation_contract_number === item.probation_contract_number);
+              if (matchByProbNum) {
+                const sameEmp = !matchByProbNum.employee_name || 
+                               (item.employee_name && cleanName(matchByProbNum.employee_name) === cleanName(item.employee_name));
+                if (sameEmp) {
+                  existingContract = matchByProbNum;
+                }
+              }
             }
 
             const dbData: any = {
@@ -1549,9 +1568,20 @@ export default function CBPage() {
               dbError = error;
             } else {
               const contractNum = (item.contract_number || "").trim();
-              const isFallback = !contractNum;
+              const isTakenByOther = contractNum && contracts.some(c => 
+                c.contract_number === contractNum && 
+                c.employee_name && 
+                cleanName(c.employee_name) !== cleanName(item.employee_name)
+              );
+              
+              const isFallback = !contractNum || isTakenByOther;
               const generateUniqueId = () => `IMPORT-${crypto.randomUUID()}`;
-              dbData.contract_number = contractNum || generateUniqueId();
+              
+              if (isTakenByOther) {
+                dbData.contract_number = `IMPORT-COLLISION-${crypto.randomUUID()}`;
+              } else {
+                dbData.contract_number = contractNum || generateUniqueId();
+              }
 
               if (isFallback) {
                 // For auto-generated contract numbers, use plain insert to avoid constraint conflicts
