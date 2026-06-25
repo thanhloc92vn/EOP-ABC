@@ -6132,8 +6132,6 @@ export default function CBPage() {
                     >
                       <option value="gpt-4o-mini">gpt-4o-mini (Khuyên dùng, Nhanh & Tối ưu chi phí)</option>
                       <option value="gpt-4o">gpt-4o (Đọc thông tin phức tạp, chính xác cao)</option>
-                      <option value="o1-mini">o1-mini (Khả năng suy luận logic nâng cao)</option>
-                      <option value="o3-mini">o3-mini (Mô hình suy luận thế hệ mới nhất)</option>
                     </select>
                     <p className="text-[10px] text-slate-400 font-medium">
                       Mô hình được chọn sẽ áp dụng trực tiếp khi bạn tải lên file Excel hoặc PDF/Word để trích xuất thông tin hợp đồng.
