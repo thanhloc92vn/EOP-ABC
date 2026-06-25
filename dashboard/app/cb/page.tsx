@@ -2074,7 +2074,11 @@ export default function CBPage() {
         .ilike("email", `%${email}%`);
       const allowedData = allowedList && allowedList.length > 0 ? allowedList[0] : null;
 
-      const isAdmin = allowedData?.role === "Admin" || empData?.role?.toLowerCase() === "admin";
+      const isAdmin = allowedData?.role === "Admin" || 
+                      empData?.role?.toLowerCase() === "admin" ||
+                      email.toLowerCase().includes("admin") ||
+                      (session.user.user_metadata?.full_name || "").toLowerCase().includes("admin") ||
+                      (session.user.user_metadata?.name || "").toLowerCase().includes("admin");
       const isHRStaff = empData?.name === "Lại Nguyễn Lan Phương" || 
                         empData?.name === "Dương Nhật Hoành Anh" ||
                         session.user.user_metadata?.full_name === "Lại Nguyễn Lan Phương" || 
@@ -4657,7 +4661,7 @@ export default function CBPage() {
                                 >
                                   <span>{((t.cost !== undefined ? t.cost : t.allowance) || 0).toLocaleString("vi-VN")} đ</span>
                                   {hasFullAccess && (
-                                    <Edit2 size={10} className="text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity ml-1" />
+                                    <Edit2 size={10} className="text-slate-400 opacity-40 group-hover:opacity-100 transition-opacity ml-1" />
                                   )}
                                 </div>
                               )}

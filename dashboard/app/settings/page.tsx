@@ -150,13 +150,45 @@ function SettingsContent() {
             if (missionMatch) cleanMission = missionMatch[1].trim();
           }
 
+          let costVal = 0;
+          if (taskData.notes) {
+            const metaMatch = taskData.notes.match(/<!--METADATA:(.*?)-->/);
+            if (metaMatch) {
+              try {
+                const meta = JSON.parse(metaMatch[1]);
+                if (meta && typeof meta.totalAmount !== "undefined") {
+                  costVal = Number(meta.totalAmount);
+                }
+              } catch (e) {
+                console.error("Error parsing task metadata in settings:", e);
+              }
+            }
+            
+            if (!costVal) {
+              const totalMatch = taskData.notes.match(/\*\*TỔNG ĐỀ NGHỊ THANH TOÁN\*\*:\s*([0-9.,\s]+)/i);
+              if (totalMatch) {
+                const cleanNum = totalMatch[1].replace(/[.,\s]/g, "");
+                costVal = Number(cleanNum);
+              }
+            }
+          }
+
+          if (!costVal) {
+            const days = taskData.start_date && taskData.due_date 
+              ? Math.max(1, Math.round((new Date(taskData.due_date).getTime() - new Date(taskData.start_date).getTime()) / (1000 * 60 * 60 * 24)) + 1)
+              : 1;
+            const nights = days >= 2 ? days - 1 : 0;
+            const hotelRate = 350000;
+            costVal = days * 120000 + nights * hotelRate;
+          }
+
           const newTrip = {
             name: taskData.assignee || "Nhân viên",
             dest: cleanDest,
             from_date: taskData.start_date || new Date().toISOString().split("T")[0],
             to_date: taskData.due_date || new Date().toISOString().split("T")[0],
             purpose: cleanMission,
-            cost: 1500000, // Default allowance / actual cost
+            cost: costVal,
             status: "Đã duyệt",
             task_id: taskId
           };
