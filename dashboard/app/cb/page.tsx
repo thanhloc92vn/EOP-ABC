@@ -128,16 +128,11 @@ const MOCK_ATTENDANCE_LOGS = [
   { date: "2026-06-09", name: "Trần Nghiệp Quang", checkin: "08:15", checkout: "17:30", hours: 8, status: "Muộn (15')" }
 ];
 
-const MOCK_EXPLANATIONS = [
-  { date: "2026-06-08", name: "Phạm Thành Lộc", department: "Phòng HCNS", reason: "Quên quét vân tay lúc về", propose: "Checkout 17:00", approver: "Lê Thị Hoa Đào", status: "Chờ duyệt" },
-  { date: "2026-06-05", name: "Trần Nghiệp Quang", department: "Phòng Kỹ thuật", reason: "Đi gặp đối tác trực tiếp tại công trường", propose: "Cả ngày công tác", approver: "Lê Văn Tám", status: "Đã duyệt" }
-];
+const MOCK_EXPLANATIONS: any[] = [];
 
 const MOCK_LEAVES: any[] = [];
 
-const MOCK_TRAVELS = [
-  { name: "Trần Nghiệp Quang", dest: "Dự án Cà Ná", from: "2026-06-10", to: "2026-06-12", purpose: "Kiểm tra kỹ thuật ATLĐ", allowance: 1500000, status: "Đã duyệt" }
-];
+const MOCK_TRAVELS: any[] = [];
 
 const MOCK_REGIMES = [
   { name: "Nguyễn Thị Hoa", type: "Nghỉ thai sản (6 tháng)", from: "2026-03-01", to: "2026-09-01", insurance_claim: "Hồ sơ đã gửi BHXH", status: "Đang nghỉ" },
