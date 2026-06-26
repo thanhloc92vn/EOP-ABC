@@ -17,6 +17,7 @@ import {
   CheckSquare
 } from "lucide-react";
 import { useSidebar } from "./SidebarContext";
+import ThemeToggle from "./ThemeToggle";
 import { supabase } from "@/lib/supabase";
 
 function SidebarLinks({ isApprover, pathname, setSidebarOpen }: { isApprover: boolean; pathname: string; setSidebarOpen: (o: boolean) => void }) {
@@ -143,9 +144,12 @@ export default function Sidebar() {
             <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-600 to-cyan-500 flex items-center justify-center font-heading font-extrabold text-white text-xs shadow-md shadow-blue-500/25">
               TN
             </div>
-            <div>
-              <h1 className="text-[#1D1D1F] font-heading font-bold text-sm tracking-tight leading-tight">PM - HCNS - TNEC</h1>
+            <div className="min-w-0">
+              <h1 className="text-[#1D1D1F] font-heading font-bold text-sm tracking-tight leading-tight truncate">PM - HCNS - TNEC</h1>
               <p className="text-slate-450 text-[10px] uppercase font-bold tracking-wider mt-0.5">Hệ thống HCNS</p>
+            </div>
+            <div className="ml-auto mr-6 lg:mr-0">
+              <ThemeToggle />
             </div>
           </div>
           {/* Mobile Close Button */}

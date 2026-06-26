@@ -7,20 +7,27 @@ import Docxtemplater from "docxtemplater";
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { 
-      monthYear, 
-      day, 
-      month, 
-      year, 
-      totalAmount, 
-      items 
+    const {
+      monthYear,
+      day,
+      month,
+      year,
+      totalAmount,
+      items,
+      template
     } = body;
 
     if (!items || !Array.isArray(items)) {
       return new NextResponse("Missing items array", { status: 400 });
     }
 
-    const templateFileName = "bang_theo_doi_phuc_loi.docx";
+    // Whitelist templates để tránh path traversal
+    const ALLOWED_TEMPLATES: Record<string, string> = {
+      phuc_loi: "bang_theo_doi_phuc_loi.docx",
+      che_do: "bang_theo_doi_che_do.docx",
+      hieu_hy: "bang_tro_cap_hieu_hy.docx",
+    };
+    const templateFileName = ALLOWED_TEMPLATES[template as string] || ALLOWED_TEMPLATES.phuc_loi;
     const templatePath = path.join(process.cwd(), "public", "templates", templateFileName);
 
     if (!fs.existsSync(templatePath)) {
@@ -35,6 +42,13 @@ export async function POST(request: NextRequest) {
 
     // 2. Initialize docxtemplater
     const zip = new PizZip(content);
+
+    // Xoá proofErr markers của Word (tránh tag bị tách qua nhiều run)
+    const docXmlFile = zip.file("word/document.xml");
+    if (docXmlFile) {
+      zip.file("word/document.xml", docXmlFile.asText().replace(/<w:proofErr[^>]*\/>/g, ""));
+    }
+
     const doc = new Docxtemplater(zip, {
       paragraphLoop: true,
       linebreaks: true,

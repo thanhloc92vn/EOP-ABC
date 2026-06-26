@@ -28,6 +28,101 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+   DARK MODE
+   Bật bằng cách thêm class `dark` lên <html> (xem ThemeToggle).
+   App dùng nhiều class sáng cố định (bg-white, text-slate-*, border-slate-*),
+   nên ở đây ta remap các surface/text/border phổ biến sang tông tối.
+   Gradient & nút màu (bg-blue-600, badge...) được giữ nguyên.
+   ────────────────────────────────────────────────────────────────────────── */
+html.dark body,
+html.dark .bg-\[\#F7F9FC\] {
+  background: #0f172a !important;
+  color: #e2e8f0;
+}
+
+/* Surfaces / cards */
+html.dark .bg-white,
+html.dark .bg-white\/50,
+html.dark .bg-white\/60,
+html.dark .bg-white\/70,
+html.dark .bg-white\/75,
+html.dark .bg-white\/80,
+html.dark .bg-white\/85,
+html.dark .bg-white\/90,
+html.dark .glass {
+  background-color: #1e293b !important;
+  background-image: none !important;
+}
+
+html.dark .bg-slate-50,
+html.dark .bg-slate-50\/30,
+html.dark .bg-slate-50\/50,
+html.dark .bg-slate-50\/80,
+html.dark .bg-slate-100,
+html.dark .bg-slate-100\/50 {
+  background-color: #243246 !important;
+}
+
+/* Text colors */
+html.dark .text-slate-900,
+html.dark .text-slate-800,
+html.dark .text-slate-700,
+html.dark .text-\[\#1D1D1F\],
+html.dark .text-\[\#1E293B\] {
+  color: #e2e8f0 !important;
+}
+html.dark .text-slate-600,
+html.dark .text-slate-500 {
+  color: #cbd5e1 !important;
+}
+html.dark .text-slate-450,
+html.dark .text-slate-400,
+html.dark .text-slate-300 {
+  color: #94a3b8 !important;
+}
+
+/* Borders */
+html.dark .border-slate-100,
+html.dark .border-slate-150,
+html.dark .border-slate-200,
+html.dark .border-slate-200\/40,
+html.dark .border-slate-200\/60,
+html.dark .border-white\/50,
+html.dark .border-white\/60 {
+  border-color: #334155 !important;
+}
+
+/* Form controls */
+html.dark input,
+html.dark select,
+html.dark textarea {
+  background-color: #1e293b;
+  color: #e2e8f0;
+  border-color: #334155;
+}
+html.dark input::placeholder,
+html.dark textarea::placeholder {
+  color: #64748b;
+}
+
+/* Glass tweaks for dark */
+html.dark .glass {
+  border-color: #334155 !important;
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.25);
+}
+
+/* Smooth theme transition */
+body,
+.glass,
+.bg-white,
+aside,
+input,
+select,
+textarea {
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
 /* Glassmorphism accents (inspired by Apple Vision Pro & Linear) */
 .glass {
   background: rgba(255, 255, 255, 0.7);
