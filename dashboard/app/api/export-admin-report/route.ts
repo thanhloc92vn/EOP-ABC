@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
       grandAnnualTotal,
     } = body;
 
-    const templateFileName = "bang_tinh_chi_phi_hanh_chinh_nam.docx";
+    const templateFileName = "bang_tinh_chi_phi_hanh_chinh_nam_v2.docx";
     const templatePath = path.join(process.cwd(), "public", "templates", templateFileName);
 
     if (!fs.existsSync(templatePath)) {
@@ -36,6 +36,17 @@ export async function POST(request: NextRequest) {
 
     // 2. Initialize docxtemplater
     const zip = new PizZip(content);
+
+    // Remove Word's proofErr grammar markers that split template tags across runs
+    const docXmlPath = "word/document.xml";
+    const docXmlFile = zip.file(docXmlPath);
+    if (docXmlFile) {
+      const cleanedXml = docXmlFile
+        .asText()
+        .replace(/<w:proofErr[^>]*\/>/g, "");
+      zip.file(docXmlPath, cleanedXml);
+    }
+
     const doc = new Docxtemplater(zip, {
       paragraphLoop: true,
       linebreaks: true,
