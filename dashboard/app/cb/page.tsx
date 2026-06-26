@@ -274,69 +274,6 @@ const getProposedHolidayBonus = (years: number): number => {
   return 2000000;
 };
 
-const INITIAL_BENEFIT_CLAIMS = [
-  {
-    id: "claim-1",
-    name: "Nguyễn Ngọc Thanh Hằng",
-    role: "Nhân viên C&B bậc 2",
-    department: "Phòng Hành Chính Nhân Sự",
-    level: "CBNV",
-    category: "Kết hôn",
-    amount: 500000,
-    date: "2026-06-02",
-    status: "Đã chi",
-    notes: "Đám cưới nhân viên Nguyễn Ngọc Thanh Hằng"
-  },
-  {
-    id: "claim-2",
-    name: "Phạm Thành Lộc",
-    role: "Trưởng nhóm Marketing",
-    department: "Phòng Hành Chính Nhân Sự",
-    level: "CBNV",
-    category: "Ốm đau",
-    amount: 300000,
-    date: "2026-05-20",
-    status: "Đã chi",
-    notes: "Nghỉ nằm viện 3 ngày do sốt xuất huyết"
-  },
-  {
-    id: "claim-3",
-    name: "Trần Nghiệp Quang",
-    role: "Chỉ huy phó",
-    department: "BĐH Vàm Lẽo",
-    level: "Quản lý sơ cấp",
-    category: "Sinh con",
-    amount: 500000,
-    date: "2026-05-12",
-    status: "Đã chi",
-    notes: "Vợ sinh con, gửi chế độ chúc mừng"
-  },
-  {
-    id: "claim-4",
-    name: "Nguyễn Bích Như Quỳnh",
-    role: "Nhân viên C&B bậc 1",
-    department: "Phòng Hành Chính Nhân Sự",
-    level: "CBNV",
-    category: "Sinh nhật",
-    amount: 300000,
-    date: "2026-06-15",
-    status: "Đã duyệt",
-    notes: "Quà sinh nhật CBNV tháng 6"
-  },
-  {
-    id: "claim-5",
-    name: "Nguyễn Nam Hải",
-    role: "Tổng Giám Đốc",
-    department: "Hội Đồng Quản Trị",
-    level: "Điều hành cao cấp",
-    category: "Sinh nhật",
-    amount: "Theo phê duyệt",
-    date: "2026-06-12",
-    status: "Đã duyệt",
-    notes: "Sinh nhật Tổng Giám Đốc"
-  }
-];
-
 const TNEC_HOLIDAYS = [
   { id: "national_day_2026", holiday: "Quốc khánh 2/9", date: "2026-09-02", status: "Kế hoạch", desc: "Thưởng lễ Quốc Khánh theo thâm niên" },
   { id: "liberation_day_2026", holiday: "30/4 & 1/5", date: "2026-04-30", status: "Đã chi trả", desc: "Thưởng ngày Giải phóng & Quốc tế Lao động" },
@@ -677,6 +614,7 @@ export default function CBPage() {
         secure: savedSecure
       });
 
+      // Cache cục bộ hiển thị nhanh trước khi Supabase trả về (nguồn thật là Supabase)
       const savedClaims = localStorage.getItem("tnec_cb_benefit_claims");
       if (savedClaims) {
         try {
@@ -684,8 +622,6 @@ export default function CBPage() {
         } catch (e) {
           console.error("Error parsing saved benefit claims", e);
         }
-      } else {
-        setBenefitClaims(INITIAL_BENEFIT_CLAIMS);
       }
 
       const savedAdjustments = localStorage.getItem("tnec_cb_holiday_bonus_adjustments");
@@ -698,7 +634,36 @@ export default function CBPage() {
       }
     }
     fetchImportedTimesheets();
+    fetchBenefitClaims();
   }, []);
+
+  // Nguồn thật cho trợ cấp hiếu hỷ: bảng Supabase `benefit_claims` (đồng bộ mọi tài khoản)
+  const normalizeClaim = (row: any) => ({
+    ...row,
+    amount: row.amount != null && !isNaN(Number(row.amount)) ? Number(row.amount) : row.amount,
+  });
+
+  const fetchBenefitClaims = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("benefit_claims")
+        .select("*")
+        .order("date", { ascending: false });
+
+      if (error) {
+        console.warn("Không tải được benefit_claims từ Supabase (kiểm tra bảng đã tạo chưa):", error.message);
+        return; // giữ cache localStorage nếu có
+      }
+
+      const claims = (data || []).map(normalizeClaim);
+      setBenefitClaims(claims);
+      if (typeof window !== "undefined") {
+        localStorage.setItem("tnec_cb_benefit_claims", JSON.stringify(claims));
+      }
+    } catch (err) {
+      console.error("Lỗi fetch benefit_claims:", err);
+    }
+  };
 
   const handleSaveSmtpConfig = (user: string, pass: string, provider: string, host: string, port: number, secure: boolean) => {
     setSmtpConfig({ user, pass, provider, host, port, secure });
@@ -1181,7 +1146,7 @@ export default function CBPage() {
     alert("Đã hoàn thành tiến trình gửi email chấm công hàng loạt!");
   };
 
-  const handleCreateClaim = (e: React.FormEvent) => {
+  const handleCreateClaim = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!claimForm.employeeId) {
       alert("Vui lòng chọn nhân viên!");
@@ -1196,43 +1161,66 @@ export default function CBPage() {
       amount = isNaN(Number(claimForm.customAmount)) ? claimForm.customAmount : Number(claimForm.customAmount);
     }
 
-    const newClaim = {
-      id: `claim-${Date.now()}`,
+    const insertRow = {
       employee_id: emp.id,
       name: emp.name,
       role: emp.role,
       department: emp.department,
       level,
       category: claimForm.category,
-      amount,
+      amount: String(amount), // lưu text để giữ được "Theo phê duyệt"
       date: claimForm.date,
       status: claimForm.status,
       notes: claimForm.notes
     };
 
-    const updatedClaims = [newClaim, ...benefitClaims];
-    setBenefitClaims(updatedClaims);
-    if (typeof window !== "undefined") {
-      localStorage.setItem("tnec_cb_benefit_claims", JSON.stringify(updatedClaims));
+    try {
+      const { data, error } = await supabase
+        .from("benefit_claims")
+        .insert([insertRow])
+        .select("*")
+        .single();
+
+      if (error) throw error;
+
+      const newClaim = normalizeClaim(data);
+      const updatedClaims = [newClaim, ...benefitClaims];
+      setBenefitClaims(updatedClaims);
+      if (typeof window !== "undefined") {
+        localStorage.setItem("tnec_cb_benefit_claims", JSON.stringify(updatedClaims));
+      }
+
+      setShowCreateClaimModal(false);
+      setClaimForm({
+        employeeId: "",
+        category: "Sinh nhật" as any,
+        date: new Date().toISOString().split("T")[0],
+        status: "Chờ phê duyệt",
+        notes: "",
+        customAmount: ""
+      });
+      alert("Đã thêm yêu cầu trợ cấp mới thành công!");
+    } catch (err: any) {
+      console.error("Lỗi lưu trợ cấp vào Supabase:", err);
+      alert("Không thể lưu yêu cầu trợ cấp lên hệ thống: " + (err.message || "Lỗi không xác định"));
     }
-    setShowCreateClaimModal(false);
-    setClaimForm({
-      employeeId: "",
-      category: "Sinh nhật" as any,
-      date: new Date().toISOString().split("T")[0],
-      status: "Chờ phê duyệt",
-      notes: "",
-      customAmount: ""
-    });
-    alert("Đã thêm yêu cầu trợ cấp mới thành công!");
   };
 
-  const handleDeleteClaim = (claimId: string) => {
+  const handleDeleteClaim = async (claimId: string) => {
     if (!confirm("Bạn có chắc chắn muốn xóa yêu cầu trợ cấp này không?")) return;
+    const prev = benefitClaims;
     const updatedClaims = benefitClaims.filter(c => c.id !== claimId);
-    setBenefitClaims(updatedClaims);
-    if (typeof window !== "undefined") {
-      localStorage.setItem("tnec_cb_benefit_claims", JSON.stringify(updatedClaims));
+    setBenefitClaims(updatedClaims); // optimistic
+    try {
+      const { error } = await supabase.from("benefit_claims").delete().eq("id", claimId);
+      if (error) throw error;
+      if (typeof window !== "undefined") {
+        localStorage.setItem("tnec_cb_benefit_claims", JSON.stringify(updatedClaims));
+      }
+    } catch (err: any) {
+      console.error("Lỗi xóa trợ cấp trên Supabase:", err);
+      alert("Không thể xóa yêu cầu trợ cấp: " + (err.message || "Lỗi không xác định"));
+      setBenefitClaims(prev); // rollback
     }
   };
 
