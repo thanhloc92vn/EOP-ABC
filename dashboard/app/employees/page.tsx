@@ -59,9 +59,16 @@ interface Employee {
   date_of_birth: string;
   phone: string;
   cccd: string;
+  cccd_date: string;
+  cccd_place: string;
+  permanent_address: string;
+  temporary_address: string;
   degree: string;
   status: string;
   email: string;
+  emergency_contact_name: string;
+  emergency_contact_relationship: string;
+  emergency_contact_phone: string;
   avatar: string;
   notes: string;
 }
@@ -84,7 +91,14 @@ export default function EmployeeManagementPage() {
   const [newGender, setNewGender] = useState("");
   const [newDob, setNewDob] = useState("");
   const [newCccd, setNewCccd] = useState("");
+  const [newCccdDate, setNewCccdDate] = useState("");
+  const [newCccdPlace, setNewCccdPlace] = useState("");
+  const [newPermanentAddress, setNewPermanentAddress] = useState("");
+  const [newTemporaryAddress, setNewTemporaryAddress] = useState("");
   const [newDegree, setNewDegree] = useState("");
+  const [newEmergencyName, setNewEmergencyName] = useState("");
+  const [newEmergencyRelationship, setNewEmergencyRelationship] = useState("");
+  const [newEmergencyPhone, setNewEmergencyPhone] = useState("");
   const [newNotes, setNewNotes] = useState("");
   const [newCode, setNewCode] = useState("");
 
@@ -101,7 +115,14 @@ export default function EmployeeManagementPage() {
     phone: string;
     email: string;
     cccd: string;
+    cccd_date: string;
+    cccd_place: string;
+    permanent_address: string;
+    temporary_address: string;
     degree: string;
+    emergency_contact_name: string;
+    emergency_contact_relationship: string;
+    emergency_contact_phone: string;
     status: string;
     notes: string;
   }
@@ -144,9 +165,16 @@ export default function EmployeeManagementPage() {
           date_of_birth: emp.date_of_birth || "",
           phone: emp.phone || "N/A",
           cccd: emp.cccd || "",
+          cccd_date: emp.cccd_date || "",
+          cccd_place: emp.cccd_place || "",
+          permanent_address: emp.permanent_address || "",
+          temporary_address: emp.temporary_address || "",
           degree: emp.degree || "",
           status: emp.status || "Chính thức",
           email: emp.email || "N/A",
+          emergency_contact_name: emp.emergency_contact_name || "",
+          emergency_contact_relationship: emp.emergency_contact_relationship || "",
+          emergency_contact_phone: emp.emergency_contact_phone || "",
           avatar: emp.avatar || emp.name.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2),
           notes: emp.notes || ""
         }));
@@ -351,11 +379,24 @@ export default function EmployeeManagementPage() {
 
     try {
       setLoading(true);
-      // Format payload for employees table
-      const insertPayload = previewEmployees.map(emp => {
+
+      // 1. Fetch all existing employees to compare
+      const { data: existing, error: fetchError } = await supabase
+        .from("employees")
+        .select("id, employee_code, name, cccd");
+
+      if (fetchError) throw fetchError;
+
+      const existingList = existing || [];
+      let insertCount = 0;
+      let updateCount = 0;
+
+      // 2. Process each employee
+      for (const emp of previewEmployees) {
         const avatarStr = emp.name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2);
         const hasValidStart = emp.start && emp.start !== "" && !isNaN(Date.parse(emp.start));
-        return {
+        
+        const payload = {
           employee_code: emp.employee_code || "",
           name: emp.name,
           department: emp.department,
@@ -365,21 +406,52 @@ export default function EmployeeManagementPage() {
           phone: emp.phone || "N/A",
           email: emp.email || "N/A",
           cccd: emp.cccd || "",
+          cccd_date: emp.cccd_date || "",
+          cccd_place: emp.cccd_place || "",
+          permanent_address: emp.permanent_address || "",
+          temporary_address: emp.temporary_address || "",
           degree: emp.degree || "",
+          emergency_contact_name: emp.emergency_contact_name || "",
+          emergency_contact_relationship: emp.emergency_contact_relationship || "",
+          emergency_contact_phone: emp.emergency_contact_phone || "",
           status: emp.status || "Chính thức",
           avatar: avatarStr,
           notes: emp.notes || "",
           created_at: hasValidStart ? new Date(emp.start).toISOString() : new Date().toISOString()
         };
-      });
 
-      const { error } = await supabase
-        .from("employees")
-        .insert(insertPayload);
+        // Match logic:
+        // Match by employee_code first if not empty
+        // Match by cccd next if not empty
+        // Match by name last (exact name match, case-insensitive)
+        let matched = existingList.find(e => 
+          (emp.employee_code && e.employee_code && e.employee_code.trim().toLowerCase() === emp.employee_code.trim().toLowerCase()) ||
+          (emp.cccd && e.cccd && e.cccd.trim() === emp.cccd.trim()) ||
+          (emp.name && e.name && e.name.trim().toLowerCase() === emp.name.trim().toLowerCase())
+        );
 
-      if (error) throw error;
+        if (matched) {
+          // Update existing employee (exclude created_at to avoid overwriting start date if it exists)
+          const { created_at, ...updatePayload } = payload;
+          const { error: updateError } = await supabase
+            .from("employees")
+            .update(updatePayload)
+            .eq("id", matched.id);
 
-      alert(`Đã lưu thành công ${previewEmployees.length} nhân sự vào hệ thống!`);
+          if (updateError) throw updateError;
+          updateCount++;
+        } else {
+          // Insert new employee
+          const { error: insertError } = await supabase
+            .from("employees")
+            .insert([payload]);
+
+          if (insertError) throw insertError;
+          insertCount++;
+        }
+      }
+
+      alert(`Lưu danh sách nhân sự thành công!\n- Thêm mới: ${insertCount} nhân viên\n- Cập nhật: ${updateCount} nhân viên`);
       setShowPreviewModal(false);
       setPreviewEmployees([]);
       fetchEmployees();
@@ -409,7 +481,14 @@ export default function EmployeeManagementPage() {
           phone: newPhone || "N/A",
           email: newEmail || "N/A",
           cccd: newCccd || "",
+          cccd_date: newCccdDate || "",
+          cccd_place: newCccdPlace || "",
+          permanent_address: newPermanentAddress || "",
+          temporary_address: newTemporaryAddress || "",
           degree: newDegree || "",
+          emergency_contact_name: newEmergencyName || "",
+          emergency_contact_relationship: newEmergencyRelationship || "",
+          emergency_contact_phone: newEmergencyPhone || "",
           status: newStatus,
           avatar: avatarStr,
           notes: newNotes || ""
@@ -427,7 +506,14 @@ export default function EmployeeManagementPage() {
       setNewGender("");
       setNewDob("");
       setNewCccd("");
+      setNewCccdDate("");
+      setNewCccdPlace("");
+      setNewPermanentAddress("");
+      setNewTemporaryAddress("");
       setNewDegree("");
+      setNewEmergencyName("");
+      setNewEmergencyRelationship("");
+      setNewEmergencyPhone("");
       setNewNotes("");
       setNewCode("");
 
@@ -485,6 +571,45 @@ export default function EmployeeManagementPage() {
       } catch (err) {
         console.error("Error deleting employee:", err);
         alert("Lỗi khi xóa nhân viên!");
+      }
+    }
+  };
+
+  const handleDeleteAll = async () => {
+    if (!currentUser) return;
+
+    const isUserAdmin = currentUser.isAdmin || 
+                        currentUser.role.toLowerCase() === "admin" ||
+                        currentUser.name === "Lại Nguyễn Lan Phương" ||
+                        currentUser.name === "Dương Nhật Hoành Anh" ||
+                        currentUser.role === "CV Nhân sự" ||
+                        currentUser.role === "Tổ trưởng Nhân sự" ||
+                        (currentUser.role.toLowerCase().includes("nhân sự") && 
+                         (currentUser.department.toLowerCase().includes("hành chính") || currentUser.department.toLowerCase().includes("hcns"))) ||
+                        (currentUser.role.toLowerCase().includes("tổ trưởng") && 
+                         (currentUser.department.toLowerCase().includes("hành chính") || currentUser.department.toLowerCase().includes("hcns")));
+
+    if (!isUserAdmin) {
+      alert("Bạn không có quyền thực hiện hành động xóa tất cả!");
+      return;
+    }
+
+    if (confirm("CẢNH BÁO: Bạn có chắc chắn muốn XÓA TOÀN BỘ danh sách nhân viên hiện có trên hệ thống? Hành động này không thể hoàn tác!")) {
+      try {
+        setLoading(true);
+        const { error } = await supabase
+          .from("employees")
+          .delete()
+          .neq("id", "00000000-0000-0000-0000-000000000000");
+
+        if (error) throw error;
+        alert("Đã xóa toàn bộ danh sách nhân viên thành công!");
+        fetchEmployees();
+      } catch (err: any) {
+        console.error("Error deleting all employees:", err);
+        alert("Lỗi khi xóa toàn bộ nhân viên: " + (err.message || err));
+      } finally {
+        setLoading(false);
       }
     }
   };
@@ -681,6 +806,24 @@ export default function EmployeeManagementPage() {
                   <Plus size={14} /> Thêm nhân sự
                 </button>
               )}
+              {currentUser && (currentUser.isAdmin || 
+                               currentUser.role.toLowerCase() === "admin" ||
+                               currentUser.name === "Lại Nguyễn Lan Phương" ||
+                               currentUser.name === "Dương Nhật Hoành Anh" ||
+                               currentUser.role === "CV Nhân sự" ||
+                               currentUser.role === "Tổ trưởng Nhân sự" ||
+                               (currentUser.role.toLowerCase().includes("nhân sự") && 
+                                (currentUser.department.toLowerCase().includes("hành chính") || currentUser.department.toLowerCase().includes("hcns"))) ||
+                               (currentUser.role.toLowerCase().includes("tổ trưởng") && 
+                                (currentUser.department.toLowerCase().includes("hành chính") || currentUser.department.toLowerCase().includes("hcns")))) && employees.length > 0 && (
+                <button
+                  onClick={handleDeleteAll}
+                  className="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold px-4 py-2.5 rounded-xl shadow-md shadow-rose-500/10 hover:shadow-rose-500/20 hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer"
+                  title="Xóa toàn bộ danh sách nhân sự hiện tại trên hệ thống"
+                >
+                  <Trash2 size={14} /> Xóa tất cả
+                </button>
+              )}
             </div>
           </div>
 
@@ -692,24 +835,31 @@ export default function EmployeeManagementPage() {
           ) : (
             /* Employee Table */
             <div className="glass rounded-2xl overflow-hidden border border-slate-200/50 shadow-premium">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left">
+              <div className="overflow-x-auto custom-scrollbar-table pb-3">
+                <table className="min-w-max w-full text-sm text-left table-auto">
                   <thead>
                     <tr className="bg-slate-100/70 border-b border-slate-200/60">
-                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider text-center w-12">STT</th>
-                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider">Mã nhân viên</th>
-                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider">Họ tên</th>
-                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider">Phòng ban</th>
-                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider">Chức danh</th>
-                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider">Giới tính</th>
-                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider">Ngày nhận việc</th>
-                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider">Ngày sinh</th>
-                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider">Số ĐT</th>
-                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider">CCCD</th>
-                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider">Bằng cấp</th>
-                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider">Email</th>
-                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider">Ghi chú</th>
-                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider text-center">Thao tác</th>
+                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider text-center"><div className="w-10">STT</div></th>
+                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[110px]">Mã nhân viên</div></th>
+                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[180px]">Họ tên</div></th>
+                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[200px]">Phòng ban</div></th>
+                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[140px]">Chức danh</div></th>
+                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[80px]">Giới tính</div></th>
+                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[120px]">Ngày nhận việc</div></th>
+                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[120px]">Ngày sinh</div></th>
+                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[120px]">Số ĐT</div></th>
+                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[130px]">CCCD</div></th>
+                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[120px]">Ngày cấp</div></th>
+                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[180px]">Nơi cấp</div></th>
+                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[220px]">Địa chỉ thường trú</div></th>
+                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[220px]">Địa chỉ tạm trú</div></th>
+                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[160px]">Bằng cấp</div></th>
+                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[180px]">Email</div></th>
+                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[150px]">Người thân</div></th>
+                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[110px]">Mối quan hệ</div></th>
+                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[135px]">Số ĐT người thân</div></th>
+                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[150px]">Ghi chú</div></th>
+                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider text-center"><div className="w-16">Thao tác</div></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -781,16 +931,91 @@ export default function EmployeeManagementPage() {
                         </td>
 
                         {/* CCCD */}
-                        <td className="px-4 py-3 text-xs text-slate-500 font-medium font-mono">{emp.cccd || <span className="text-slate-300">—</span>}</td>
+                        <td className="px-4 py-1 text-xs text-slate-500 font-medium font-mono whitespace-nowrap">
+                          <EditableCell
+                            value={emp.cccd}
+                            onSave={(val) => handleUpdateEmployeeField(emp.id, "cccd", val)}
+                            readOnly={!canEdit}
+                          />
+                        </td>
+
+                        {/* Ngày cấp */}
+                        <td className="px-4 py-1 text-xs text-slate-500 font-medium whitespace-nowrap">
+                          <EditableDateCell
+                            value={emp.cccd_date}
+                            onSave={(val) => handleUpdateEmployeeField(emp.id, "cccd_date", val)}
+                            readOnly={!canEdit}
+                          />
+                        </td>
+
+                        {/* Nơi cấp */}
+                        <td className="px-4 py-1 text-xs text-slate-500 font-medium min-w-[120px]">
+                          <EditableCell
+                            value={emp.cccd_place}
+                            onSave={(val) => handleUpdateEmployeeField(emp.id, "cccd_place", val)}
+                            readOnly={!canEdit}
+                          />
+                        </td>
+
+                        {/* Địa chỉ thường trú */}
+                        <td className="px-4 py-1 text-xs text-slate-500 font-medium min-w-[160px]">
+                          <EditableCell
+                            value={emp.permanent_address}
+                            onSave={(val) => handleUpdateEmployeeField(emp.id, "permanent_address", val)}
+                            readOnly={!canEdit}
+                          />
+                        </td>
+
+                        {/* Địa chỉ tạm trú */}
+                        <td className="px-4 py-1 text-xs text-slate-500 font-medium min-w-[160px]">
+                          <EditableCell
+                            value={emp.temporary_address}
+                            onSave={(val) => handleUpdateEmployeeField(emp.id, "temporary_address", val)}
+                            readOnly={!canEdit}
+                          />
+                        </td>
 
                         {/* Bằng cấp */}
-                        <td className="px-4 py-3 text-xs text-slate-500 font-medium">{emp.degree || <span className="text-slate-300">—</span>}</td>
+                        <td className="px-4 py-1 text-xs text-slate-500 font-medium min-w-[100px]">
+                          <EditableCell
+                            value={emp.degree}
+                            onSave={(val) => handleUpdateEmployeeField(emp.id, "degree", val)}
+                            readOnly={!canEdit}
+                          />
+                        </td>
 
                         {/* Email */}
                         <td className="px-4 py-1 text-xs text-slate-500 font-medium whitespace-nowrap">
                           <EditableCell
                             value={emp.email}
                             onSave={(val) => handleUpdateEmployeeField(emp.id, "email", val)}
+                            readOnly={!canEdit}
+                          />
+                        </td>
+
+                        {/* Người thân */}
+                        <td className="px-4 py-1 text-xs text-slate-500 font-medium min-w-[100px]">
+                          <EditableCell
+                            value={emp.emergency_contact_name}
+                            onSave={(val) => handleUpdateEmployeeField(emp.id, "emergency_contact_name", val)}
+                            readOnly={!canEdit}
+                          />
+                        </td>
+
+                        {/* Mối quan hệ */}
+                        <td className="px-4 py-1 text-xs text-slate-500 font-medium min-w-[80px]">
+                          <EditableCell
+                            value={emp.emergency_contact_relationship}
+                            onSave={(val) => handleUpdateEmployeeField(emp.id, "emergency_contact_relationship", val)}
+                            readOnly={!canEdit}
+                          />
+                        </td>
+
+                        {/* Số ĐT người thân */}
+                        <td className="px-4 py-1 text-xs text-slate-500 font-medium whitespace-nowrap">
+                          <EditableCell
+                            value={emp.emergency_contact_phone}
+                            onSave={(val) => handleUpdateEmployeeField(emp.id, "emergency_contact_phone", val)}
                             readOnly={!canEdit}
                           />
                         </td>
@@ -821,7 +1046,7 @@ export default function EmployeeManagementPage() {
                     ))}
                     {filtered.length === 0 && (
                       <tr>
-                        <td colSpan={14} className="text-center py-12 text-slate-400 text-xs italic">Không tìm thấy nhân viên nào phù hợp</td>
+                        <td colSpan={21} className="text-center py-12 text-slate-400 text-xs italic">Không tìm thấy nhân viên nào phù hợp</td>
                       </tr>
                     )}
                   </tbody>
@@ -944,7 +1169,7 @@ export default function EmployeeManagementPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="space-y-1">
                   <label className="text-slate-500">Số CCCD</label>
                   <input
@@ -954,10 +1179,74 @@ export default function EmployeeManagementPage() {
                   />
                 </div>
                 <div className="space-y-1">
+                  <label className="text-slate-500">Ngày cấp</label>
+                  <input
+                    type="date" value={newCccdDate} onChange={(e) => setNewCccdDate(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40 text-xs bg-white"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-slate-500">Nơi cấp</label>
+                  <input
+                    type="text" value={newCccdPlace} onChange={(e) => setNewCccdPlace(e.target.value)}
+                    placeholder="Ví dụ: Cục Cảnh sát QLHC..."
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40 text-xs"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-slate-500">Địa chỉ thường trú</label>
+                  <input
+                    type="text" value={newPermanentAddress} onChange={(e) => setNewPermanentAddress(e.target.value)}
+                    placeholder="Ví dụ: 123 Đường A, Quận B, TP C"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40 text-xs"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-slate-500">Địa chỉ tạm trú</label>
+                  <input
+                    type="text" value={newTemporaryAddress} onChange={(e) => setNewTemporaryAddress(e.target.value)}
+                    placeholder="Ví dụ: 456 Đường X, Quận Y, TP Z"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40 text-xs"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1">
                   <label className="text-slate-500">Bằng cấp</label>
                   <input
                     type="text" value={newDegree} onChange={(e) => setNewDegree(e.target.value)}
                     placeholder="Ví dụ: Đại học, Cao đẳng..."
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40 text-xs"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="space-y-1">
+                  <label className="text-slate-500">Người thân liên hệ khẩn cấp</label>
+                  <input
+                    type="text" value={newEmergencyName} onChange={(e) => setNewEmergencyName(e.target.value)}
+                    placeholder="Ví dụ: Nguyễn Văn B"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40 text-xs"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-slate-500">Mối quan hệ</label>
+                  <input
+                    type="text" value={newEmergencyRelationship} onChange={(e) => setNewEmergencyRelationship(e.target.value)}
+                    placeholder="Ví dụ: Bố, Mẹ, Vợ..."
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40 text-xs"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-slate-500">Số ĐT người thân</label>
+                  <input
+                    type="text" value={newEmergencyPhone} onChange={(e) => setNewEmergencyPhone(e.target.value)}
+                    placeholder="Ví dụ: 0987 654 321"
                     className="w-full px-3 py-2 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40 text-xs"
                   />
                 </div>
@@ -1021,23 +1310,30 @@ export default function EmployeeManagementPage() {
 
             {/* Modal Body: Table list */}
             <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50">
-              <div className="border border-slate-200/60 bg-white rounded-xl overflow-hidden shadow-sm">
-                <table className="w-full text-xs text-left border-collapse">
+              <div className="border border-slate-200/60 bg-white rounded-xl overflow-x-auto shadow-sm">
+                <table className="min-w-max w-full text-xs text-left border-collapse table-auto">
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
-                      <th className="py-3 px-3 w-10 text-center">STT</th>
-                      <th className="py-3 px-3">Mã NV</th>
-                      <th className="py-3 px-3">Họ và tên</th>
-                      <th className="py-3 px-3">Phòng ban</th>
-                      <th className="py-3 px-3">Chức danh</th>
-                      <th className="py-3 px-3">Giới tính</th>
-                      <th className="py-3 px-3">Ngày nhận việc</th>
-                      <th className="py-3 px-3">Ngày sinh</th>
-                      <th className="py-3 px-3">SĐT</th>
-                      <th className="py-3 px-3">CCCD</th>
-                      <th className="py-3 px-3">Bằng cấp</th>
-                      <th className="py-3 px-3">Email</th>
-                      <th className="py-3 px-3">Ghi chú</th>
+                      <th className="py-3 px-3 text-center"><div className="w-10">STT</div></th>
+                      <th className="py-3 px-3"><div className="w-[80px]">Mã NV</div></th>
+                      <th className="py-3 px-3"><div className="w-[150px]">Họ và tên</div></th>
+                      <th className="py-3 px-3"><div className="w-[180px]">Phòng ban</div></th>
+                      <th className="py-3 px-3"><div className="w-[120px]">Chức danh</div></th>
+                      <th className="py-3 px-3"><div className="w-[70px]">Giới tính</div></th>
+                      <th className="py-3 px-3"><div className="w-[100px]">Ngày nhận việc</div></th>
+                      <th className="py-3 px-3"><div className="w-[100px]">Ngày sinh</div></th>
+                      <th className="py-3 px-3"><div className="w-[100px]">SĐT</div></th>
+                      <th className="py-3 px-3"><div className="w-[110px]">CCCD</div></th>
+                      <th className="py-3 px-3"><div className="w-[100px]">Ngày cấp</div></th>
+                      <th className="py-3 px-3"><div className="w-[150px]">Nơi cấp</div></th>
+                      <th className="py-3 px-3"><div className="w-[180px]">ĐC thường trú</div></th>
+                      <th className="py-3 px-3"><div className="w-[180px]">ĐC tạm trú</div></th>
+                      <th className="py-3 px-3"><div className="w-[130px]">Bằng cấp</div></th>
+                      <th className="py-3 px-3"><div className="w-[150px]">Email</div></th>
+                      <th className="py-3 px-3"><div className="w-[120px]">Người thân</div></th>
+                      <th className="py-3 px-3"><div className="w-[90px]">Mối quan hệ</div></th>
+                      <th className="py-3 px-3"><div className="w-[115px]">SĐT người thân</div></th>
+                      <th className="py-3 px-3"><div className="w-[130px]">Ghi chú</div></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-semibold text-slate-600">
@@ -1057,8 +1353,15 @@ export default function EmployeeManagementPage() {
                         <td className="py-3 px-3 font-mono text-[10px]">{formatDateDisplay(emp.date_of_birth) || "—"}</td>
                         <td className="py-3 px-3 text-slate-500 whitespace-nowrap">{emp.phone || "—"}</td>
                         <td className="py-3 px-3 text-slate-500 font-mono text-[10px]">{emp.cccd || "—"}</td>
+                        <td className="py-3 px-3 text-slate-500 font-mono text-[10px]">{formatDateDisplay(emp.cccd_date) || "—"}</td>
+                        <td className="py-3 px-3 text-slate-500">{emp.cccd_place || "—"}</td>
+                        <td className="py-3 px-3 text-slate-500 max-w-[120px] truncate" title={emp.permanent_address}>{emp.permanent_address || "—"}</td>
+                        <td className="py-3 px-3 text-slate-500 max-w-[120px] truncate" title={emp.temporary_address}>{emp.temporary_address || "—"}</td>
                         <td className="py-3 px-3 text-slate-500">{emp.degree || "—"}</td>
                         <td className="py-3 px-3 text-slate-500 whitespace-nowrap">{emp.email || "—"}</td>
+                        <td className="py-3 px-3 text-slate-500">{emp.emergency_contact_name || "—"}</td>
+                        <td className="py-3 px-3 text-slate-500">{emp.emergency_contact_relationship || "—"}</td>
+                        <td className="py-3 px-3 text-slate-500 whitespace-nowrap">{emp.emergency_contact_phone || "—"}</td>
                         <td className="py-3 px-3 text-slate-400 max-w-[100px] truncate" title={emp.notes}>{emp.notes || "—"}</td>
                       </tr>
                     ))}
@@ -1267,13 +1570,15 @@ interface EditableCellProps {
 
 function EditableCell({ value, onSave, readOnly = false }: EditableCellProps) {
   const [val, setVal] = useState(value);
+  const [isEditing, setIsEditing] = useState(false);
 
   useEffect(() => {
     setVal(value);
   }, [value]);
 
   const handleBlur = () => {
-    if (!readOnly && val !== value) {
+    setIsEditing(false);
+    if (val !== value) {
       onSave(val);
     }
   };
@@ -1285,7 +1590,22 @@ function EditableCell({ value, onSave, readOnly = false }: EditableCellProps) {
   };
 
   if (readOnly) {
-    return <span className="text-xs text-slate-600 block w-full whitespace-nowrap overflow-hidden text-ellipsis px-2 py-1">{value || "—"}</span>;
+    return (
+      <span className="text-xs text-slate-650 block w-full px-2 py-1 break-words">
+        {value || "—"}
+      </span>
+    );
+  }
+
+  if (!isEditing) {
+    return (
+      <div
+        onClick={() => setIsEditing(true)}
+        className="w-full cursor-pointer px-2 py-1 border border-transparent hover:bg-slate-100/50 hover:border-slate-200 rounded-lg transition-all text-xs font-semibold text-slate-700 min-h-[24px] break-words"
+      >
+        {value || <span className="text-slate-300">—</span>}
+      </div>
+    );
   }
 
   return (
@@ -1295,7 +1615,8 @@ function EditableCell({ value, onSave, readOnly = false }: EditableCellProps) {
       onChange={(e) => setVal(e.target.value)}
       onBlur={handleBlur}
       onKeyDown={handleKeyDown}
-      className="w-full bg-transparent px-2 py-1 outline-none border border-transparent hover:bg-slate-100/50 focus:border-blue-500/30 focus:bg-white rounded-lg transition-all text-xs font-semibold text-slate-700"
+      autoFocus
+      className="w-full bg-white px-2 py-1 outline-none border border-blue-500 rounded-lg text-xs font-semibold text-slate-700 shadow-sm"
     />
   );
 }
@@ -1333,7 +1654,7 @@ function EditableSelect({ value, options, onSave, readOnly = false }: EditableSe
     return (
       <div 
         onClick={() => setIsEditing(true)}
-        className="w-full cursor-pointer px-2 py-1 border border-transparent hover:bg-slate-100/50 hover:border-slate-200 rounded-lg transition-all text-xs font-semibold text-slate-700 block whitespace-nowrap overflow-hidden text-ellipsis min-h-[24px]"
+        className="w-full cursor-pointer px-2 py-1 border border-transparent hover:bg-slate-100/50 hover:border-slate-200 rounded-lg transition-all text-xs font-semibold text-slate-700 block min-h-[24px] break-words"
       >
         {value || "—"}
       </div>
