@@ -66,7 +66,7 @@ export default function Header({ title, subtitle }: Props) {
     setIsAiLoading(true);
 
     try {
-      const localKey = typeof window !== "undefined" ? localStorage.getItem("tnec_openai_api_key") : null;
+      const localKey = typeof window !== "undefined" ? (localStorage.getItem("openai_api_key_hanh_chinh") || localStorage.getItem("openai_api_key")) : null;
       const headers: Record<string, string> = {
         "Content-Type": "application/json"
       };
