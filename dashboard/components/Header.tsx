@@ -66,12 +66,18 @@ export default function Header({ title, subtitle }: Props) {
     setIsAiLoading(true);
 
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const supabaseToken = session?.access_token || "";
+
       const localKey = typeof window !== "undefined" ? (localStorage.getItem("openai_api_key_hanh_chinh") || localStorage.getItem("openai_api_key")) : null;
       const headers: Record<string, string> = {
         "Content-Type": "application/json"
       };
       if (localKey) {
         headers["Authorization"] = `Bearer ${localKey}`;
+      }
+      if (supabaseToken) {
+        headers["x-supabase-auth"] = supabaseToken;
       }
 
       const response = await fetch("/api/ai-search", {

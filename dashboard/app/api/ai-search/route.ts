@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
+import { createClient } from "@supabase/supabase-js";
 import OpenAI from "openai";
 
 export const maxDuration = 60; // Allow enough time for AI response
@@ -31,6 +32,21 @@ export async function POST(req: NextRequest) {
       }, { status: 500 });
     }
 
+    // Initialize authenticated Supabase client for RLS
+    const supabaseToken = req.headers.get("x-supabase-auth");
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+
+    const dbClient = (supabaseToken && supabaseUrl && supabaseAnonKey)
+      ? createClient(supabaseUrl, supabaseAnonKey, {
+          global: {
+            headers: {
+              Authorization: `Bearer ${supabaseToken}`
+            }
+          }
+        })
+      : supabase;
+
     // 1. Check permissions
     const isAdmin = currentUser.isAdmin || currentUser.role?.toLowerCase() === "admin";
     const isHRManager = (currentUser.role?.toLowerCase()?.includes("trưởng phòng") || currentUser.role?.toLowerCase()?.includes("truong phong")) && 
@@ -53,7 +69,7 @@ export async function POST(req: NextRequest) {
       ? "employee_code, name, department, role, gender, date_of_birth, phone, email, cccd, cccd_date, cccd_place, permanent_address, temporary_address, degree, status, notes"
       : "employee_code, name, department, role, gender, date_of_birth, phone, email, degree, status";
       
-    const { data: dbEmployeesData } = await supabase
+    const { data: dbEmployeesData } = await dbClient
       .from("employees")
       .select(employeeFields as any);
     const dbEmployees = dbEmployeesData as any[] | null;
@@ -63,19 +79,19 @@ export async function POST(req: NextRequest) {
       ? "employee_code, employee_name, type, sign_date, expiration_date, base_salary_insurance, performance_bonus, allowances, total_income"
       : "employee_code, employee_name, type, sign_date, expiration_date";
 
-    const { data: dbContractsData } = await supabase
+    const { data: dbContractsData } = await dbClient
       .from("contracts")
       .select(contractFields as any);
     const dbContracts = dbContractsData as any[] | null;
 
     // Query Tasks (Limit to 50 for token saving)
-    const { data: dbTasks } = await supabase
+    const { data: dbTasks } = await dbClient
       .from("tasks")
       .select("title, employee_name, status, due_date, description")
       .limit(50);
 
     // Query Attendance Justifications (Limit to 50)
-    const { data: dbJustifications } = await supabase
+    const { data: dbJustifications } = await dbClient
       .from("attendance_justifications")
       .select("employee_name, date, reason, status")
       .limit(50);
