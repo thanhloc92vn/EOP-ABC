@@ -691,6 +691,20 @@ export default function EmployeeManagementPage() {
      (currentUser.department.toLowerCase().includes("hành chính") || currentUser.department.toLowerCase().includes("hcns")))
   ));
 
+  const canDeleteAll = !!(currentUser && (
+    currentUser.isAdmin ||
+    currentUser.role.toLowerCase() === "admin" ||
+    (
+      (currentUser.role.toLowerCase().includes("trưởng phòng") || currentUser.role.toLowerCase().includes("truong phong")) &&
+      (
+        currentUser.department.toLowerCase().includes("hành chính") ||
+        currentUser.department.toLowerCase().includes("hcns") ||
+        currentUser.role.toLowerCase().includes("nhân sự") ||
+        currentUser.role.toLowerCase().includes("nhan su")
+      )
+    )
+  ));
+
   return (
     <div 
       className="flex min-h-screen bg-[#F7F9FC] relative"
@@ -806,16 +820,7 @@ export default function EmployeeManagementPage() {
                   <Plus size={14} /> Thêm nhân sự
                 </button>
               )}
-              {currentUser && (currentUser.isAdmin || 
-                               currentUser.role.toLowerCase() === "admin" ||
-                               currentUser.name === "Lại Nguyễn Lan Phương" ||
-                               currentUser.name === "Dương Nhật Hoành Anh" ||
-                               currentUser.role === "CV Nhân sự" ||
-                               currentUser.role === "Tổ trưởng Nhân sự" ||
-                               (currentUser.role.toLowerCase().includes("nhân sự") && 
-                                (currentUser.department.toLowerCase().includes("hành chính") || currentUser.department.toLowerCase().includes("hcns"))) ||
-                               (currentUser.role.toLowerCase().includes("tổ trưởng") && 
-                                (currentUser.department.toLowerCase().includes("hành chính") || currentUser.department.toLowerCase().includes("hcns")))) && employees.length > 0 && (
+              {canDeleteAll && employees.length > 0 && (
                 <button
                   onClick={handleDeleteAll}
                   className="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold px-4 py-2.5 rounded-xl shadow-md shadow-rose-500/10 hover:shadow-rose-500/20 hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer"
@@ -1032,10 +1037,7 @@ export default function EmployeeManagementPage() {
                         {/* Thao tác */}
                         <td className="px-4 py-3 text-center">
                           <div className="flex items-center justify-center gap-2">
-                            {currentUser && (currentUser.isAdmin || 
-                                             currentUser.role.toLowerCase() === "admin" ||
-                                             currentUser.role.toLowerCase().includes("trưởng phòng") || 
-                                             currentUser.role.toLowerCase().includes("truong phong")) && (
+                            {canEdit && (
                               <button onClick={() => handleDelete(emp.id, emp.name)} className="p-1.5 hover:bg-rose-100 rounded-lg text-rose-500 transition-colors" title="Xóa nhân sự">
                                 <Trash2 size={13} />
                               </button>
