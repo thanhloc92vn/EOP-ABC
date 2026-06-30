@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bell, Search, Globe, ChevronDown, Menu, X, Sparkles, Loader2, Send, Copy, FileText, Trash2 } from "lucide-react";
+import { Bell, Search, Globe, ChevronDown, Menu, X, Sparkles, Loader2, Send, Copy, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useSidebar } from "./SidebarContext";
 
@@ -601,34 +601,19 @@ export default function Header({ title, subtitle }: Props) {
       {showSearchModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-start justify-center pt-[10vh] p-4 animate-in fade-in duration-200">
           <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[75vh] overflow-hidden shadow-2xl border border-slate-100 flex flex-col animate-in zoom-in-95 duration-150 text-left">
-            {/* Modal Header / Input Bar */}
+            {/* Modal Header / Title Bar */}
             <div className="flex items-center gap-3 px-4 py-3.5 border-b border-slate-150/60 bg-slate-50/70">
-              <Search size={18} className="text-slate-400 shrink-0" />
-              <input
-                type="text"
-                placeholder="Hỏi AI mọi thứ về nhân sự, hợp đồng, giải trình, chi phí..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    handleAiSearch();
-                  }
-                }}
-                autoFocus
-                className="flex-1 bg-transparent border-none outline-none text-xs text-slate-800 placeholder:text-slate-400 font-semibold"
-              />
-              <button 
-                onClick={() => handleAiSearch()}
-                disabled={isAiLoading || !searchQuery.trim()}
-                className="p-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-30 disabled:hover:bg-blue-600 transition-all shrink-0 cursor-pointer"
-                title="Gửi câu hỏi"
-              >
-                <Send size={12} />
-              </button>
+              <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-600 to-cyan-500 flex items-center justify-center shadow-sm shrink-0">
+                <Sparkles size={15} className="text-white" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h4 className="font-heading font-extrabold text-slate-800 text-xs leading-tight truncate">Trợ lý Tìm kiếm AI</h4>
+                <p className="text-[10px] text-slate-400 font-semibold truncate">Tra cứu thông minh dữ liệu nội bộ Trung Nam E&C</p>
+              </div>
               <div className="text-[10px] text-slate-400 bg-white border border-slate-200 px-2 py-0.5 rounded-lg shadow-sm font-mono select-none hidden sm:block">
                 ESC
               </div>
-              <button 
+              <button
                 onClick={() => {
                   setShowSearchModal(false);
                   setAiHistory([]);
@@ -651,8 +636,8 @@ export default function Header({ title, subtitle }: Props) {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {[
                       { text: "Có bao nhiêu nhân sự ở phòng Hành chính nhân sự?", desc: "Liệt kê chi tiết thông tin các nhân sự thuộc phòng HCNS" },
-                      { text: "Hợp đồng của nhân sự nào sắp hết hạn?", desc: "Tìm các hợp đồng lao động sắp đến ngày hết hạn" },
-                      { text: "Tìm thông tin CCCD và địa chỉ của Huỳnh Giáp Nhân?", desc: "Yêu cầu quyền Admin/Trưởng phòng để truy xuất dữ liệu bảo mật" },
+                      { text: "Liệt kê các ứng viên đang phỏng vấn và trạng thái tuyển dụng?", desc: "Quét danh sách ứng viên tuyển dụng trên hệ thống" },
+                      { text: "Tổng chi phí hành chính khối văn phòng tháng này là bao nhiêu?", desc: "Tổng hợp số liệu chi phí hành chính theo tháng" },
                       { text: "Có ai nộp giải trình chấm công trong tháng này không?", desc: "Quét dữ liệu giải trình công chờ duyệt trên hệ thống" }
                     ].map((prompt, idx) => (
                       <button
@@ -665,9 +650,14 @@ export default function Header({ title, subtitle }: Props) {
                       </button>
                     ))}
                   </div>
-                  <div className="pt-2 text-[10px] text-slate-400 font-semibold italic flex items-center gap-1.5">
-                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></div>
-                    Dữ liệu được truy vấn real-time, bảo mật tuyệt đối và chỉ lưu hành trong nội bộ Trung Nam E&C.
+                  <div className="pt-2 space-y-1.5">
+                    <div className="text-[10px] text-slate-400 font-semibold italic flex items-center gap-1.5">
+                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></div>
+                      Dữ liệu được truy vấn real-time theo đúng quyền hạn tài khoản, chỉ lưu hành nội bộ Trung Nam E&C.
+                    </div>
+                    <div className="text-[10px] text-rose-500/90 font-bold flex items-center gap-1.5">
+                      🔒 Lương CBNV &amp; Hợp đồng lao động được bảo mật tuyệt đối — AI không truy xuất các thông tin này.
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -733,20 +723,52 @@ export default function Header({ title, subtitle }: Props) {
               )}
             </div>
 
-            {/* Modal Footer */}
-            {aiHistory.length > 0 && (
-              <div className="px-5 py-3 border-t border-slate-150/60 bg-slate-50/70 flex items-center justify-between">
+            {/* Modal Footer / Input Bar (ChatGPT-style, đặt dưới cùng) */}
+            <div className="border-t border-slate-150/60 bg-slate-50/70 px-4 pt-3 pb-2.5 space-y-2">
+              {/* Input row */}
+              <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-2 shadow-sm focus-within:border-blue-500 transition-colors">
+                <Search size={16} className="text-slate-400 shrink-0" />
+                <input
+                  type="text"
+                  placeholder="Hỏi AI về nhân sự, tuyển dụng, công việc, chi phí, văn thư..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      handleAiSearch();
+                    }
+                  }}
+                  autoFocus
+                  disabled={isAiLoading}
+                  className="flex-1 bg-transparent border-none outline-none text-xs text-slate-800 placeholder:text-slate-400 font-semibold disabled:opacity-50"
+                />
                 <button
-                  onClick={() => setAiHistory([])}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[10px] text-rose-500 hover:bg-rose-50 font-bold rounded-lg border border-transparent hover:border-rose-100 transition-all cursor-pointer bg-transparent"
+                  onClick={() => handleAiSearch()}
+                  disabled={isAiLoading || !searchQuery.trim()}
+                  className="p-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-30 disabled:hover:bg-blue-600 transition-all shrink-0 cursor-pointer"
+                  title="Gửi câu hỏi"
                 >
-                  <Trash2 size={12} /> Làm sạch lịch sử chat
+                  {isAiLoading ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
                 </button>
-                <div className="text-[9px] text-slate-400 font-bold">
-                  Đang dùng mô hình **gpt-4o** bảo mật cao
+              </div>
+
+              {/* Meta row */}
+              <div className="flex items-center justify-between px-0.5">
+                {aiHistory.length > 0 ? (
+                  <button
+                    onClick={() => setAiHistory([])}
+                    className="inline-flex items-center gap-1.5 px-2 py-1 text-[10px] text-rose-500 hover:bg-rose-50 font-bold rounded-lg border border-transparent hover:border-rose-100 transition-all cursor-pointer bg-transparent"
+                  >
+                    <Trash2 size={12} /> Làm sạch lịch sử chat
+                  </button>
+                ) : (
+                  <span className="text-[9px] text-slate-400 font-semibold">Nhấn Enter để gửi câu hỏi</span>
+                )}
+                <div className="text-[9px] text-slate-400 font-bold flex items-center gap-1">
+                  <Sparkles size={10} className="text-blue-500" /> Mô hình <span className="text-slate-600">gpt-4o</span> · bảo mật cao
                 </div>
               </div>
-            )}
+            </div>
           </div>
         </div>
       )}
