@@ -67,6 +67,19 @@ interface Employee {
   date_of_birth?: string;
   gender?: string;
   employee_code?: string;
+  
+  // Additional profile fields matching Excel import
+  start?: string;
+  cccd?: string;
+  cccd_date?: string;
+  cccd_place?: string;
+  permanent_address?: string;
+  temporary_address?: string;
+  degree?: string;
+  emergency_contact_name?: string;
+  emergency_contact_relationship?: string;
+  emergency_contact_phone?: string;
+  notes?: string;
 }
 
 interface Contract {
@@ -3142,55 +3155,107 @@ export default function CBPage() {
                     <div className="space-y-6">
                       {activeSubTab === "personal" && (
                         <div className="space-y-6">
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            {/* Contact Card */}
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            {/* Card 1: Contact & Personal */}
                             <div className="glass bg-white rounded-2xl p-6 border-transparent shadow-premium space-y-4 hover:shadow-lg transition-all duration-300">
                               <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
                                 <Mail size={16} className="text-[#005BAC]" />
-                                <h4 className="font-heading font-black text-slate-800 text-xs uppercase tracking-wider">Thông tin liên hệ</h4>
+                                <h4 className="font-heading font-black text-slate-800 text-xs uppercase tracking-wider">Thông tin liên hệ & Cá nhân</h4>
                               </div>
                               <div className="space-y-3.5 text-xs font-semibold text-slate-600">
                                 <div className="flex items-center justify-between">
-                                  <span className="text-slate-400">Email công việc</span>
-                                  <span className="text-slate-800 font-bold">{selectedEmp.email}</span>
+                                  <span className="text-slate-400">Mã nhân viên</span>
+                                  <span className="text-slate-850 font-bold">{selectedEmp.employee_code || "—"}</span>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-slate-400">Giới tính</span>
+                                  <span className="text-slate-850 font-bold">{selectedEmp.gender || "—"}</span>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-slate-400">Ngày sinh</span>
+                                  <span className="text-slate-850 font-bold">{selectedEmp.date_of_birth || "—"}</span>
                                 </div>
                                 <div className="flex items-center justify-between">
                                   <span className="text-slate-400">Số điện thoại</span>
-                                  <span className="text-slate-800 font-bold">{selectedEmp.phone || "Chưa thiết lập"}</span>
+                                  <span className="text-slate-800 font-bold">{selectedEmp.phone || "—"}</span>
                                 </div>
                                 <div className="flex items-center justify-between">
-                                  <span className="text-slate-400">Nơi làm việc</span>
-                                  <span className="text-slate-850 font-bold">Văn phòng HCM</span>
+                                  <span className="text-slate-400">Email công việc</span>
+                                  <span className="text-slate-800 font-bold break-all">{selectedEmp.email || "—"}</span>
                                 </div>
                                 <div className="flex items-center justify-between">
-                                  <span className="text-slate-400">Điện thoại khẩn cấp</span>
-                                  <span className="text-slate-800 font-bold">Người thân - 0909.123.456</span>
+                                  <span className="text-slate-400">Bằng cấp / Học vấn</span>
+                                  <span className="text-slate-850 font-bold">{selectedEmp.degree || "—"}</span>
                                 </div>
                               </div>
                             </div>
 
-                            {/* Job Info Card */}
+                            {/* Card 2: Legal & Identity */}
+                            <div className="glass bg-white rounded-2xl p-6 border-transparent shadow-premium space-y-4 hover:shadow-lg transition-all duration-300">
+                              <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                                <FileText size={16} className="text-[#005BAC]" />
+                                <h4 className="font-heading font-black text-slate-800 text-xs uppercase tracking-wider">Hồ sơ pháp lý & CCCD</h4>
+                              </div>
+                              <div className="space-y-3.5 text-xs font-semibold text-slate-600">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-slate-400">Số CCCD</span>
+                                  <span className="text-slate-850 font-bold">{selectedEmp.cccd || "—"}</span>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-slate-400">Ngày cấp</span>
+                                  <span className="text-slate-850 font-bold">{selectedEmp.cccd_date || "—"}</span>
+                                </div>
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="text-slate-400">Nơi cấp</span>
+                                  <span className="text-slate-800 font-bold break-words">{selectedEmp.cccd_place || "—"}</span>
+                                </div>
+                                <div className="flex flex-col gap-0.5 border-t border-slate-50 pt-2">
+                                  <span className="text-slate-400">Địa chỉ thường trú</span>
+                                  <span className="text-slate-800 font-bold break-words">{selectedEmp.permanent_address || "—"}</span>
+                                </div>
+                                <div className="flex flex-col gap-0.5 border-t border-slate-50 pt-2">
+                                  <span className="text-slate-400">Địa chỉ tạm trú</span>
+                                  <span className="text-slate-800 font-bold break-words">{selectedEmp.temporary_address || "—"}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Card 3: Job & Emergency Info */}
                             <div className="glass bg-white rounded-2xl p-6 border-transparent shadow-premium space-y-4 hover:shadow-lg transition-all duration-300">
                               <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
                                 <Briefcase size={16} className="text-[#005BAC]" />
-                                <h4 className="font-heading font-black text-slate-800 text-xs uppercase tracking-wider">Thông tin công việc</h4>
+                                <h4 className="font-heading font-black text-slate-800 text-xs uppercase tracking-wider">Thông tin công việc & Khẩn cấp</h4>
                               </div>
                               <div className="space-y-3.5 text-xs font-semibold text-slate-600">
                                 <div className="flex items-center justify-between">
                                   <span className="text-slate-400">Chức vụ hiện tại</span>
-                                  <span className="text-slate-850 font-bold">{selectedEmp.role}</span>
+                                  <span className="text-slate-850 font-bold">{selectedEmp.role || "—"}</span>
                                 </div>
                                 <div className="flex items-center justify-between">
                                   <span className="text-slate-400">Đơn vị trực thuộc</span>
-                                  <span className="text-slate-800 font-bold">{selectedEmp.department}</span>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                  <span className="text-slate-400">Người quản lý trực tiếp</span>
-                                  <span className="text-[#005BAC] font-bold">Lê Thị Hoa Đào (Trưởng phòng)</span>
+                                  <span className="text-slate-800 font-bold">{selectedEmp.department || "—"}</span>
                                 </div>
                                 <div className="flex items-center justify-between">
                                   <span className="text-slate-400">Ngày gia nhập</span>
-                                  <span className="text-slate-800 font-bold">{new Date(selectedEmp.created_at).toLocaleDateString("vi-VN")}</span>
+                                  <span className="text-slate-800 font-bold">
+                                    {selectedEmp.start || (selectedEmp.created_at ? new Date(selectedEmp.created_at).toLocaleDateString("vi-VN") : "—")}
+                                  </span>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-slate-400">Trạng thái làm việc</span>
+                                  <span className="text-slate-850 font-bold">{selectedEmp.status || "Chính thức"}</span>
+                                </div>
+                                <div className="flex flex-col gap-0.5 border-t border-slate-50 pt-2">
+                                  <span className="text-slate-400">Liên hệ khẩn cấp</span>
+                                  <span className="text-slate-800 font-bold break-words">
+                                    {selectedEmp.emergency_contact_name ? (
+                                      `${selectedEmp.emergency_contact_name} ${selectedEmp.emergency_contact_relationship ? `(${selectedEmp.emergency_contact_relationship})` : ""} - ${selectedEmp.emergency_contact_phone || "—"}`
+                                    ) : "—"}
+                                  </span>
+                                </div>
+                                <div className="flex flex-col gap-0.5 border-t border-slate-50 pt-2">
+                                  <span className="text-slate-400">Ghi chú</span>
+                                  <span className="text-slate-800 font-bold break-words italic">{selectedEmp.notes || "—"}</span>
                                 </div>
                               </div>
                             </div>
