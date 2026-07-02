@@ -83,6 +83,14 @@ export default function AdminSuggestions() {
     currentUser.name === "Lại Nguyễn Lan Phương" ||
     currentUser.name === "Dương Nhật Hoành Anh" ||
     currentUser.role === "Tổ trưởng Nhân sự" ||
+    currentUser.name === "Huỳnh Giáp Nhân" ||
+    currentUser.name === "Nguyễn Duy Hưng" ||
+    currentUser.role.toLowerCase().includes("giám đốc") ||
+    currentUser.role.toLowerCase().includes("giam doc") ||
+    (currentUser.department && (
+      currentUser.department.toLowerCase().includes("giám đốc") ||
+      currentUser.department.toLowerCase().includes("giam doc")
+    )) ||
     (
       (
         currentUser.role.toLowerCase().includes("trưởng phòng") || 

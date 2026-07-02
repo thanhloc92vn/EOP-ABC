@@ -611,9 +611,17 @@ export default function EmployeeManagementPage() {
                         currentUser.role.toLowerCase() === "admin" ||
                         currentUser.role.toLowerCase().includes("trưởng phòng") || 
                         currentUser.role.toLowerCase().includes("truong phong") ||
+                        currentUser.role.toLowerCase().includes("giám đốc") || 
+                        currentUser.role.toLowerCase().includes("giam doc") || 
+                        (currentUser.department && (
+                          currentUser.department.toLowerCase().includes("giám đốc") || 
+                          currentUser.department.toLowerCase().includes("giam doc")
+                        )) ||
                         currentUser.name === "Lại Nguyễn Lan Phương" ||
                         currentUser.name === "Dương Nhật Hoành Anh" ||
                         currentUser.name === "Lê Thị Hoa Đào" ||
+                        currentUser.name === "Huỳnh Giáp Nhân" ||
+                        currentUser.name === "Nguyễn Duy Hưng" ||
                         currentUser.email.toLowerCase().trim() === "lehoadao2706@gmail.com" ||
                         currentUser.role === "CV Nhân sự" ||
                         currentUser.role === "Tổ trưởng Nhân sự" ||

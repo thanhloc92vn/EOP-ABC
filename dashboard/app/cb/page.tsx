@@ -2171,7 +2171,21 @@ export default function CBPage() {
                        (session.user.user_metadata?.full_name || "").includes("Hoa Đào") ||
                        (session.user.user_metadata?.name || "").includes("Hoa Đào");
                        
-      const fullAccess = !!(isAdmin || isHRStaff || isTPHCNS);
+      const isBoardOrSpecific = (empData?.department && (
+        empData.department.toLowerCase().includes("giám đốc") ||
+        empData.department.toLowerCase().includes("giam doc")
+      )) || (empData?.role && (
+        empData.role.toLowerCase().includes("giám đốc") ||
+        empData.role.toLowerCase().includes("giam doc")
+      )) || 
+      empData?.name === "Huỳnh Giáp Nhân" ||
+      empData?.name === "Nguyễn Duy Hưng" ||
+      (session.user.user_metadata?.full_name || "").includes("Huỳnh Giáp Nhân") ||
+      (session.user.user_metadata?.name || "").includes("Huỳnh Giáp Nhân") ||
+      (session.user.user_metadata?.full_name || "").includes("Nguyễn Duy Hưng") ||
+      (session.user.user_metadata?.name || "").includes("Nguyễn Duy Hưng");
+
+      const fullAccess = !!(isAdmin || isHRStaff || isTPHCNS || isBoardOrSpecific);
       setHasFullAccess(fullAccess);
       
       const userInfo = {

@@ -515,11 +515,21 @@ export default function TaskManagementPage() {
                         currentUser.role.toLowerCase().includes("truong phong") ||
                         currentUser.role.toLowerCase().includes("tổ trưởng") || 
                         currentUser.role.toLowerCase().includes("to truong") || 
+                        currentUser.role.toLowerCase().includes("giám đốc") || 
+                        currentUser.role.toLowerCase().includes("giam doc") || 
+                        (currentUser.department && (
+                          currentUser.department.toLowerCase().includes("giám đốc") || 
+                          currentUser.department.toLowerCase().includes("giam doc")
+                        )) ||
+                        currentUser.name === "Huỳnh Giáp Nhân" ||
+                        currentUser.name === "Nguyễn Duy Hưng" ||
                         userEmail === "lehoadao2706@gmail.com" ||
                         userEmail === "duongnhathoanhanh@gmail.com" ||
                         userEmail === "anhdnh@trungnamgroup.com.vn" ||
                         userName.includes("Hoa Đào") ||
-                        userName.includes("Hoành Anh");
+                        userName.includes("Hoành Anh") ||
+                        userName.includes("Huỳnh Giáp Nhân") ||
+                        userName.includes("Nguyễn Duy Hưng");
 
     if (isUserAdmin) return true;
 

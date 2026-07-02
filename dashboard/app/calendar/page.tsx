@@ -524,11 +524,18 @@ export default function CalendarPage() {
   // Approval list for current manager
   const pendingApprovals = useMemo(() => {
     if (!currentUser) return [];
-    const isUserAdmin = currentUser.isAdmin || (currentUser.role || "").toLowerCase() === "admin";
+    const isUserAdmin = currentUser.isAdmin || 
+                        (currentUser.role || "").toLowerCase() === "admin" ||
+                        currentUser.name === "Huỳnh Giáp Nhân" ||
+                        currentUser.name === "Nguyễn Duy Hưng";
     const isUserManager = (currentUser.role || "").toLowerCase().includes("trưởng phòng") || 
                           (currentUser.role || "").toLowerCase().includes("truong phong") ||
                           (currentUser.role || "").toLowerCase().includes("giám đốc") ||
                           (currentUser.role || "").toLowerCase().includes("giam doc") ||
+                          (currentUser.department && (
+                            currentUser.department.toLowerCase().includes("giám đốc") ||
+                            currentUser.department.toLowerCase().includes("giam doc")
+                          )) ||
                           (currentUser.role || "").toLowerCase().includes("quản lý") ||
                           (currentUser.role || "").toLowerCase().includes("quan ly") ||
                           (currentUser.role || "").toLowerCase().includes("quyền trưởng phòng") ||
