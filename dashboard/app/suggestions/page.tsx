@@ -21,7 +21,8 @@ import {
   CheckSquare,
   Archive,
   Hourglass,
-  RefreshCw
+  RefreshCw,
+  Trash2
 } from "lucide-react";
 
 interface Suggestion {
@@ -195,6 +196,46 @@ export default function AdminSuggestions() {
     } catch (err: any) {
       console.error("Error updating suggestion:", err);
       setErrorMsg(err.message || "Không thể cập nhật thông tin.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteSuggestion = async () => {
+    if (!selectedId) return;
+    
+    const confirmDelete = window.confirm(
+      "Bạn có chắc chắn muốn xóa ý kiến đóng góp này không? Hành động này không thể khôi phục lại."
+    );
+    if (!confirmDelete) return;
+
+    try {
+      setSaving(true);
+      const { error } = await supabase
+        .from("suggestions")
+        .delete()
+        .eq("id", selectedId);
+
+      if (error) throw error;
+
+      // Update state
+      const updatedList = suggestions.filter(s => s.id !== selectedId);
+      setSuggestions(updatedList);
+
+      if (updatedList.length > 0) {
+        setSelectedId(updatedList[0].id);
+        setEditStatus(updatedList[0].status);
+        setEditResponse(updatedList[0].response || "");
+      } else {
+        setSelectedId(null);
+        setEditStatus("pending");
+        setEditResponse("");
+      }
+      
+      alert("Đã xóa góp ý thành công!");
+    } catch (err: any) {
+      console.error("Error deleting suggestion:", err);
+      alert("Lỗi khi xóa góp ý: " + err.message);
     } finally {
       setSaving(false);
     }
@@ -397,9 +438,20 @@ export default function AdminSuggestions() {
             {/* Suggestion Details Form */}
             {selectedSuggestion ? (
               <div className="bg-white p-6 border border-slate-200/60 rounded-3xl shadow-sm text-left space-y-5">
-                <div className="border-b border-slate-100 pb-3">
-                  <h2 className="text-sm font-black text-slate-800 uppercase tracking-wider">Chi Tiết Kiến Nghị</h2>
-                  <p className="text-[10px] text-slate-400 mt-1 font-mono">ID: {selectedSuggestion.id}</p>
+                <div className="border-b border-slate-100 pb-3 flex justify-between items-center">
+                  <div>
+                    <h2 className="text-sm font-black text-slate-800 uppercase tracking-wider">Chi Tiết Kiến Nghị</h2>
+                    <p className="text-[10px] text-slate-400 mt-1 font-mono">ID: {selectedSuggestion.id}</p>
+                  </div>
+                  {canManage && (
+                    <button
+                      onClick={handleDeleteSuggestion}
+                      className="p-2 text-rose-500 hover:text-white hover:bg-rose-600 rounded-xl transition-all border border-rose-100 hover:border-rose-650 cursor-pointer"
+                      title="Xóa góp ý này"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  )}
                 </div>
 
                 <div className="space-y-3.5">
