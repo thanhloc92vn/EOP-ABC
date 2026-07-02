@@ -269,7 +269,7 @@ export default function SuggestionsPublicForm() {
 
           {/* Department Select */}
           <div className="space-y-1">
-            <label className="text-[11px] font-black text-slate-400 uppercase tracking-wider block">Bộ phận tiếp nhận góp ý</label>
+            <label className="text-[11px] font-black text-slate-400 uppercase tracking-wider block">Bộ phận góp ý</label>
             <div className="relative">
               <Building className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={14} />
               <select
