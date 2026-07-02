@@ -4,8 +4,12 @@ import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import { Loader2, ShieldAlert } from "lucide-react";
 import { SidebarProvider } from "./SidebarContext";
+import { usePathname } from "next/navigation";
 
 export default function AuthWrapper({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const isPublicRoute = pathname === "/gop-y" || pathname.startsWith("/gop-y/");
+
   const [session, setSession] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -124,6 +128,10 @@ export default function AuthWrapper({ children }: { children: React.ReactNode })
   const handleLogout = async () => {
     await supabase.auth.signOut();
   };
+
+  if (isPublicRoute) {
+    return <>{children}</>;
+  }
 
   if (loading) {
     return (

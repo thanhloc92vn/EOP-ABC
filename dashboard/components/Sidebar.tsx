@@ -14,7 +14,8 @@ import {
   Users,
   CalendarRange,
   X,
-  CheckSquare
+  CheckSquare,
+  MessageSquare
 } from "lucide-react";
 import { useSidebar } from "./SidebarContext";
 import ThemeToggle from "./ThemeToggle";
@@ -33,6 +34,7 @@ function SidebarLinks({ isApprover, pathname, setSidebarOpen }: { isApprover: bo
     { label: "Lương & Phúc lợi (C&B)", href: "/cb", icon: Calculator },
     { label: "Hành chính & Tài sản", href: "/administration", icon: Building2 },
     { label: "Văn Thư", href: "/document-control", icon: FileText },
+    { label: "Góp ý & Kiến nghị", href: "/suggestions", icon: MessageSquare },
     { label: "Cài đặt hệ thống", href: "/settings?tab=system", icon: Settings },
   ];
 
