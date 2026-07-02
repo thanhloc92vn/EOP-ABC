@@ -60,7 +60,19 @@ function tryDirectExcelParse(sheet: XLSX.WorkSheet): ExtractedEmployee[] | null 
       
       normalizedCells.forEach((cell, idx) => {
         if (!cell) return;
-        if (cell.includes("mã nhân viên") || cell.includes("mã nv") || cell === "mã" || cell === "code") {
+        
+        // 1. First prioritize relative/emergency contacts to prevent collision with employee fields (e.g. phone, name)
+        if (cell.includes("người thân") || cell.includes("khẩn cấp") || cell.includes("emergency")) {
+          if (cell.includes("sđt") || cell.includes("số đt") || cell.includes("điện thoại") || cell.includes("phone")) {
+            colMapping["emergency_contact_phone"] = idx;
+          } else if (cell.includes("mối quan hệ") || cell.includes("quan hệ") || cell.includes("relationship")) {
+            colMapping["emergency_contact_relationship"] = idx;
+          } else {
+            colMapping["emergency_contact_name"] = idx;
+          }
+        }
+        // 2. Employee fields
+        else if (cell.includes("mã nhân viên") || cell.includes("mã nv") || cell === "mã" || cell === "code") {
           colMapping["employee_code"] = idx;
         } else if (cell.includes("họ tên") || cell.includes("họ và tên") || cell === "tên" || cell.includes("tên nhân viên")) {
           colMapping["name"] = idx;
@@ -90,12 +102,8 @@ function tryDirectExcelParse(sheet: XLSX.WorkSheet): ExtractedEmployee[] | null 
           colMapping["degree"] = idx;
         } else if (cell === "email" || cell.includes("thư điện tử")) {
           colMapping["email"] = idx;
-        } else if (cell.includes("người thân") || cell.includes("khẩn cấp") || cell.includes("emergency_contact_name")) {
-          colMapping["emergency_contact_name"] = idx;
         } else if (cell.includes("mối quan hệ") || cell === "quan hệ" || cell.includes("relationship")) {
           colMapping["emergency_contact_relationship"] = idx;
-        } else if (cell.includes("số đt người thân") || cell.includes("sđt người thân") || cell.includes("sđt khẩn cấp") || cell.includes("emergency_contact_phone")) {
-          colMapping["emergency_contact_phone"] = idx;
         } else if (cell.includes("ghi chú") || cell === "notes") {
           colMapping["notes"] = idx;
         }
@@ -256,7 +264,7 @@ Mỗi nhân viên cần có các trường dữ liệu sau:
 20. "notes": Ghi chú thêm (nếu có). Nếu không có, để trống "".
 
 ━━━ QUY TẮC PHÂN TÍCH ━━━
-- Hãy đọc kỹ các tiêu đề cột (STT, Mã NV, Họ tên, Phòng ban, Chức danh, Giới tính, Ngày nhận việc, Ngày sinh, SĐT, CCCD, Ngày cấp, Nơi cấp, Địa chỉ thường trú, Địa chỉ tạm trú, Bằng cấp, Email, Người thân, Mối quan hệ, Số ĐT người thân, Ghi chú...) để trích xuất đúng dòng thông tin của từng nhân viên.
+- Hãy đọc kỹ các tiêu đề cột (STT, Mã NV, Họ tên, Phòng ban, Chức danh, Giới tính, Ngày nhận việc, Ngày sinh, SĐT, CCCD, Ngày cấp, Nơi cấp, Địa chỉ thường trú, Địa chỉ tạm trú, Bằng cấp, Email, Họ tên người thân, Mối quan hệ, Số ĐT người thân, Ghi chú...) để trích xuất đúng dòng thông tin của từng nhân viên.
 - Để tối ưu hóa tốc độ và giảm kích thước phản hồi, CHỈ xuất các thuộc tính có giá trị thực tế. Bắt buộc bỏ qua (không ghi vào JSON) các trường trống, null, hoặc không tìm thấy thông tin.
 - Trả về kết quả CHỈ dạng JSON chứa mảng "employees", không kèm giải thích bên ngoài.
 

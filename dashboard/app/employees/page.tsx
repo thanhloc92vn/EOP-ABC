@@ -860,7 +860,7 @@ export default function EmployeeManagementPage() {
                       <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[220px]">Địa chỉ tạm trú</div></th>
                       <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[160px]">Bằng cấp</div></th>
                       <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[180px]">Email</div></th>
-                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[150px]">Người thân</div></th>
+                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[150px]">Họ tên người thân</div></th>
                       <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[110px]">Mối quan hệ</div></th>
                       <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[135px]">Số ĐT người thân</div></th>
                       <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[150px]">Ghi chú</div></th>
@@ -1229,7 +1229,7 @@ export default function EmployeeManagementPage() {
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="space-y-1">
-                  <label className="text-slate-500">Người thân liên hệ khẩn cấp</label>
+                  <label className="text-slate-500">Họ tên người thân</label>
                   <input
                     type="text" value={newEmergencyName} onChange={(e) => setNewEmergencyName(e.target.value)}
                     placeholder="Ví dụ: Nguyễn Văn B"
@@ -1332,7 +1332,7 @@ export default function EmployeeManagementPage() {
                       <th className="py-3 px-3"><div className="w-[180px]">ĐC tạm trú</div></th>
                       <th className="py-3 px-3"><div className="w-[130px]">Bằng cấp</div></th>
                       <th className="py-3 px-3"><div className="w-[150px]">Email</div></th>
-                      <th className="py-3 px-3"><div className="w-[120px]">Người thân</div></th>
+                      <th className="py-3 px-3"><div className="w-[120px]">Họ tên người thân</div></th>
                       <th className="py-3 px-3"><div className="w-[90px]">Mối quan hệ</div></th>
                       <th className="py-3 px-3"><div className="w-[115px]">SĐT người thân</div></th>
                       <th className="py-3 px-3"><div className="w-[130px]">Ghi chú</div></th>
