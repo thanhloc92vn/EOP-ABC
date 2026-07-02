@@ -201,8 +201,9 @@ export default function AdminSuggestions() {
     }
   };
 
-  const handleDeleteSuggestion = async () => {
-    if (!selectedId) return;
+  const handleDeleteSuggestion = async (id?: string) => {
+    const targetId = id || selectedId;
+    if (!targetId) return;
     
     const confirmDelete = window.confirm(
       "Bạn có chắc chắn muốn xóa ý kiến đóng góp này không? Hành động này không thể khôi phục lại."
@@ -214,22 +215,24 @@ export default function AdminSuggestions() {
       const { error } = await supabase
         .from("suggestions")
         .delete()
-        .eq("id", selectedId);
+        .eq("id", targetId);
 
       if (error) throw error;
 
       // Update state
-      const updatedList = suggestions.filter(s => s.id !== selectedId);
+      const updatedList = suggestions.filter(s => s.id !== targetId);
       setSuggestions(updatedList);
 
-      if (updatedList.length > 0) {
-        setSelectedId(updatedList[0].id);
-        setEditStatus(updatedList[0].status);
-        setEditResponse(updatedList[0].response || "");
-      } else {
-        setSelectedId(null);
-        setEditStatus("pending");
-        setEditResponse("");
+      if (targetId === selectedId) {
+        if (updatedList.length > 0) {
+          setSelectedId(updatedList[0].id);
+          setEditStatus(updatedList[0].status);
+          setEditResponse(updatedList[0].response || "");
+        } else {
+          setSelectedId(null);
+          setEditStatus("pending");
+          setEditResponse("");
+        }
       }
       
       alert("Đã xóa góp ý thành công!");
@@ -400,10 +403,24 @@ export default function AdminSuggestions() {
                             </span>
                           </div>
                         </div>
-                        <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.75 rounded-full border ${statusInfo.color}`}>
-                          <StatusIcon size={10} />
-                          {statusInfo.label}
-                        </span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.75 rounded-full border ${statusInfo.color}`}>
+                            <StatusIcon size={10} />
+                            {statusInfo.label}
+                          </span>
+                          {canManage && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteSuggestion(item.id);
+                              }}
+                              className="p-1.5 text-slate-450 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all border border-slate-100 hover:border-rose-100 cursor-pointer"
+                              title="Xóa góp ý"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          )}
+                        </div>
                       </div>
 
                       <p className="text-xs text-slate-550 leading-relaxed font-medium line-clamp-3">
@@ -445,7 +462,7 @@ export default function AdminSuggestions() {
                   </div>
                   {canManage && (
                     <button
-                      onClick={handleDeleteSuggestion}
+                      onClick={() => handleDeleteSuggestion()}
                       className="p-2 text-rose-500 hover:text-white hover:bg-rose-600 rounded-xl transition-all border border-rose-100 hover:border-rose-650 cursor-pointer"
                       title="Xóa góp ý này"
                     >
