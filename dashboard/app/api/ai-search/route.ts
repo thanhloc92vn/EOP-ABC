@@ -96,7 +96,7 @@ export async function POST(req: NextRequest) {
     // ─────────────────────────────────────────────────────────────────────────
     const q = lowercaseQuery;
     const want = {
-      employees: /nhân sự|nhan su|nhân viên|nhan vien|phòng ban|phong ban|cccd|địa chỉ|dia chi|email|sđt|số điện thoại|so dien thoai|đội ngũ|doi ngu|ai là|nhân lực|nhan luc|cán bộ|can bo|cbnv|danh sách nv|học vấn|bằng cấp|ngày sinh|sinh nhật|giới tính|trưởng phòng|nhân số|biên chế/.test(q),
+      employees: /nhân sự|nhan su|nhân viên|nhan vien|phòng ban|phong ban|cccd|địa chỉ|dia chi|email|sđt|số điện thoại|so dien thoai|đội ngũ|doi ngu|ai là|nhân lực|nhan luc|cán bộ|can bo|cbnv|danh sách nv|học vấn|bằng cấp|ngày sinh|sinh nhật|giới tính|trưởng phòng|nhân số|biên chế|thử việc|thu viec|chính thức|chinh thuc/.test(q),
       candidates: /ứng viên|ung vien|tuyển dụng|tuyen dung|phỏng vấn|phong van|cv|hồ sơ|ho so|recruit|candidate|ứng tuyển|nguồn tuyển|điểm ai|cần tuyển/.test(q),
       tasks: /công việc|cong viec|task|giao việc|giao viec|tiến độ|tien do|deadline|hạn chót|han chot|đang làm|kanban|tồn đọng|hoàn thành|cần làm|nhiệm vụ|nhiem vu|báo cáo công việc|kế hoạch/.test(q),
       admin: /chi phí|chi phi|ngân sách|ngan sach|văn phòng phẩm|van phong pham|cost|expense|cpql|chi tiêu|chi tieu|tốn|định mức|vpp|khối văn phòng|khoi van phong|hành chính tổng hợp/.test(q),
@@ -105,7 +105,7 @@ export async function POST(req: NextRequest) {
       clerical: /văn thư|van thu|công văn|cong van|văn bản|van ban|tờ trình|to trinh|quyết định|quyet dinh|công văn đến|công văn đi|trích yếu|trich yeu|hđqt|clerical|số văn bản/.test(q),
       trips: /công tác|cong tac|business trip|đi công tác|chuyến đi|chuyen di|đi tỉnh|di tinh|nơi đến/.test(q),
       justifications: /giải trình|giai trinh|chấm công|cham cong|quên chấm|quen cham|đi muộn|di muon|về sớm|ve som|justification|nghỉ phép|nghi phep|đơn nghỉ/.test(q),
-      contracts: hasSalaryAccess && /hợp đồng|hop dong|hđlđ|hdld|lương|luong|thu nhập|thu nhap|thuong|thưởng|phụ cấp|phu cap|bảng lương|bang luong|hạn hợp đồng|hợp đồng lao động/.test(q),
+      contracts: hasSalaryAccess && /hợp đồng|hop dong|hđlđ|hdld|lương|luong|thu nhập|thu nhap|thuong|thưởng|phụ cấp|phu cap|bảng lương|bang luong|hạn hợp đồng|hợp đồng lao động|thử việc|thu viec|chính thức|chinh thuc/.test(q),
       suggestions: /góp ý|gop y|kiến nghị|kien nghi|ý kiến|y kien|đóng góp|dong gop|phản hồi|phan hoi/.test(q),
     };
 
