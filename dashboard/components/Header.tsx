@@ -330,6 +330,8 @@ export default function Header({ title, subtitle }: Props) {
 
       const isUserHR = userObj.name === "Lại Nguyễn Lan Phương" || 
                        userObj.name === "Dương Nhật Hoành Anh" ||
+                       userObj.name === "Lê Thị Hoa Đào" ||
+                       (userObj.email || "").toLowerCase().trim() === "lehoadao2706@gmail.com" ||
                        (userObj.role || "").toLowerCase().includes("nhân sự") ||
                        (userObj.role || "").toLowerCase().includes("nhan su");
 

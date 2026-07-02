@@ -2164,8 +2164,12 @@ export default function CBPage() {
                          (empData?.department?.toLowerCase()?.includes("hành chính") || empData?.department?.toLowerCase()?.includes("hcns"))) ||
                         (empData?.role?.toLowerCase()?.includes("tổ trưởng") && 
                          (empData?.department?.toLowerCase()?.includes("hành chính") || empData?.department?.toLowerCase()?.includes("hcns")));
-      const isTPHCNS = empData?.role?.toLowerCase()?.includes("trưởng phòng") && 
-                       (empData?.department?.toLowerCase()?.includes("hành chính") || empData?.department?.toLowerCase()?.includes("hcns"));
+      const isTPHCNS = (empData?.role?.toLowerCase()?.includes("trưởng phòng") && 
+                        (empData?.department?.toLowerCase()?.includes("hành chính") || empData?.department?.toLowerCase()?.includes("hcns"))) ||
+                       empData?.name === "Lê Thị Hoa Đào" ||
+                       email.toLowerCase().trim() === "lehoadao2706@gmail.com" ||
+                       (session.user.user_metadata?.full_name || "").includes("Hoa Đào") ||
+                       (session.user.user_metadata?.name || "").includes("Hoa Đào");
                        
       const fullAccess = !!(isAdmin || isHRStaff || isTPHCNS);
       setHasFullAccess(fullAccess);

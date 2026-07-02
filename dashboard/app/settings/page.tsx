@@ -359,6 +359,8 @@ function SettingsContent() {
     const isUserAdmin = currentUser.isAdmin || (currentUser.role || "").toLowerCase() === "admin";
     const isUserHR = currentUser.name === "Lại Nguyễn Lan Phương" || 
                      currentUser.name === "Dương Nhật Hoành Anh" ||
+                     currentUser.name === "Lê Thị Hoa Đào" ||
+                     (currentUser.email || "").toLowerCase().trim() === "lehoadao2706@gmail.com" ||
                      (currentUser.role || "").toLowerCase().includes("nhân sự") ||
                      (currentUser.role || "").toLowerCase().includes("nhan su");
     const isDirector = (currentUser.role || "").toLowerCase().includes("giám đốc") ||

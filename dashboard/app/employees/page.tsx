@@ -531,6 +531,8 @@ export default function EmployeeManagementPage() {
                         currentUser.role.toLowerCase() === "admin" ||
                         currentUser.name === "Lại Nguyễn Lan Phương" ||
                         currentUser.name === "Dương Nhật Hoành Anh" ||
+                        currentUser.name === "Lê Thị Hoa Đào" ||
+                        currentUser.email.toLowerCase().trim() === "lehoadao2706@gmail.com" ||
                         currentUser.role === "CV Nhân sự" ||
                         currentUser.role === "Tổ trưởng Nhân sự" ||
                         (currentUser.role.toLowerCase().includes("nhân sự") && 
@@ -631,6 +633,8 @@ export default function EmployeeManagementPage() {
                         currentUser.role.toLowerCase().includes("truong phong") ||
                         currentUser.name === "Lại Nguyễn Lan Phương" ||
                         currentUser.name === "Dương Nhật Hoành Anh" ||
+                        currentUser.name === "Lê Thị Hoa Đào" ||
+                        currentUser.email.toLowerCase().trim() === "lehoadao2706@gmail.com" ||
                         currentUser.role === "CV Nhân sự" ||
                         currentUser.role === "Tổ trưởng Nhân sự" ||
                         (currentUser.role.toLowerCase().includes("nhân sự") && 
@@ -683,6 +687,8 @@ export default function EmployeeManagementPage() {
     currentUser.role.toLowerCase().includes("truong phong") ||
     currentUser.name === "Lại Nguyễn Lan Phương" ||
     currentUser.name === "Dương Nhật Hoành Anh" ||
+    currentUser.name === "Lê Thị Hoa Đào" ||
+    currentUser.email.toLowerCase().trim() === "lehoadao2706@gmail.com" ||
     currentUser.role === "CV Nhân sự" ||
     currentUser.role === "Tổ trưởng Nhân sự" ||
     (currentUser.role.toLowerCase().includes("nhân sự") && 
