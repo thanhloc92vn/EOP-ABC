@@ -63,7 +63,31 @@ export default function AdminSuggestions() {
   // QR Code URL state
   const [qrUrl, setQrUrl] = useState("");
 
+  // User auth state
+  const [currentUser, setCurrentUser] = useState<{
+    email: string;
+    name: string;
+    role: string;
+    department: string;
+    isAdmin: boolean;
+  } | null>(null);
+
   const selectedSuggestion = suggestions.find(s => s.id === selectedId) || null;
+
+  const canManage = !!(currentUser && (
+    currentUser.isAdmin ||
+    currentUser.role.toLowerCase() === "admin" ||
+    currentUser.name === "Lê Thị Hoa Đào" ||
+    currentUser.email.toLowerCase().trim() === "lehoadao2706@gmail.com" ||
+    currentUser.name === "Lại Nguyễn Lan Phương" ||
+    currentUser.name === "Dương Nhật Hoành Anh" ||
+    currentUser.role === "CV Nhân sự" ||
+    currentUser.role === "Tổ trưởng Nhân sự" ||
+    (currentUser.role.toLowerCase().includes("trưởng phòng") && 
+     (currentUser.department.toLowerCase().includes("hành chính") || currentUser.department.toLowerCase().includes("hcns"))) ||
+    (currentUser.role.toLowerCase().includes("tổ trưởng") && 
+     (currentUser.department.toLowerCase().includes("hành chính") || currentUser.department.toLowerCase().includes("hcns")))
+  ));
 
   const fetchSuggestions = async () => {
     setLoading(true);
@@ -88,8 +112,45 @@ export default function AdminSuggestions() {
     }
   };
 
+  const fetchCurrentUser = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session || !session.user) return;
+
+      const user = session.user;
+      const email = user.email || "";
+
+      // 1. Check allowed_users for Admin
+      const { data: allowedData } = await supabase
+        .from("allowed_users")
+        .select("role")
+        .ilike("email", email)
+        .maybeSingle();
+
+      const isAdmin = allowedData?.role === "Admin";
+
+      // 2. Check employees
+      const { data: empData } = await supabase
+        .from("employees")
+        .select("name, role, department")
+        .like("email", `%${email}%`)
+        .maybeSingle();
+
+      setCurrentUser({
+        email,
+        name: empData?.name || user.user_metadata?.full_name || user.user_metadata?.name || "Người dùng",
+        role: empData?.role || (isAdmin ? "Admin" : "Nhân viên"),
+        department: empData?.department || "Chưa xếp phòng",
+        isAdmin
+      });
+    } catch (err) {
+      console.error("Error fetching current user info:", err);
+    }
+  };
+
   useEffect(() => {
     fetchSuggestions();
+    fetchCurrentUser();
     
     // Set public QR link based on environment
     if (typeof window !== "undefined") {
@@ -384,58 +445,76 @@ export default function AdminSuggestions() {
                   )}
                 </div>
 
-                {/* Edit Form */}
-                <form onSubmit={handleUpdateStatusAndResponse} className="space-y-4 pt-4 border-t border-slate-100">
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Trạng thái xử lý</label>
-                    <select
-                      value={editStatus}
-                      onChange={(e) => setEditStatus(e.target.value as Suggestion["status"])}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 text-xs font-semibold text-slate-700 cursor-pointer"
-                    >
-                      <option value="pending">Chờ xử lý</option>
-                      <option value="processing">Đang xử lý</option>
-                      <option value="resolved">Đã giải quyết</option>
-                      <option value="archived">Lưu trữ</option>
-                    </select>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Ghi chú xử lý / Phản hồi của HCNS</label>
-                    <textarea
-                      value={editResponse}
-                      onChange={(e) => setEditResponse(e.target.value)}
-                      placeholder="Ghi nhận phương án xử lý tại đây..."
-                      rows={4}
-                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500/20 text-xs font-medium resize-none placeholder-slate-400"
-                    />
-                  </div>
-
-                  {errorMsg && (
-                    <div className="flex items-start gap-2 text-rose-500 text-[10px] font-bold">
-                      <AlertCircle size={13} className="shrink-0 mt-0.5" />
-                      <span>{errorMsg}</span>
+                {/* Read-Only Status & Response (for regular users) or Edit Form (for managers) */}
+                {!canManage ? (
+                  <div className="space-y-4 pt-4 border-t border-slate-100">
+                    <div className="space-y-1.5">
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Trạng thái xử lý</span>
+                      <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-3 py-1 rounded-full border ${STATUS_LABELS[selectedSuggestion.status]?.color || STATUS_LABELS.pending.color}`}>
+                        {STATUS_LABELS[selectedSuggestion.status]?.label || STATUS_LABELS.pending.label}
+                      </span>
                     </div>
-                  )}
 
-                  <button
-                    type="submit"
-                    disabled={saving}
-                    className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 disabled:text-slate-500 text-white font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all shadow-md shadow-blue-500/10 cursor-pointer"
-                  >
-                    {saving ? (
-                      <>
-                        <Loader2 className="animate-spin" size={13} />
-                        Đang cập nhật...
-                      </>
-                    ) : (
-                      <>
-                        <Check size={13} />
-                        Cập nhật kết quả
-                      </>
+                    <div className="space-y-1.5">
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Phản hồi của HCNS</span>
+                      <p className="text-xs text-slate-705 leading-relaxed font-medium bg-slate-50 p-3.5 rounded-2xl border border-slate-100 whitespace-pre-wrap">
+                        {selectedSuggestion.response || "Chưa có phản hồi từ Ban nhân sự."}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <form onSubmit={handleUpdateStatusAndResponse} className="space-y-4 pt-4 border-t border-slate-100">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Trạng thái xử lý</label>
+                      <select
+                        value={editStatus}
+                        onChange={(e) => setEditStatus(e.target.value as Suggestion["status"])}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 text-xs font-semibold text-slate-700 cursor-pointer"
+                      >
+                        <option value="pending">Chờ xử lý</option>
+                        <option value="processing">Đang xử lý</option>
+                        <option value="resolved">Đã giải quyết</option>
+                        <option value="archived">Lưu trữ</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Ghi chú xử lý / Phản hồi của HCNS</label>
+                      <textarea
+                        value={editResponse}
+                        onChange={(e) => setEditResponse(e.target.value)}
+                        placeholder="Ghi nhận phương án xử lý tại đây..."
+                        rows={4}
+                        className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500/20 text-xs font-medium resize-none placeholder-slate-400"
+                      />
+                    </div>
+
+                    {errorMsg && (
+                      <div className="flex items-start gap-2 text-rose-500 text-[10px] font-bold">
+                        <AlertCircle size={13} className="shrink-0 mt-0.5" />
+                        <span>{errorMsg}</span>
+                      </div>
                     )}
-                  </button>
-                </form>
+
+                    <button
+                      type="submit"
+                      disabled={saving}
+                      className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 disabled:text-slate-500 text-white font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all shadow-md shadow-blue-500/10 cursor-pointer"
+                    >
+                      {saving ? (
+                        <>
+                          <Loader2 className="animate-spin" size={13} />
+                          Đang cập nhật...
+                        </>
+                      ) : (
+                        <>
+                          <Check size={13} />
+                          Cập nhật kết quả
+                        </>
+                      )}
+                    </button>
+                  </form>
+                )}
               </div>
             ) : (
               <div className="bg-white p-6 border border-slate-200/60 rounded-3xl shadow-sm text-center py-12 text-slate-400 font-medium text-xs">
@@ -444,53 +523,54 @@ export default function AdminSuggestions() {
             )}
 
             {/* suggestion QR Code Generator */}
-            <div className="bg-white p-6 border border-slate-200/60 rounded-3xl shadow-sm text-left space-y-4">
-              <div className="border-b border-slate-100 pb-3 flex items-center gap-2">
-                <QrCode size={18} className="text-blue-600" />
-                <h2 className="text-sm font-black text-slate-800 uppercase tracking-wider">Mã QR Hộp Thư</h2>
-              </div>
-
-              <div className="space-y-3.5 flex flex-col items-center">
-                {qrImageUrl ? (
-                  <div className="p-3 border border-slate-200 bg-white rounded-2xl shadow-inner">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img 
-                      src={qrImageUrl} 
-                      alt="QR Code Hộp Thư Góp Ý" 
-                      className="w-44 h-44 object-contain" 
-                    />
-                  </div>
-                ) : (
-                  <div className="w-44 h-44 border border-dashed border-slate-200 rounded-2xl flex items-center justify-center text-slate-300">
-                    <Loader2 className="animate-spin text-slate-400" size={24} />
-                  </div>
-                )}
-
-                <div className="w-full space-y-1.5 text-left">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Đường dẫn quét QR</label>
-                  <input
-                    type="text"
-                    value={qrUrl}
-                    onChange={(e) => setQrUrl(e.target.value)}
-                    placeholder="Nhập link (Ví dụ: http://10.0.7.198:3000/gop-y)"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 text-xs font-semibold text-slate-700"
-                  />
-                  <p className="text-[9px] text-slate-400 leading-normal">
-                    * Mẹo: Để quét bằng điện thoại khi chạy local, hãy đổi <code className="bg-slate-150 dark:bg-slate-800 px-1 py-0.5 rounded text-slate-650 dark:text-slate-300 font-bold">localhost</code> thành IP máy tính của bạn (ví dụ: <code className="bg-slate-150 dark:bg-slate-800 px-1 py-0.5 rounded text-slate-650 dark:text-slate-300 font-bold">10.0.7.198</code>) và điện thoại cần kết nối cùng mạng Wifi.
-                  </p>
+            {canManage && (
+              <div className="bg-white p-6 border border-slate-200/60 rounded-3xl shadow-sm text-left space-y-4">
+                <div className="border-b border-slate-100 pb-3 flex items-center gap-2">
+                  <QrCode size={18} className="text-blue-600" />
+                  <h2 className="text-sm font-black text-slate-800 uppercase tracking-wider">Mã QR Hộp Thư</h2>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={handleDownloadQR}
-                  className="w-full flex items-center justify-center gap-2 bg-slate-100 hover:bg-slate-200/80 active:bg-slate-200 text-slate-700 font-bold py-2.5 rounded-xl text-xs transition-all border border-slate-200 cursor-pointer"
-                >
-                  <Download size={13} />
-                  Tải ảnh QR Code để in
-                </button>
-              </div>
-            </div>
+                <div className="space-y-3.5 flex flex-col items-center">
+                  {qrImageUrl ? (
+                    <div className="p-3 border border-slate-200 bg-white rounded-2xl shadow-inner">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img 
+                        src={qrImageUrl} 
+                        alt="QR Code Hộp Thư Góp Ý" 
+                        className="w-44 h-44 object-contain" 
+                      />
+                    </div>
+                  ) : (
+                    <div className="w-44 h-44 border border-dashed border-slate-200 rounded-2xl flex items-center justify-center text-slate-300">
+                      <Loader2 className="animate-spin text-slate-400" size={24} />
+                    </div>
+                  )}
 
+                  <div className="w-full space-y-1.5 text-left">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Đường dẫn quét QR</label>
+                    <input
+                      type="text"
+                      value={qrUrl}
+                      onChange={(e) => setQrUrl(e.target.value)}
+                      placeholder="Nhập link (Ví dụ: http://10.0.7.198:3000/gop-y)"
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 text-xs font-semibold text-slate-700"
+                    />
+                    <p className="text-[9px] text-slate-400 leading-normal">
+                      * Mẹo: Để quét bằng điện thoại khi chạy local, hãy đổi <code className="bg-slate-150 dark:bg-slate-800 px-1 py-0.5 rounded text-slate-650 dark:text-slate-300 font-bold">localhost</code> thành IP máy tính của bạn (ví dụ: <code className="bg-slate-150 dark:bg-slate-800 px-1 py-0.5 rounded text-slate-650 dark:text-slate-300 font-bold">10.0.7.198</code>) và điện thoại cần kết nối cùng mạng Wifi.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleDownloadQR}
+                    className="w-full flex items-center justify-center gap-2 bg-slate-100 hover:bg-slate-200/80 active:bg-slate-200 text-slate-700 font-bold py-2.5 rounded-xl text-xs transition-all border border-slate-200 cursor-pointer"
+                  >
+                    <Download size={13} />
+                    Tải ảnh QR Code để in
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
         </main>
