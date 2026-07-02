@@ -2831,13 +2831,59 @@ export default function CBPage() {
 
   // --- HELPER FUNCTIONS FOR PREMIUM EMPLOYEE PROFILE VIEW ---
   const calculateTenure = (emp: Employee) => {
-    let hash = 0;
-    for (let i = 0; i < emp.name.length; i++) {
-      hash = emp.name.charCodeAt(i) + ((hash << 5) - hash);
+    if (!emp.created_at) return "—";
+    const joinDate = new Date(emp.created_at);
+    if (isNaN(joinDate.getTime())) return "—";
+    
+    const now = new Date();
+    
+    let years = now.getFullYear() - joinDate.getFullYear();
+    let months = now.getMonth() - joinDate.getMonth();
+    
+    if (months < 0) {
+      years--;
+      months += 12;
     }
-    const years = Math.abs(hash % 3) + 1; // 1 to 3 years
-    const months = Math.abs(hash % 12);
+    
+    if (now.getDate() < joinDate.getDate()) {
+      months--;
+      if (months < 0) {
+        years--;
+        months += 12;
+      }
+    }
+
+    if (years < 0) {
+      return "0 tháng";
+    }
+    
+    if (years === 0) {
+      return `${months} tháng`;
+    }
+    
+    if (months === 0) {
+      return `${years} năm`;
+    }
+    
     return `${years} năm ${months} tháng`;
+  };
+
+  const getEmployeeContractType = (emp: Employee) => {
+    const empCode = (emp.employee_code || "").toString().trim();
+    const matchedContracts = contracts.filter(c =>
+      (c.employee_id && c.employee_id === emp.id) ||
+      (empCode && (c.employee_code || "").toString().trim() === empCode) ||
+      (c.employee_name && emp.name && cleanName(c.employee_name) === cleanName(emp.name))
+    );
+    
+    const isRealNumber = (n: any) => !!n && !String(n).startsWith("IMPORT-");
+    const empContract =
+      matchedContracts.find(c => isRealNumber(c.contract_number) && c.sign_date) ||
+      matchedContracts.find(c => isRealNumber(c.contract_number)) ||
+      matchedContracts[0] || null;
+
+    if (!empContract) return "Chưa ký HĐ";
+    return empContract.type || "Chưa xác định";
   };
 
   const getKpiTrend = (emp: Employee) => {
@@ -3129,9 +3175,9 @@ export default function CBPage() {
                             <div className="text-lg font-black text-slate-800">{calculateTenure(selectedEmp)}</div>
                           </div>
                           <div className="space-y-1">
-                            <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Mức độ hoàn thành</span>
-                            <div className="text-lg font-black text-slate-800">
-                              {selectedEmp.completed_tasks || 12} <span className="text-xs font-semibold text-slate-400">đã xong</span>
+                            <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Loại hợp đồng</span>
+                            <div className="text-sm font-black text-slate-800 pt-0.5 leading-snug">
+                              {getEmployeeContractType(selectedEmp)}
                             </div>
                           </div>
                           <div className="space-y-1">
