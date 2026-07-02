@@ -67,14 +67,22 @@ export async function POST(req: NextRequest) {
                         (currentUser.department?.toLowerCase()?.includes("hành chính") || currentUser.department?.toLowerCase()?.includes("hcns"));
     const hasPiiAccess = isAdmin || isHRManager;
 
+    const hasSalaryAccess = !!(currentUser && (
+      currentUser.isAdmin ||
+      currentUser.role.toLowerCase() === "admin" ||
+      currentUser.name === "Huỳnh Giáp Nhân" ||
+      currentUser.name === "Lê Thị Hoa Đào" ||
+      currentUser.email.toLowerCase().trim() === "lehoadao2706@gmail.com"
+    ));
+
     const lowercaseQuery = query.toLowerCase();
     const isSalaryQuery = SALARY_KEYWORDS.some(kw => lowercaseQuery.includes(kw));
     const isContractQuery = CONTRACT_KEYWORDS.some(kw => lowercaseQuery.includes(kw));
 
-    // 2. CHẶN TUYỆT ĐỐI: Lương & Hợp đồng lao động — từ chối ngay với MỌI tài khoản.
-    if (isSalaryQuery || isContractQuery) {
+    // 2. CHẶN: Lương & Hợp đồng lao động — từ chối với tài khoản không có quyền.
+    if ((isSalaryQuery || isContractQuery) && !hasSalaryAccess) {
       return NextResponse.json({
-        answer: "🔒 **Khu vực bảo mật tuyệt đối.**\n\nTrợ lý AI **không được phép** tìm kiếm, trích xuất hoặc tiết lộ bất kỳ thông tin nào liên quan đến **lương / thu nhập của CBNV** và **hợp đồng lao động**.\n\nĐây là quy định bảo mật áp dụng cho **tất cả tài khoản** (kể cả Admin). Vui lòng truy cập trực tiếp phân hệ **Lương & Phúc lợi (C&B)** với quyền hạn phù hợp nếu bạn cần xử lý nghiệp vụ này.\n\nMình có thể giúp bạn tra cứu các nội dung khác như: nhân sự, công việc, tuyển dụng, chi phí hành chính, hóa đơn, nhà cung cấp, văn thư, công tác, giải trình chấm công..."
+        answer: "🔒 **Khu vực bảo mật tuyệt đối.**\n\nTrợ lý AI **không được phép** tìm kiếm, trích xuất hoặc tiết lộ thông tin liên quan đến **lương / thu nhập của CBNV** và **hợp đồng lao động** đối với tài khoản của bạn.\n\nNếu bạn là Admin hoặc nhân sự được phân quyền đặc biệt, vui lòng đảm bảo bạn đang đăng nhập đúng tài khoản để tra cứu."
       });
     }
 
@@ -97,6 +105,7 @@ export async function POST(req: NextRequest) {
       clerical: /văn thư|van thu|công văn|cong van|văn bản|van ban|tờ trình|to trinh|quyết định|quyet dinh|công văn đến|công văn đi|trích yếu|trich yeu|hđqt|clerical|số văn bản/.test(q),
       trips: /công tác|cong tac|business trip|đi công tác|chuyến đi|chuyen di|đi tỉnh|di tinh|nơi đến/.test(q),
       justifications: /giải trình|giai trinh|chấm công|cham cong|quên chấm|quen cham|đi muộn|di muon|về sớm|ve som|justification|nghỉ phép|nghi phep|đơn nghỉ/.test(q),
+      contracts: hasSalaryAccess && /hợp đồng|hop dong|hđlđ|hdld|lương|luong|thu nhập|thu nhap|thuong|thưởng|phụ cấp|phu cap|bảng lương|bang luong|hạn hợp đồng|hợp đồng lao động/.test(q),
     };
 
     // Nếu không khớp nhóm nào → mặc định tra cứu Nhân viên + Công việc (phổ biến nhất).
@@ -201,6 +210,7 @@ export async function POST(req: NextRequest) {
       want.suppliers ? withFilter(dbClient.from("suppliers").select("name, service, bank, project_name"), ["name", "service", "project_name"], 150, useFilter) : Promise.resolve({ data: null }),
       want.clerical ? withFilter(dbClient.from("clerical_documents").select("type, doc_number, doc_date, receive_send_date, summary, sender_receiver, signer_recipient"), ["doc_number", "summary", "sender_receiver", "signer_recipient"], 150, useFilter) : Promise.resolve({ data: null }),
       want.trips ? withFilter(dbClient.from("business_trips").select("name, dest, from_date, to_date, purpose, status"), ["name", "dest", "purpose", "status"], 120, useFilter) : Promise.resolve({ data: null }),
+      want.contracts ? withFilter(dbClient.from("contracts").select("employee_code, employee_name, contract_number, type, sign_date, expiration_date, base_salary_insurance, performance_bonus, allowances, total_income, status"), ["employee_code", "employee_name", "contract_number", "type", "status"], 150, useFilter) : Promise.resolve({ data: null }),
     ]);
 
     // Lọc trước; nếu KHÔNG ra dòng nào → tự lùi về chế độ liệt kê (fallback) cho AI tự tìm.
@@ -214,7 +224,7 @@ export async function POST(req: NextRequest) {
 
     const [
       rEmployees, rTasks, rJustifications, rCandidates,
-      rAdmin, rInvoices, rSuppliers, rClerical, rTrips
+      rAdmin, rInvoices, rSuppliers, rClerical, rTrips, rContracts
     ] = results;
 
     const dbEmployees = rEmployees.data as any[] | null;
@@ -226,6 +236,7 @@ export async function POST(req: NextRequest) {
     const dbSuppliers = rSuppliers.data as any[] | null;
     const dbClerical = rClerical.data as any[] | null;
     const dbTrips = rTrips.data as any[] | null;
+    const dbContracts = rContracts ? (rContracts.data as any[] | null) : null;
 
     // 4. Định dạng Ngữ cảnh — NÉN dạng CSV để tiết kiệm token (nhãn cột chỉ ghi 1 lần).
     let context = "";
@@ -360,6 +371,35 @@ export async function POST(req: NextRequest) {
       context += toCsv("DANH SÁCH GIẢI TRÌNH CHẤM CÔNG", headers, rows);
     }
 
+    // ── HỢP ĐỒNG LAO ĐỘNG & THÔNG TIN LƯƠNG (Chỉ dành cho tài khoản được phân quyền) ──
+    if (hasSalaryAccess && dbContracts && dbContracts.length > 0) {
+      const headers = ["Mã NV", "Tên NV", "Số HĐ", "Loại HĐ", "Ngày ký", "Ngày hết hạn", "Lương BH", "Thưởng HS", "Phụ cấp", "Tổng thu nhập", "Trạng thái"];
+      const rows = dbContracts.map(c => [
+        c.employee_code, c.employee_name, c.contract_number, c.type,
+        c.sign_date ? String(c.sign_date).slice(0, 10) : "",
+        c.expiration_date ? String(c.expiration_date).slice(0, 10) : "",
+        c.base_salary_insurance || 0, c.performance_bonus || 0, c.allowances || 0, c.total_income || 0, c.status
+      ]);
+      context += toCsv("DANH SÁCH HỢP ĐỒNG LAO ĐỘNG & THÔNG TIN LƯƠNG", headers, rows);
+    }
+
+    // ── TRUY VẤN TÀI LIỆU TỪ PYTHON AI SERVER (Semantic Search) ──
+    try {
+      const searchRes = await fetch(`http://127.0.0.1:8500/search?query=${encodeURIComponent(query)}&limit=5`);
+      if (searchRes.ok) {
+        const chunks = await searchRes.json();
+        if (chunks && chunks.length > 0) {
+          let docContext = "\n### TRÍCH LỤC TÀI LIỆU & FILE TRONG HỆ THỐNG (Tìm kiếm theo ngữ nghĩa):\n";
+          chunks.forEach((c: any) => {
+            docContext += `- File: "${c.file_name}" (Độ trùng khớp: ${Math.round(c.similarity * 100)}%)\n  Nội dung: ${c.content}\n\n`;
+          });
+          context += docContext;
+        }
+      }
+    } catch (e) {
+      console.warn("Python AI Server not running or failed to respond, skipping semantic search.");
+    }
+
     if (!context) {
       context = usedFilter
         ? `(Không tìm thấy bản ghi nào khớp với từ khóa: "${terms.join(", ")}". Hãy thông báo cho người dùng và gợi ý họ kiểm tra lại chính tả hoặc dùng từ khóa khác.)`
@@ -383,7 +423,10 @@ Nhiệm vụ của bạn là trả lời các câu hỏi tìm kiếm của nhân
 QUY TẮC BẢO MẬT & VẬN HÀNH QUAN TRỌNG:
 1. **Chỉ dùng dữ liệu trong Ngữ cảnh**: Tuyệt đối KHÔNG sử dụng thông tin bên ngoài hệ thống. Nếu dữ liệu không có sẵn, hãy lịch sự trả lời: "Hệ thống không tìm thấy thông tin này trong cơ sở dữ liệu nội bộ."
 2. **Không bịa đặt thông tin**: Luôn trả lời trung thực dựa trên các trường thông tin hiển thị trong ngữ cảnh.
-3. **CẤM TUYỆT ĐỐI – Lương & Hợp đồng lao động**: Bạn KHÔNG bao giờ được tiết lộ, suy luận, ước tính hay đề cập tới mức lương, thu nhập, thưởng, phụ cấp, bảo hiểm của bất kỳ CBNV nào, cũng như nội dung/điều khoản/thời hạn hợp đồng lao động. Dữ liệu này đã được loại bỏ khỏi Ngữ cảnh. Nếu được hỏi, từ chối lịch sự và hướng người dùng sang phân hệ C&B.
+3. **BẢO MẬT & PHÂN QUYỀN – Lương & Hợp đồng lao động**:
+   - Chỉ tài khoản có quyền truy cập lương ('hasSalaryAccess === true') mới được phép xem, trích xuất hoặc đề cập tới mức lương, thu nhập, thưởng, phụ cấp, bảo hiểm của CBNV, cũng như các nội dung/thời hạn của hợp đồng lao động. Dữ liệu này đã được nạp tự động vào Ngữ cảnh nếu tài khoản này có quyền.
+   - Tài khoản đang đăng nhập hiện tại: "${currentUser.name}" (Quyền xem Lương & HĐLĐ: ${hasSalaryAccess ? "ĐÃ CẤP QUYỀN" : "TỪ CHỐI"}).
+   - Nếu quyền là TỪ CHỐI, tuyệt đối không tiết lộ. Nếu quyền là ĐÃ CẤP QUYỀN, hãy phản hồi đầy đủ và chính xác dựa trên khối dữ liệu HĐLĐ & Lương được cấp trong Ngữ cảnh.
 4. **Phân quyền dữ liệu nhạy cảm (PII)**:
    - Tài khoản đang hỏi: "${currentUser.name}" (Chức vụ: ${currentUser.role || "Chưa rõ"}, Phòng ban: ${currentUser.department || "Chưa rõ"}).
    - Quyền xem PII (CCCD, địa chỉ, ghi chú cá nhân): ${hasPiiAccess ? "ĐÃ CẤP (Admin/Trưởng phòng HCNS)" : "TỪ CHỐI (Nhân viên thông thường)"}.
