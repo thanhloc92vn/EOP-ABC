@@ -4,7 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 from typing import List, Optional
-from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form, Header
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -83,20 +83,25 @@ def chunk_text(text: str, chunk_size: int = 600, overlap: int = 150) -> List[str
         chunks.append(" ".join(current_chunk))
     return chunks
 
-def get_embedding(text: str) -> List[float]:
-    global openai_client
-    if not openai_client:
-        # Try to reload key in case it was updated in Settings
-        load_dotenv(dotenv_path=env_path, override=True)
-        key = os.getenv("OPENAI_API_KEY") or os.getenv("NEXT_PUBLIC_OPENAI_API_KEY")
-        if key:
-            openai_client = OpenAI(api_key=key)
+def get_embedding(text: str, api_key: Optional[str] = None) -> List[float]:
+    client = None
+    if api_key:
+        client = OpenAI(api_key=api_key)
+    else:
+        global openai_client
+        if not openai_client:
+            # Try to reload key in case it was updated in Settings
+            load_dotenv(dotenv_path=env_path, override=True)
+            key = os.getenv("OPENAI_API_KEY") or os.getenv("NEXT_PUBLIC_OPENAI_API_KEY")
+            if key:
+                openai_client = OpenAI(api_key=key)
+        client = openai_client
             
-    if not openai_client:
-        raise HTTPException(status_code=500, detail="OpenAI API Key not configured in system settings!")
+    if not client:
+        raise HTTPException(status_code=400, detail="OpenAI API Key not configured in system settings!")
         
     try:
-        response = openai_client.embeddings.create(
+        response = client.embeddings.create(
             input=text.replace("\n", " "),
             model="text-embedding-3-small"
         )
@@ -119,17 +124,21 @@ def health_check():
     }
 
 @app.post("/index_document")
-def index_document(doc: DocumentInput):
+def index_document(doc: DocumentInput, authorization: Optional[str] = Header(None)):
     chunks = chunk_text(doc.content)
     if not chunks:
         return {"message": "Empty document, nothing indexed."}
+        
+    api_key = None
+    if authorization and authorization.startswith("Bearer "):
+        api_key = authorization[7:].strip()
         
     with get_db() as conn:
         # Delete old chunks for this file path
         conn.execute("DELETE FROM document_chunks WHERE file_path = ?", (doc.file_path,))
         
         for idx, chunk in enumerate(chunks):
-            embedding = get_embedding(chunk)
+            embedding = get_embedding(chunk, api_key=api_key)
             chunk_id = f"{doc.file_path}_{idx}"
             conn.execute(
                 "INSERT INTO document_chunks (id, file_path, file_name, chunk_index, content, embedding) VALUES (?, ?, ?, ?, ?, ?)",
@@ -140,8 +149,16 @@ def index_document(doc: DocumentInput):
     return {"message": f"Successfully indexed '{doc.file_name}' into {len(chunks)} chunks."}
 
 @app.get("/search")
-def search_documents(query: str = Query(..., min_length=2), limit: int = 5):
-    query_vector = get_embedding(query)
+def search_documents(
+    query: str = Query(..., min_length=2), 
+    limit: int = 5,
+    authorization: Optional[str] = Header(None)
+):
+    api_key = None
+    if authorization and authorization.startswith("Bearer "):
+        api_key = authorization[7:].strip()
+        
+    query_vector = get_embedding(query, api_key=api_key)
     
     with get_db() as conn:
         cursor = conn.execute("SELECT file_path, file_name, content, embedding FROM document_chunks")

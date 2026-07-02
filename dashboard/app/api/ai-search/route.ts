@@ -106,6 +106,7 @@ export async function POST(req: NextRequest) {
       trips: /công tác|cong tac|business trip|đi công tác|chuyến đi|chuyen di|đi tỉnh|di tinh|nơi đến/.test(q),
       justifications: /giải trình|giai trinh|chấm công|cham cong|quên chấm|quen cham|đi muộn|di muon|về sớm|ve som|justification|nghỉ phép|nghi phep|đơn nghỉ/.test(q),
       contracts: hasSalaryAccess && /hợp đồng|hop dong|hđlđ|hdld|lương|luong|thu nhập|thu nhap|thuong|thưởng|phụ cấp|phu cap|bảng lương|bang luong|hạn hợp đồng|hợp đồng lao động/.test(q),
+      suggestions: /góp ý|gop y|kiến nghị|kien nghi|ý kiến|y kien|đóng góp|dong gop|phản hồi|phan hoi/.test(q),
     };
 
     // Nếu không khớp nhóm nào → mặc định tra cứu Nhân viên + Công việc (phổ biến nhất).
@@ -211,6 +212,7 @@ export async function POST(req: NextRequest) {
       want.clerical ? withFilter(dbClient.from("clerical_documents").select("type, doc_number, doc_date, receive_send_date, summary, sender_receiver, signer_recipient"), ["doc_number", "summary", "sender_receiver", "signer_recipient"], 150, useFilter) : Promise.resolve({ data: null }),
       want.trips ? withFilter(dbClient.from("business_trips").select("name, dest, from_date, to_date, purpose, status"), ["name", "dest", "purpose", "status"], 120, useFilter) : Promise.resolve({ data: null }),
       want.contracts ? withFilter(dbClient.from("contracts").select("employee_code, employee_name, contract_number, type, sign_date, expiration_date, base_salary_insurance, performance_bonus, allowances, total_income, status"), ["employee_code", "employee_name", "contract_number", "type", "status"], 150, useFilter) : Promise.resolve({ data: null }),
+      want.suggestions ? withFilter(dbClient.from("suggestions").select("title, content, department, sender_name, status, response"), ["title", "content", "department", "sender_name", "status"], 120, useFilter) : Promise.resolve({ data: null }),
     ]);
 
     // Lọc trước; nếu KHÔNG ra dòng nào → tự lùi về chế độ liệt kê (fallback) cho AI tự tìm.
@@ -224,7 +226,7 @@ export async function POST(req: NextRequest) {
 
     const [
       rEmployees, rTasks, rJustifications, rCandidates,
-      rAdmin, rInvoices, rSuppliers, rClerical, rTrips, rContracts
+      rAdmin, rInvoices, rSuppliers, rClerical, rTrips, rContracts, rSuggestions
     ] = results;
 
     const dbEmployees = rEmployees.data as any[] | null;
@@ -237,6 +239,7 @@ export async function POST(req: NextRequest) {
     const dbClerical = rClerical.data as any[] | null;
     const dbTrips = rTrips.data as any[] | null;
     const dbContracts = rContracts ? (rContracts.data as any[] | null) : null;
+    const dbSuggestions = rSuggestions ? (rSuggestions.data as any[] | null) : null;
 
     // 4. Định dạng Ngữ cảnh — NÉN dạng CSV để tiết kiệm token (nhãn cột chỉ ghi 1 lần).
     let context = "";
@@ -383,9 +386,21 @@ export async function POST(req: NextRequest) {
       context += toCsv("DANH SÁCH HỢP ĐỒNG LAO ĐỘNG & THÔNG TIN LƯƠNG", headers, rows);
     }
 
+    // ── GÓP Ý & KIẾN NGHỊ ──
+    if (dbSuggestions && dbSuggestions.length > 0) {
+      context += `### THỐNG KÊ NHANH GÓP Ý & KIẾN NGHỊ (đã tính sẵn)\nTổng số: ${dbSuggestions.length}. Theo trạng thái: ${countBy(dbSuggestions, "status")}\n\n`;
+      const headers = ["Tiêu đề", "Nội dung góp ý", "Phòng ban", "Người gửi", "Trạng thái", "Phản hồi"];
+      const rows = dbSuggestions.map(s => [s.title, clip(s.content, 120), s.department, s.sender_name, s.status, clip(s.response, 100)]);
+      context += toCsv("DANH SÁCH GÓP Ý & KIẾN NGHỊ", headers, rows);
+    }
+
     // ── TRUY VẤN TÀI LIỆU TỪ PYTHON AI SERVER (Semantic Search) ──
     try {
-      const searchRes = await fetch(`http://127.0.0.1:8500/search?query=${encodeURIComponent(query)}&limit=5`);
+      const searchRes = await fetch(`http://127.0.0.1:8500/search?query=${encodeURIComponent(query)}&limit=5`, {
+        headers: {
+          "Authorization": `Bearer ${apiKey}`
+        }
+      });
       if (searchRes.ok) {
         const chunks = await searchRes.json();
         if (chunks && chunks.length > 0) {
