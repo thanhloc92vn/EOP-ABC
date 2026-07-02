@@ -527,23 +527,7 @@ export default function EmployeeManagementPage() {
   const handleDelete = async (id: string, name: string) => {
     if (!currentUser) return;
 
-    const isUserAdmin = currentUser.isAdmin || 
-                        currentUser.role.toLowerCase() === "admin" ||
-                        currentUser.name === "Lại Nguyễn Lan Phương" ||
-                        currentUser.name === "Dương Nhật Hoành Anh" ||
-                        currentUser.name === "Lê Thị Hoa Đào" ||
-                        currentUser.email.toLowerCase().trim() === "lehoadao2706@gmail.com" ||
-                        currentUser.role === "CV Nhân sự" ||
-                        currentUser.role === "Tổ trưởng Nhân sự" ||
-                        (currentUser.role.toLowerCase().includes("nhân sự") && 
-                         (currentUser.department.toLowerCase().includes("hành chính") || currentUser.department.toLowerCase().includes("hcns"))) ||
-                        (currentUser.role.toLowerCase().includes("tổ trưởng") && 
-                         (currentUser.department.toLowerCase().includes("hành chính") || currentUser.department.toLowerCase().includes("hcns")));
-    const isUserManager = currentUser.role.toLowerCase().includes("trưởng phòng") || 
-                          currentUser.role.toLowerCase().includes("truong phong");
-
-    // Regular employee & deputy are not allowed to delete
-    if (!isUserAdmin && !isUserManager) {
+    if (!canDelete) {
       alert("Bạn không có quyền thực hiện hành động xóa!");
       return;
     }
@@ -555,8 +539,15 @@ export default function EmployeeManagementPage() {
     const isTargetAdmin = targetEmp.position.toLowerCase() === "admin" ||
                           targetEmp.email.toLowerCase() === "tnechcm@gmail.com";
 
+    const isUserAdmin = currentUser.isAdmin || 
+                        currentUser.role.toLowerCase() === "admin" ||
+                        currentUser.name === "Lại Nguyễn Lan Phương" ||
+                        currentUser.name === "Dương Nhật Hoành Anh" ||
+                        currentUser.name === "Lê Thị Hoa Đào" ||
+                        currentUser.email.toLowerCase().trim() === "lehoadao2706@gmail.com";
+
     // Trưởng phòng cannot delete Admin
-    if (isUserManager && !isUserAdmin && isTargetAdmin) {
+    if (!isUserAdmin && isTargetAdmin) {
       alert("Trưởng phòng không thể xóa tài khoản của Admin!");
       return;
     }
@@ -580,18 +571,7 @@ export default function EmployeeManagementPage() {
   const handleDeleteAll = async () => {
     if (!currentUser) return;
 
-    const isUserAdmin = currentUser.isAdmin || 
-                        currentUser.role.toLowerCase() === "admin" ||
-                        currentUser.name === "Lại Nguyễn Lan Phương" ||
-                        currentUser.name === "Dương Nhật Hoành Anh" ||
-                        currentUser.role === "CV Nhân sự" ||
-                        currentUser.role === "Tổ trưởng Nhân sự" ||
-                        (currentUser.role.toLowerCase().includes("nhân sự") && 
-                         (currentUser.department.toLowerCase().includes("hành chính") || currentUser.department.toLowerCase().includes("hcns"))) ||
-                        (currentUser.role.toLowerCase().includes("tổ trưởng") && 
-                         (currentUser.department.toLowerCase().includes("hành chính") || currentUser.department.toLowerCase().includes("hcns")));
-
-    if (!isUserAdmin) {
+    if (!canDelete) {
       alert("Bạn không có quyền thực hiện hành động xóa tất cả!");
       return;
     }
@@ -697,9 +677,13 @@ export default function EmployeeManagementPage() {
      (currentUser.department.toLowerCase().includes("hành chính") || currentUser.department.toLowerCase().includes("hcns")))
   ));
 
-  const canDeleteAll = !!(currentUser && (
-    currentUser.isAdmin ||
+  const canDelete = !!(currentUser && (
+    currentUser.isAdmin || 
     currentUser.role.toLowerCase() === "admin" ||
+    currentUser.name === "Lại Nguyễn Lan Phương" ||
+    currentUser.name === "Dương Nhật Hoành Anh" ||
+    currentUser.name === "Lê Thị Hoa Đào" ||
+    currentUser.email.toLowerCase().trim() === "lehoadao2706@gmail.com" ||
     (
       (currentUser.role.toLowerCase().includes("trưởng phòng") || currentUser.role.toLowerCase().includes("truong phong")) &&
       (
@@ -710,6 +694,8 @@ export default function EmployeeManagementPage() {
       )
     )
   ));
+
+  const canDeleteAll = canDelete;
 
   return (
     <div 
@@ -1043,7 +1029,7 @@ export default function EmployeeManagementPage() {
                         {/* Thao tác */}
                         <td className="px-4 py-3 text-center">
                           <div className="flex items-center justify-center gap-2">
-                            {canEdit && (
+                            {canDelete && (
                               <button onClick={() => handleDelete(emp.id, emp.name)} className="p-1.5 hover:bg-rose-100 rounded-lg text-rose-500 transition-colors" title="Xóa nhân sự">
                                 <Trash2 size={13} />
                               </button>

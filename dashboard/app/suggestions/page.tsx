@@ -82,12 +82,21 @@ export default function AdminSuggestions() {
     currentUser.email.toLowerCase().trim() === "lehoadao2706@gmail.com" ||
     currentUser.name === "Lại Nguyễn Lan Phương" ||
     currentUser.name === "Dương Nhật Hoành Anh" ||
-    currentUser.role === "CV Nhân sự" ||
     currentUser.role === "Tổ trưởng Nhân sự" ||
-    (currentUser.role.toLowerCase().includes("trưởng phòng") && 
-     (currentUser.department.toLowerCase().includes("hành chính") || currentUser.department.toLowerCase().includes("hcns"))) ||
-    (currentUser.role.toLowerCase().includes("tổ trưởng") && 
-     (currentUser.department.toLowerCase().includes("hành chính") || currentUser.department.toLowerCase().includes("hcns")))
+    (
+      (
+        currentUser.role.toLowerCase().includes("trưởng phòng") || 
+        currentUser.role.toLowerCase().includes("truong phong") ||
+        currentUser.role.toLowerCase().includes("tổ trưởng") ||
+        currentUser.role.toLowerCase().includes("to truong")
+      ) &&
+      (
+        currentUser.department.toLowerCase().includes("hành chính") ||
+        currentUser.department.toLowerCase().includes("hcns") ||
+        currentUser.role.toLowerCase().includes("nhân sự") ||
+        currentUser.role.toLowerCase().includes("nhan su")
+      )
+    )
   ));
 
   const fetchSuggestions = async () => {
@@ -170,6 +179,11 @@ export default function AdminSuggestions() {
     e.preventDefault();
     if (!selectedId) return;
 
+    if (!canManage) {
+      alert("Bạn không có quyền thực hiện hành động này!");
+      return;
+    }
+
     setSaving(true);
     setErrorMsg(null);
 
@@ -205,6 +219,11 @@ export default function AdminSuggestions() {
     const targetId = id || selectedId;
     if (!targetId) return;
     
+    if (!canManage) {
+      alert("Bạn không có quyền thực hiện hành động xóa!");
+      return;
+    }
+
     const confirmDelete = window.confirm(
       "Bạn có chắc chắn muốn xóa ý kiến đóng góp này không? Hành động này không thể khôi phục lại."
     );
@@ -286,10 +305,10 @@ export default function AdminSuggestions() {
           subtitle="Quản lý các đóng góp ý kiến xây dựng công ty từ khối văn phòng và các Ban điều hành" 
         />
 
-        <main className="flex-1 p-8 space-y-6 overflow-y-auto grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <main className={`flex-1 p-8 space-y-6 overflow-y-auto grid grid-cols-1 gap-6 ${canManage ? "xl:grid-cols-3" : "xl:grid-cols-1"}`}>
           
           {/* Main list & Search Panel */}
-          <div className="xl:col-span-2 space-y-4">
+          <div className={`${canManage ? "xl:col-span-2" : "xl:col-span-1"} space-y-4`}>
             
             {/* Filter Bar */}
             <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-4 border border-slate-200/60 rounded-2xl shadow-sm">
@@ -370,12 +389,12 @@ export default function AdminSuggestions() {
                   return (
                     <div
                       key={item.id}
-                      onClick={() => handleSelectSuggestion(item)}
-                      className={`p-5 rounded-3xl border transition-all cursor-pointer text-left relative flex flex-col gap-3.5 ${
-                        isSelected
+                      onClick={() => canManage && handleSelectSuggestion(item)}
+                      className={`p-5 rounded-3xl border transition-all text-left relative flex flex-col gap-3.5 ${
+                        canManage && isSelected
                           ? "bg-white border-blue-500/80 shadow-md shadow-blue-500/5 ring-1 ring-blue-500/50"
-                          : "bg-white border-slate-200/60 hover:border-slate-350 shadow-sm"
-                      }`}
+                          : "bg-white border-slate-200/60 shadow-sm"
+                      } ${canManage ? "cursor-pointer hover:border-slate-350" : ""}`}
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="space-y-1">
@@ -450,7 +469,8 @@ export default function AdminSuggestions() {
           </div>
 
           {/* Details Panel & QR Generator */}
-          <div className="space-y-6">
+          {canManage && (
+            <div className="space-y-6">
             
             {/* Suggestion Details Form */}
             {selectedSuggestion ? (
@@ -640,7 +660,8 @@ export default function AdminSuggestions() {
                 </div>
               </div>
             )}
-          </div>
+            </div>
+          )}
 
         </main>
       </div>
