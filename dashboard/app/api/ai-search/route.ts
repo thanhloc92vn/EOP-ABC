@@ -27,14 +27,10 @@ const CONTRACT_KEYWORDS = [
 
 export async function POST(req: NextRequest) {
   try {
-    const { query, history, currentUser } = await req.json();
+    const { query, history, currentUser, debug } = await req.json();
 
     if (!query) {
       return NextResponse.json({ error: "Câu hỏi tìm kiếm là bắt buộc" }, { status: 400 });
-    }
-
-    if (!currentUser) {
-      return NextResponse.json({ error: "Không tìm thấy thông tin tài khoản người dùng" }, { status: 401 });
     }
 
     const authHeader = req.headers.get("Authorization");
@@ -61,19 +57,49 @@ export async function POST(req: NextRequest) {
         })
       : supabase;
 
+    // 0. XÁC MINH DANH TÍNH TỪ TOKEN — không tin `currentUser` do client gửi lên
+    //    (client có thể giả mạo isAdmin/name để chiếm quyền xem Lương & PII).
+    //    Không có token hợp lệ → từ chối rõ ràng, tránh tình trạng RLS âm thầm
+    //    chặn hết dữ liệu rồi AI trả lời "không tìm thấy" gây hiểu lầm.
+    if (!supabaseToken) {
+      return NextResponse.json({
+        error: "Phiên đăng nhập không hợp lệ hoặc đã hết hạn. Vui lòng tải lại trang và đăng nhập lại để dùng Tìm kiếm AI."
+      }, { status: 401 });
+    }
+    const { data: authData, error: authError } = await dbClient.auth.getUser(supabaseToken);
+    const verifiedEmail = authData?.user?.email?.toLowerCase()?.trim() || "";
+    if (authError || !verifiedEmail) {
+      return NextResponse.json({
+        error: "Phiên đăng nhập không hợp lệ hoặc đã hết hạn. Vui lòng tải lại trang và đăng nhập lại để dùng Tìm kiếm AI."
+      }, { status: 401 });
+    }
+
+    // Tra cứu vai trò/phòng ban THẬT từ DB theo email đã xác minh.
+    const [{ data: allowedData }, { data: empData }] = await Promise.all([
+      dbClient.from("allowed_users").select("role").ilike("email", verifiedEmail).maybeSingle(),
+      dbClient.from("employees").select("name, role, department").ilike("email", `%${verifiedEmail}%`).maybeSingle()
+    ]);
+
+    const isAdmin = allowedData?.role === "Admin";
+    // Tên/chức danh xác minh từ DB — dùng cho phân quyền. Tên client gửi chỉ dùng hiển thị.
+    const verifiedName = empData?.name || null;
+    const verifiedRole = empData?.role || (isAdmin ? "Admin" : "Nhân viên");
+    const verifiedDept = empData?.department || "";
+    const displayName = verifiedName || currentUser?.name || verifiedEmail;
+
     // 1. Phân quyền truy cập thông tin nhạy cảm (PII: CCCD, địa chỉ...) — KHÔNG liên quan tới lương.
-    const isAdmin = currentUser.isAdmin || currentUser.role?.toLowerCase() === "admin";
-    const isHRManager = (currentUser.role?.toLowerCase()?.includes("trưởng phòng") || currentUser.role?.toLowerCase()?.includes("truong phong")) &&
-                        (currentUser.department?.toLowerCase()?.includes("hành chính") || currentUser.department?.toLowerCase()?.includes("hcns"));
+    const roleLc = verifiedRole.toLowerCase();
+    const deptLc = verifiedDept.toLowerCase();
+    const isHRManager = (roleLc.includes("trưởng phòng") || roleLc.includes("truong phong")) &&
+                        (deptLc.includes("hành chính") || deptLc.includes("hcns"));
     const hasPiiAccess = isAdmin || isHRManager;
 
-    const hasSalaryAccess = !!(currentUser && (
-      currentUser.isAdmin ||
-      currentUser.role.toLowerCase() === "admin" ||
-      currentUser.name === "Huỳnh Giáp Nhân" ||
-      currentUser.name === "Lê Thị Hoa Đào" ||
-      currentUser.email.toLowerCase().trim() === "lehoadao2706@gmail.com"
-    ));
+    const hasSalaryAccess = !!(
+      isAdmin ||
+      verifiedName === "Huỳnh Giáp Nhân" ||
+      verifiedName === "Lê Thị Hoa Đào" ||
+      verifiedEmail === "lehoadao2706@gmail.com"
+    );
 
     const lowercaseQuery = query.toLowerCase();
     const isSalaryQuery = SALARY_KEYWORDS.some(kw => lowercaseQuery.includes(kw));
@@ -95,19 +121,25 @@ export async function POST(req: NextRequest) {
     // vào mỗi request. Phân tích câu hỏi để chỉ nạp đúng nhóm dữ liệu liên quan.
     // ─────────────────────────────────────────────────────────────────────────
     const q = lowercaseQuery;
-    const want = {
-      employees: /nhân sự|nhan su|nhân viên|nhan vien|phòng ban|phong ban|cccd|địa chỉ|dia chi|email|sđt|số điện thoại|so dien thoai|đội ngũ|doi ngu|ai là|nhân lực|nhan luc|cán bộ|can bo|cbnv|danh sách nv|học vấn|bằng cấp|ngày sinh|sinh nhật|giới tính|trưởng phòng|nhân số|biên chế|thử việc|thu viec|chính thức|chinh thuc/.test(q),
-      candidates: /ứng viên|ung vien|tuyển dụng|tuyen dung|phỏng vấn|phong van|cv|hồ sơ|ho so|recruit|candidate|ứng tuyển|nguồn tuyển|điểm ai|cần tuyển/.test(q),
-      tasks: /công việc|cong viec|task|giao việc|giao viec|tiến độ|tien do|deadline|hạn chót|han chot|đang làm|kanban|tồn đọng|hoàn thành|cần làm|nhiệm vụ|nhiem vu|báo cáo công việc|kế hoạch/.test(q),
-      admin: /chi phí|chi phi|ngân sách|ngan sach|văn phòng phẩm|van phong pham|cost|expense|cpql|chi tiêu|chi tieu|tốn|định mức|vpp|khối văn phòng|khoi van phong|hành chính tổng hợp/.test(q),
-      invoices: /hóa đơn|hoa don|invoice|thanh toán|thanh toan|số tiền|so tien|chi trả|chi tra|payment|thụ hưởng|thu huong|beneficiary|chuyển khoản|chuyen khoan/.test(q),
-      suppliers: /nhà cung cấp|nha cung cap|supplier|nhà thầu|nha thau|đối tác|doi tac|vendor|dịch vụ thuê|dich vu thue/.test(q),
-      clerical: /văn thư|van thu|công văn|cong van|văn bản|van ban|tờ trình|to trinh|quyết định|quyet dinh|công văn đến|công văn đi|trích yếu|trich yeu|hđqt|clerical|số văn bản/.test(q),
-      trips: /công tác|cong tac|business trip|đi công tác|chuyến đi|chuyen di|đi tỉnh|di tinh|nơi đến/.test(q),
-      justifications: /giải trình|giai trinh|chấm công|cham cong|quên chấm|quen cham|đi muộn|di muon|về sớm|ve som|justification|nghỉ phép|nghi phep|đơn nghỉ/.test(q),
-      contracts: hasSalaryAccess && /hợp đồng|hop dong|hđlđ|hdld|lương|luong|thu nhập|thu nhap|thuong|thưởng|phụ cấp|phu cap|bảng lương|bang luong|hạn hợp đồng|hợp đồng lao động|thử việc|thu viec|chính thức|chinh thuc/.test(q),
-      suggestions: /góp ý|gop y|kiến nghị|kien nghi|ý kiến|y kien|đóng góp|dong gop|phản hồi|phan hoi/.test(q),
+    // Nguồn regex từng nhóm — dùng chung cho 2 việc: (1) định tuyến chọn bảng,
+    // (2) loại "từ kích hoạt" khỏi bộ từ khóa lọc dòng (chữ "công văn" dùng để
+    // CHỌN BẢNG chứ không phải giá trị cần tìm ilike trong dữ liệu).
+    const ROUTE_PATTERNS: Record<string, string> = {
+      employees: "nhân sự|nhan su|nhân viên|nhan vien|phòng ban|phong ban|cccd|địa chỉ|dia chi|email|sđt|số điện thoại|so dien thoai|đội ngũ|doi ngu|ai là|nhân lực|nhan luc|cán bộ|can bo|cbnv|danh sách nv|học vấn|bằng cấp|ngày sinh|sinh nhật|giới tính|trưởng phòng|nhân số|biên chế|thử việc|thu viec|chính thức|chinh thuc",
+      candidates: "ứng viên|ung vien|tuyển dụng|tuyen dung|phỏng vấn|phong van|cv|hồ sơ|ho so|recruit|candidate|ứng tuyển|nguồn tuyển|điểm ai|cần tuyển",
+      tasks: "công việc|cong viec|task|giao việc|giao viec|tiến độ|tien do|deadline|hạn chót|han chot|đang làm|kanban|tồn đọng|hoàn thành|cần làm|nhiệm vụ|nhiem vu|báo cáo công việc|kế hoạch",
+      admin: "chi phí|chi phi|ngân sách|ngan sach|văn phòng phẩm|van phong pham|cost|expense|cpql|chi tiêu|chi tieu|tốn|định mức|vpp|khối văn phòng|khoi van phong|hành chính tổng hợp",
+      invoices: "hóa đơn|hoa don|invoice|thanh toán|thanh toan|số tiền|so tien|chi trả|chi tra|payment|thụ hưởng|thu huong|beneficiary|chuyển khoản|chuyen khoan",
+      suppliers: "nhà cung cấp|nha cung cap|supplier|nhà thầu|nha thau|đối tác|doi tac|vendor|dịch vụ thuê|dich vu thue",
+      clerical: "văn thư|van thu|công văn đến|công văn đi|công văn|cong van|văn bản|van ban|tờ trình|to trinh|quyết định|quyet dinh|trích yếu|trich yeu|hđqt|clerical|số văn bản",
+      trips: "đi công tác|công tác|cong tac|business trip|chuyến đi|chuyen di|đi tỉnh|di tinh|nơi đến",
+      justifications: "giải trình|giai trinh|chấm công|cham cong|quên chấm|quen cham|đi muộn|di muon|về sớm|ve som|justification|nghỉ phép|nghi phep|đơn nghỉ",
+      contracts: "hợp đồng lao động|hạn hợp đồng|hợp đồng|hop dong|hđlđ|hdld|bảng lương|bang luong|lương|luong|thu nhập|thu nhap|thuong|thưởng|phụ cấp|phu cap|thử việc|thu viec|chính thức|chinh thuc",
+      suggestions: "góp ý|gop y|kiến nghị|kien nghi|ý kiến|y kien|đóng góp|dong gop|phản hồi|phan hoi",
     };
+    const want: Record<string, boolean> = {};
+    for (const [k, src] of Object.entries(ROUTE_PATTERNS)) want[k] = new RegExp(src).test(q);
+    want.contracts = hasSalaryAccess && want.contracts;
 
     // Nếu không khớp nhóm nào → mặc định tra cứu Nhân viên + Công việc (phổ biến nhất).
     const anySelected = Object.values(want).some(Boolean);
@@ -138,9 +170,42 @@ export async function POST(req: NextRequest) {
       "đó", "do", "đang", "dang", "sắp", "sap", "thì", "thi", "mà", "ma", "như", "nhu",
       "theo", "tất", "tat", "cả", "ca", "cần", "can", "đi", "ra", "vào", "vao",
       "thế", "the", "sao", "gì", "gi", "thuộc", "thuoc", "phòng", "phong", "ban", "ở", "o",
-      "cập", "nhật", "trạng", "thái", "thai", "hiện", "hien", "tại", "tai", "list"
+      "cập", "nhật", "trạng", "thái", "thai", "hiện", "hien", "tại", "tai", "list",
+      // Từ chỉ thời gian chung & tính từ so sánh — đã xử lý bằng bộ lọc tháng/sắp xếp,
+      // không dùng làm từ khóa ilike (sẽ khớp nhiễu hoặc không khớp gì).
+      "tháng", "thang", "tuần", "tuan", "quý", "quy", "hôm", "hom", "ngày", "ngay",
+      "mới", "moi", "nhất", "nhat", "đã", "da", "gần", "gan", "đây", "day", "nữa", "nua"
     ]);
-    const terms = query
+    // ── PHÁT HIỆN THÁNG/NĂM trong câu hỏi (dùng chung cho mọi bảng có cột ngày) ──
+    const now = new Date();
+    let filterMonth: number | null = null;
+    const mNum = q.match(/th[áa]ng\s*0?(\d{1,2})/);
+    if (mNum) {
+      const n = parseInt(mNum[1], 10);
+      if (n >= 1 && n <= 12) filterMonth = n;
+    } else if (/th[áa]ng\s*(n[àa]y|hi[eệ]n t[aạ]i)|hi[eệ]n nay|g[aầ]n [đd][âa]y/.test(q)) {
+      filterMonth = now.getMonth() + 1;
+    }
+    const yMatch = q.match(/(?:n[ăa]m\s*|[\/\-])\s*(20\d{2})/);
+    const filterYear = yMatch ? parseInt(yMatch[1], 10) : now.getFullYear();
+    // Khoảng ngày [đầu tháng, cuối tháng] định dạng YYYY-MM-DD cho cột kiểu DATE.
+    const monthRange = (): [string, string] | null => {
+      if (!filterMonth) return null;
+      const mm = String(filterMonth).padStart(2, "0");
+      const lastDay = new Date(filterYear, filterMonth, 0).getDate();
+      return [`${filterYear}-${mm}-01`, `${filterYear}-${mm}-${String(lastDay).padStart(2, "0")}`];
+    };
+
+    // Từ khóa lọc dòng: bỏ từ kích hoạt định tuyến + cụm tháng/năm + stopwords —
+    // phần còn lại mới là "thực thể" thật (tên người, tên công ty, số văn bản...).
+    let strippedQuery: string = query;
+    for (const src of Object.values(ROUTE_PATTERNS)) {
+      strippedQuery = strippedQuery.replace(new RegExp(src, "gi"), " ");
+    }
+    strippedQuery = strippedQuery
+      .replace(/th[áa]ng\s*0?\d{1,2}(\s*[\/\-]\s*20\d{2})?/gi, " ")
+      .replace(/n[ăa]m\s*20\d{2}/gi, " ");
+    const terms = strippedQuery
       .replace(/[?.,!"'():;]/g, " ")
       .split(/\s+/)
       .map((w: string) => w.trim())
@@ -154,13 +219,7 @@ export async function POST(req: NextRequest) {
     let birthdayMonth: string | null = null;
     if (isBirthdayQuery) {
       want.employees = true;
-      const mNum = q.match(/th[áa]ng\s*0?(\d{1,2})/);
-      if (mNum) {
-        const n = parseInt(mNum[1], 10);
-        if (n >= 1 && n <= 12) birthdayMonth = String(n).padStart(2, "0");
-      } else if (/th[áa]ng\s*(n[àa]y|hi[eệ]n t[aạ]i)/.test(q)) {
-        birthdayMonth = String(new Date().getMonth() + 1).padStart(2, "0");
-      }
+      if (filterMonth) birthdayMonth = String(filterMonth).padStart(2, "0");
     }
 
     // Tạo chuỗi filter OR (ilike) nhiều cột — chỉ dùng khi đang ở chế độ lọc.
@@ -178,6 +237,14 @@ export async function POST(req: NextRequest) {
       const orStr = buildOr(cols, useFilter);
       if (orStr) return qb.or(orStr).limit(60);
       return qb.limit(listLimit);
+    };
+    // Áp bộ lọc THÁNG (khi câu hỏi có "tháng N") lên cột ngày kiểu DATE.
+    // Nhiều cột ngày → chỉ cần 1 cột rơi vào tháng đó. Fallback thì bỏ lọc.
+    const withMonth = (qb: any, dateCols: string[], isFallback: boolean) => {
+      const r = monthRange();
+      if (!r || isFallback) return qb;
+      if (dateCols.length === 1) return qb.gte(dateCols[0], r[0]).lte(dateCols[0], r[1]);
+      return qb.or(dateCols.map(c => `and(${c}.gte.${r[0]},${c}.lte.${r[1]})`).join(","));
     };
 
     // 3.1 Nhân viên — KHÔNG có trường lương. PII (CCCD/địa chỉ) chỉ cấp cho Admin/TP.HCNS.
@@ -203,25 +270,38 @@ export async function POST(req: NextRequest) {
     // Chạy toàn bộ truy vấn; `useFilter` quyết định lọc theo dòng hay liệt kê.
     const runQueries = (useFilter: boolean, isFallback: boolean) => Promise.all([
       want.employees ? buildEmployees(useFilter, isFallback) : Promise.resolve({ data: null }),
-      want.tasks ? withFilter(dbClient.from("tasks").select("title, assignee, status, due_date, start_date, description"), ["title", "assignee", "description", "status"], 120, useFilter) : Promise.resolve({ data: null }),
-      want.justifications ? withFilter(dbClient.from("attendance_justifications").select("name, department, date, reason, propose, status, approver"), ["name", "department", "reason", "status"], 120, useFilter) : Promise.resolve({ data: null }),
+      want.tasks ? withFilter(withMonth(dbClient.from("tasks").select("title, assignee, status, due_date, start_date, description").order("due_date", { ascending: false, nullsFirst: false }), ["due_date", "start_date"], isFallback), ["title", "assignee", "description", "status"], 120, useFilter) : Promise.resolve({ data: null }),
+      want.justifications ? withFilter(withMonth(dbClient.from("attendance_justifications").select("name, department, date, reason, propose, status, approver").order("date", { ascending: false }), ["date"], isFallback), ["name", "department", "reason", "status"], 120, useFilter) : Promise.resolve({ data: null }),
       want.candidates ? withFilter(dbClient.from("candidates").select("name, role, last_position, phone, email, source, status, department, ai_score"), ["name", "role", "last_position", "phone", "email", "department", "status"], 150, useFilter) : Promise.resolve({ data: null }),
       want.admin ? withFilter(dbClient.from("admin_monthly_reports").select("stt, content, category_type, m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, m12, notes"), ["content"], 250, useFilter) : Promise.resolve({ data: null }),
-      want.invoices ? withFilter(dbClient.from("invoices").select("number, date, desc, amount, beneficiary_name, project_name"), ["number", "desc", "beneficiary_name", "project_name"], 150, useFilter) : Promise.resolve({ data: null }),
+      want.invoices ? withFilter(withMonth(dbClient.from("invoices").select("number, date, desc, amount, beneficiary_name, project_name").order("date", { ascending: false }), ["date"], isFallback), ["number", "desc", "beneficiary_name", "project_name"], 150, useFilter) : Promise.resolve({ data: null }),
       want.suppliers ? withFilter(dbClient.from("suppliers").select("name, service, bank, project_name"), ["name", "service", "project_name"], 150, useFilter) : Promise.resolve({ data: null }),
-      want.clerical ? withFilter(dbClient.from("clerical_documents").select("type, doc_number, doc_date, receive_send_date, summary, sender_receiver, signer_recipient"), ["doc_number", "summary", "sender_receiver", "signer_recipient"], 150, useFilter) : Promise.resolve({ data: null }),
-      want.trips ? withFilter(dbClient.from("business_trips").select("name, dest, from_date, to_date, purpose, status"), ["name", "dest", "purpose", "status"], 120, useFilter) : Promise.resolve({ data: null }),
+      want.clerical ? withFilter(withMonth(dbClient.from("clerical_documents").select("type, doc_number, doc_date, receive_send_date, summary, sender_receiver, signer_recipient").order("doc_date", { ascending: false }), ["doc_date", "receive_send_date"], isFallback), ["doc_number", "summary", "sender_receiver", "signer_recipient"], 150, useFilter) : Promise.resolve({ data: null }),
+      want.trips ? withFilter(withMonth(dbClient.from("business_trips").select("name, dest, from_date, to_date, purpose, status").order("from_date", { ascending: false }), ["from_date", "to_date"], isFallback), ["name", "dest", "purpose", "status"], 120, useFilter) : Promise.resolve({ data: null }),
       want.contracts ? withFilter(dbClient.from("contracts").select("employee_code, employee_name, contract_number, type, sign_date, expiration_date, base_salary_insurance, performance_bonus, allowances, total_income, status"), ["employee_code", "employee_name", "contract_number", "type", "status"], 150, useFilter) : Promise.resolve({ data: null }),
       want.suggestions ? withFilter(dbClient.from("suggestions").select("title, content, department, sender_name, status, response"), ["title", "content", "department", "sender_name", "status"], 120, useFilter) : Promise.resolve({ data: null }),
+    ]);
+
+    // KPI TOÀN HỆ THỐNG — đúng công thức Dashboard (app/page.tsx), đếm bằng SQL
+    // nên luôn chính xác, không phụ thuộc giới hạn dòng/cắt bớt ngữ cảnh.
+    // "Đang thử việc"/"HĐ chính thức" đếm theo LOẠI HĐ (không kèm số tiền lương
+    // nên cấp cho mọi tài khoản — giống như Dashboard hiển thị cho mọi người).
+    const kpiPromise = Promise.all([
+      dbClient.from("employees").select("*", { count: "exact", head: true }),
+      dbClient.from("contracts").select("*", { count: "exact", head: true }).eq("type", "Thử việc"),
+      dbClient.from("contracts").select("*", { count: "exact", head: true }).neq("type", "Thử việc").neq("type", ""),
+      dbClient.from("candidates").select("*", { count: "exact", head: true }).ilike("probation_result", "%nhận%"),
     ]);
 
     // Lọc trước; nếu KHÔNG ra dòng nào → tự lùi về chế độ liệt kê (fallback) cho AI tự tìm.
     let results: any[] = await runQueries(entityMode, false);
     let usedFilter = entityMode;
+    let usedMonthFilter = !!filterMonth;
     const totalRows = results.reduce((n, r) => n + (((r?.data as any[] | null)?.length) || 0), 0);
-    if (totalRows === 0 && (entityMode || (isBirthdayQuery && !!birthdayMonth))) {
+    if (totalRows === 0 && (entityMode || !!filterMonth)) {
       results = await runQueries(false, true);
       usedFilter = false;
+      usedMonthFilter = false;
     }
 
     const [
@@ -241,8 +321,37 @@ export async function POST(req: NextRequest) {
     const dbContracts = rContracts ? (rContracts.data as any[] | null) : null;
     const dbSuggestions = rSuggestions ? (rSuggestions.data as any[] | null) : null;
 
+    // Log số dòng mỗi nhóm (không log nội dung — tránh lộ dữ liệu nhân sự ra server log).
+    const rowCounts = {
+      employees: dbEmployees?.length || 0,
+      tasks: dbTasks?.length || 0,
+      justifications: dbJustifications?.length || 0,
+      candidates: dbCandidates?.length || 0,
+      adminReports: dbAdminReports?.length || 0,
+      invoices: dbInvoices?.length || 0,
+      suppliers: dbSuppliers?.length || 0,
+      clerical: dbClerical?.length || 0,
+      trips: dbTrips?.length || 0,
+      contracts: dbContracts?.length || 0,
+      suggestions: dbSuggestions?.length || 0,
+    };
+    console.log("[ai-search] rows:", JSON.stringify(rowCounts), "| usedFilter:", usedFilter, "| terms:", terms.join("|"));
+
     // 4. Định dạng Ngữ cảnh — NÉN dạng CSV để tiết kiệm token (nhãn cột chỉ ghi 1 lần).
     let context = "";
+
+    // ── KPI TOÀN HỆ THỐNG (luôn có mặt, đặt ĐẦU ngữ cảnh để không bao giờ bị cắt) ──
+    try {
+      const [kEmp, kProb, kOff, kHired] = await kpiPromise;
+      const kpiParts: string[] = [];
+      if (kEmp.count !== null) kpiParts.push(`Nhân sự hiện tại: ${kEmp.count}`);
+      if (kProb.count !== null) kpiParts.push(`Đang thử việc (HĐ loại "Thử việc"): ${kProb.count}`);
+      if (kOff.count !== null) kpiParts.push(`HĐ lao động chính thức: ${kOff.count}`);
+      if (kHired.count !== null) kpiParts.push(`Nhân sự mới vào (nhận việc): ${kHired.count}`);
+      if (kpiParts.length) {
+        context += `### KPI TOÀN HỆ THỐNG (số liệu chính thức trùng Dashboard — ưu tiên dùng cho câu hỏi đếm tổng quan: bao nhiêu nhân sự, bao nhiêu thử việc/chính thức...)\n${kpiParts.join(". ")}.\n\n`;
+      }
+    } catch { /* KPI lỗi thì bỏ qua, không chặn luồng chính */ }
 
     // Cắt free-text dài + làm sạch khoảng trắng.
     const clip = (v: any, n = 140): string => {
@@ -376,6 +485,22 @@ export async function POST(req: NextRequest) {
 
     // ── HỢP ĐỒNG LAO ĐỘNG & THÔNG TIN LƯƠNG (Chỉ dành cho tài khoản được phân quyền) ──
     if (hasSalaryAccess && dbContracts && dbContracts.length > 0) {
+      // Thống kê tính sẵn để AI trả lời câu đếm ("bao nhiêu thử việc/chính thức") không phải tự cộng tay.
+      context += `### THỐNG KÊ NHANH HỢP ĐỒNG LAO ĐỘNG (đã tính sẵn — ưu tiên dùng cho câu hỏi đếm/tổng hợp)\n`;
+      context += `Tổng số HĐ đang liệt kê: ${dbContracts.length}. Theo loại HĐ: ${countBy(dbContracts, "type")}. Theo trạng thái: ${countBy(dbContracts, "status")}\n`;
+      const today = new Date();
+      const in60d = new Date(today.getTime() + 60 * 24 * 3600 * 1000);
+      const expiring = dbContracts
+        .filter(c => {
+          if (!c.expiration_date) return false;
+          const d = new Date(String(c.expiration_date).slice(0, 10));
+          return !isNaN(d.getTime()) && d >= today && d <= in60d;
+        })
+        .sort((a, b) => String(a.expiration_date).localeCompare(String(b.expiration_date)))
+        .slice(0, 15)
+        .map(c => `${c.employee_name} (${String(c.expiration_date).slice(0, 10)})`);
+      if (expiring.length) context += `Sắp hết hạn trong 60 ngày tới: ${expiring.join("; ")}\n`;
+      context += `\n`;
       const headers = ["Mã NV", "Tên NV", "Số HĐ", "Loại HĐ", "Ngày ký", "Ngày hết hạn", "Lương BH", "Thưởng HS", "Phụ cấp", "Tổng thu nhập", "Trạng thái"];
       const rows = dbContracts.map(c => [
         c.employee_code, c.employee_name, c.contract_number, c.type,
@@ -415,6 +540,13 @@ export async function POST(req: NextRequest) {
       console.warn("Python AI Server not running or failed to respond, skipping semantic search.");
     }
 
+    // Ghi chú về bộ lọc tháng để AI trả lời đúng ngữ cảnh thời gian.
+    if (context && filterMonth) {
+      context = (usedMonthFilter
+        ? `(Dữ liệu bên dưới ĐÃ được lọc theo tháng ${filterMonth}/${filterYear} theo yêu cầu của câu hỏi.)\n\n`
+        : `(LƯU Ý QUAN TRỌNG: KHÔNG có bản ghi nào trong tháng ${filterMonth}/${filterYear}. Dữ liệu bên dưới là các bản ghi MỚI NHẤT của những tháng khác — hãy thông báo rõ cho người dùng rằng tháng ${filterMonth}/${filterYear} chưa có dữ liệu, rồi mới tham chiếu dữ liệu gần nhất nếu hữu ích.)\n\n`) + context;
+    }
+
     if (!context) {
       context = usedFilter
         ? `(Không tìm thấy bản ghi nào khớp với từ khóa: "${terms.join(", ")}". Hãy thông báo cho người dùng và gợi ý họ kiểm tra lại chính tả hoặc dùng từ khóa khác.)`
@@ -429,6 +561,19 @@ export async function POST(req: NextRequest) {
         "\n\n…(Dữ liệu quá nhiều đã được rút gọn. Hãy hỏi cụ thể hơn — ví dụ theo phòng ban, theo tháng, hoặc theo tên — để có kết quả chính xác và đầy đủ hơn.)";
     }
 
+    // 4c. DEBUG MODE (chỉ môi trường dev): trả về ngữ cảnh đã dựng, KHÔNG gọi OpenAI.
+    //     Dùng để kiểm thử bộ định tuyến + bộ lọc + RLS mà không tốn token.
+    if (debug && process.env.NODE_ENV !== "production") {
+      return NextResponse.json({
+        debug: true,
+        identity: { email: verifiedEmail, name: displayName, role: verifiedRole, department: verifiedDept, isAdmin, hasPiiAccess, hasSalaryAccess },
+        router: { want, isAggregation, entityMode, terms, usedFilter, isBirthdayQuery, birthdayMonth, filterMonth, filterYear, usedMonthFilter },
+        rowCounts,
+        contextChars: context.length,
+        context
+      });
+    }
+
     // 5. Gọi OpenAI (GPT-4o).
     const openai = new OpenAI({ apiKey });
 
@@ -440,10 +585,10 @@ QUY TẮC BẢO MẬT & VẬN HÀNH QUAN TRỌNG:
 2. **Không bịa đặt thông tin**: Luôn trả lời trung thực dựa trên các trường thông tin hiển thị trong ngữ cảnh.
 3. **BẢO MẬT & PHÂN QUYỀN – Lương & Hợp đồng lao động**:
    - Chỉ tài khoản có quyền truy cập lương ('hasSalaryAccess === true') mới được phép xem, trích xuất hoặc đề cập tới mức lương, thu nhập, thưởng, phụ cấp, bảo hiểm của CBNV, cũng như các nội dung/thời hạn của hợp đồng lao động. Dữ liệu này đã được nạp tự động vào Ngữ cảnh nếu tài khoản này có quyền.
-   - Tài khoản đang đăng nhập hiện tại: "${currentUser.name}" (Quyền xem Lương & HĐLĐ: ${hasSalaryAccess ? "ĐÃ CẤP QUYỀN" : "TỪ CHỐI"}).
+   - Tài khoản đang đăng nhập hiện tại: "${displayName}" (Quyền xem Lương & HĐLĐ: ${hasSalaryAccess ? "ĐÃ CẤP QUYỀN" : "TỪ CHỐI"}).
    - Nếu quyền là TỪ CHỐI, tuyệt đối không tiết lộ. Nếu quyền là ĐÃ CẤP QUYỀN, hãy phản hồi đầy đủ và chính xác dựa trên khối dữ liệu HĐLĐ & Lương được cấp trong Ngữ cảnh.
 4. **Phân quyền dữ liệu nhạy cảm (PII)**:
-   - Tài khoản đang hỏi: "${currentUser.name}" (Chức vụ: ${currentUser.role || "Chưa rõ"}, Phòng ban: ${currentUser.department || "Chưa rõ"}).
+   - Tài khoản đang hỏi: "${displayName}" (Chức vụ: ${verifiedRole || "Chưa rõ"}, Phòng ban: ${verifiedDept || "Chưa rõ"}).
    - Quyền xem PII (CCCD, địa chỉ, ghi chú cá nhân): ${hasPiiAccess ? "ĐÃ CẤP (Admin/Trưởng phòng HCNS)" : "TỪ CHỐI (Nhân viên thông thường)"}.
    - Ngữ cảnh đã được lọc theo đúng quyền của tài khoản này — chỉ trả lời dựa trên những gì hiển thị.
 5. **Đọc dữ liệu CSV & số liệu tính sẵn**:
