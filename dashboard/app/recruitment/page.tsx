@@ -768,42 +768,36 @@ export default function RecruitmentPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
 
-  // Manual recruitment needs state
-  const [officeManualNeeds, setOfficeManualNeeds] = useState<Record<string, number>>({
-    "HCNS": 2,
-    "Phòng QLDA": 1,
-    "Kế toán": 1
-  });
-  const [projectManualNeeds, setProjectManualNeeds] = useState<Record<string, number>>({
-    "Vàm Lẽo": 3,
-    "RXT": 2,
-    "Mã Đà": 1,
-    "ĐMT Trà Vinh": 2
-  });
+  // Manual recruitment needs state — lưu THEO THÁNG (id dạng office_manual_needs_YYYY-MM).
+  // Tháng hiện tại đồng thời ghi về bản ghi cũ (office_manual_needs) để Dashboard trang chủ
+  // và các nơi khác đang đọc id cũ vẫn thấy đúng số của tháng hiện tại.
+  const currentMonthKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+  const [needsMonth, setNeedsMonth] = useState<string>(currentMonthKey);
+  const [officeManualNeeds, setOfficeManualNeeds] = useState<Record<string, number>>({});
+  const [projectManualNeeds, setProjectManualNeeds] = useState<Record<string, number>>({});
 
-  // Load initial state from Supabase (single source of truth) with localStorage fallback
+  // Load needs của tháng đang chọn từ Supabase (nguồn chân lý), fallback localStorage.
   useEffect(() => {
     const loadNeeds = async () => {
-      // Query Supabase first — this is the shared source of truth across all accounts
+      const isCurrent = needsMonth === currentMonthKey;
+      const officeId = `office_manual_needs_${needsMonth}`;
+      const projectId = `project_manual_needs_${needsMonth}`;
       try {
+        const ids = [officeId, projectId, ...(isCurrent ? ["office_manual_needs", "project_manual_needs"] : [])];
         const { data, error } = await supabase
           .from("recruitment_needs")
-          .select("id, data");
+          .select("id, data")
+          .in("id", ids);
 
-        if (!error && data && data.length > 0) {
-          const officeRow = data.find(r => r.id === "office_manual_needs");
-          if (officeRow && officeRow.data) {
-            setOfficeManualNeeds(officeRow.data);
-            // Keep localStorage in sync so offline fallback is fresh
-            localStorage.setItem("officeManualNeeds", JSON.stringify(officeRow.data));
-          }
-
-          const projectRow = data.find(r => r.id === "project_manual_needs");
-          if (projectRow && projectRow.data) {
-            setProjectManualNeeds(projectRow.data);
-            localStorage.setItem("projectManualNeeds", JSON.stringify(projectRow.data));
-          }
-          // Supabase load succeeded — nothing more to do
+        if (!error && data) {
+          // Tháng hiện tại chưa có bản ghi theo tháng → dùng bản ghi cũ (di trú mềm).
+          const officeRow = data.find(r => r.id === officeId) || (isCurrent ? data.find(r => r.id === "office_manual_needs") : null);
+          const projectRow = data.find(r => r.id === projectId) || (isCurrent ? data.find(r => r.id === "project_manual_needs") : null);
+          setOfficeManualNeeds(officeRow?.data || {});
+          setProjectManualNeeds(projectRow?.data || {});
+          // Keep localStorage in sync so offline fallback is fresh
+          localStorage.setItem(`officeManualNeeds_${needsMonth}`, JSON.stringify(officeRow?.data || {}));
+          localStorage.setItem(`projectManualNeeds_${needsMonth}`, JSON.stringify(projectRow?.data || {}));
           return;
         }
 
@@ -815,24 +809,24 @@ export default function RecruitmentPage() {
       }
 
       // Fallback: use localStorage only when Supabase is unreachable
-      const savedOffice = localStorage.getItem("officeManualNeeds");
-      if (savedOffice) {
-        try { setOfficeManualNeeds(JSON.parse(savedOffice)); } catch (e) { /* ignore */ }
-      }
-      const savedProject = localStorage.getItem("projectManualNeeds");
-      if (savedProject) {
-        try { setProjectManualNeeds(JSON.parse(savedProject)); } catch (e) { /* ignore */ }
-      }
+      const savedOffice = localStorage.getItem(`officeManualNeeds_${needsMonth}`) || (isCurrent ? localStorage.getItem("officeManualNeeds") : null);
+      try { setOfficeManualNeeds(savedOffice ? JSON.parse(savedOffice) : {}); } catch (e) { setOfficeManualNeeds({}); }
+      const savedProject = localStorage.getItem(`projectManualNeeds_${needsMonth}`) || (isCurrent ? localStorage.getItem("projectManualNeeds") : null);
+      try { setProjectManualNeeds(savedProject ? JSON.parse(savedProject) : {}); } catch (e) { setProjectManualNeeds({}); }
     };
 
     loadNeeds();
-  }, []);
+  }, [needsMonth]);
 
   const saveNeedsToSupabase = async (id: "office_manual_needs" | "project_manual_needs", data: Record<string, number>) => {
     try {
-      const { error } = await supabase
-        .from("recruitment_needs")
-        .upsert({ id, data, updated_at: new Date().toISOString() });
+      const updated_at = new Date().toISOString();
+      const rows: { id: string; data: Record<string, number>; updated_at: string }[] = [
+        { id: `${id}_${needsMonth}`, data, updated_at }
+      ];
+      // Đang sửa tháng hiện tại → đồng bộ luôn bản ghi cũ cho Dashboard trang chủ.
+      if (needsMonth === currentMonthKey) rows.push({ id, data, updated_at });
+      const { error } = await supabase.from("recruitment_needs").upsert(rows);
 
       if (error) {
         console.warn(`Could not save ${id} to Supabase:`, error.message);
@@ -846,7 +840,7 @@ export default function RecruitmentPage() {
     if (val < 0) return;
     const next = { ...officeManualNeeds, [dept]: val };
     setOfficeManualNeeds(next);
-    localStorage.setItem("officeManualNeeds", JSON.stringify(next));
+    localStorage.setItem(`officeManualNeeds_${needsMonth}`, JSON.stringify(next));
     saveNeedsToSupabase("office_manual_needs", next);
   };
 
@@ -854,7 +848,7 @@ export default function RecruitmentPage() {
     if (val < 0) return;
     const next = { ...projectManualNeeds, [proj]: val };
     setProjectManualNeeds(next);
-    localStorage.setItem("projectManualNeeds", JSON.stringify(next));
+    localStorage.setItem(`projectManualNeeds_${needsMonth}`, JSON.stringify(next));
     saveNeedsToSupabase("project_manual_needs", next);
   };
 
@@ -862,7 +856,7 @@ export default function RecruitmentPage() {
     const next = { ...officeManualNeeds };
     delete next[dept];
     setOfficeManualNeeds(next);
-    localStorage.setItem("officeManualNeeds", JSON.stringify(next));
+    localStorage.setItem(`officeManualNeeds_${needsMonth}`, JSON.stringify(next));
     saveNeedsToSupabase("office_manual_needs", next);
   };
 
@@ -870,7 +864,7 @@ export default function RecruitmentPage() {
     const next = { ...projectManualNeeds };
     delete next[proj];
     setProjectManualNeeds(next);
-    localStorage.setItem("projectManualNeeds", JSON.stringify(next));
+    localStorage.setItem(`projectManualNeeds_${needsMonth}`, JSON.stringify(next));
     saveNeedsToSupabase("project_manual_needs", next);
   };
 
@@ -882,7 +876,7 @@ export default function RecruitmentPage() {
     if (!val) return;
     const next = { ...officeManualNeeds, [val]: 1 };
     setOfficeManualNeeds(next);
-    localStorage.setItem("officeManualNeeds", JSON.stringify(next));
+    localStorage.setItem(`officeManualNeeds_${needsMonth}`, JSON.stringify(next));
     saveNeedsToSupabase("office_manual_needs", next);
     setNewOfficeDept("");
   };
@@ -892,7 +886,7 @@ export default function RecruitmentPage() {
     if (!val) return;
     const next = { ...projectManualNeeds, [val]: 1 };
     setProjectManualNeeds(next);
-    localStorage.setItem("projectManualNeeds", JSON.stringify(next));
+    localStorage.setItem(`projectManualNeeds_${needsMonth}`, JSON.stringify(next));
     saveNeedsToSupabase("project_manual_needs", next);
     setNewProjectDept("");
   };
@@ -1584,6 +1578,11 @@ export default function RecruitmentPage() {
     if (match) {
       return new Date(parseInt(match[1]), parseInt(match[2]) - 1, parseInt(match[3]));
     }
+    // Dữ liệu nhập tay lưu dạng DD/MM/YYYY (vd "15/06/2026" — cột ONBOARD)
+    const dmy = dStr.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+    if (dmy) {
+      return new Date(parseInt(dmy[3]), parseInt(dmy[2]) - 1, parseInt(dmy[1]));
+    }
     return null;
   };
 
@@ -1819,12 +1818,22 @@ export default function RecruitmentPage() {
             const thuViecCount = sortedCandidates.filter(c => c.v2_result === "ĐẠT").length;
             const passRate = total > 0 ? Math.round((vong1Count / total) * 100) : 0;
 
+            // "ĐÃ TUYỂN trong tháng" = Kết quả nhận việc (tab thử việc) là NHẬN
+            // và ngày ONBOARD thuộc đúng tháng đang chọn ở bộ lọc nhu cầu tuyển dụng.
+            const isHiredInMonth = (c: any) => {
+              const res = String(c.probation_result || "").toUpperCase().trim();
+              if (res !== "NHẬN" && res !== "ĐẠT") return false;
+              const d = parseDateUI(c.onboard_date || "");
+              if (!d) return false;
+              return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}` === needsMonth;
+            };
+
             const byDept: Record<string, { total: number; hired: number; interview: number; rejected: number }> = {};
             candidates.forEach(c => {
               const dept = normalizeDepartment(c.department);
               if (!byDept[dept]) byDept[dept] = { total: 0, hired: 0, interview: 0, rejected: 0 };
               byDept[dept].total++;
-              if (c.v2_result === "ĐẠT") byDept[dept].hired++;
+              if (isHiredInMonth(c)) byDept[dept].hired++;
               else if (c.v1_result === "ĐẠT") byDept[dept].interview++;
               if (c.status === "rejected") byDept[dept].rejected++;
             });
@@ -1920,15 +1929,39 @@ export default function RecruitmentPage() {
                         <Layers className="text-[#005BAC]" size={16} />
                         Nhu cầu tuyển dụng thực tế
                       </h3>
-                      <p className="text-[10px] text-slate-500 font-bold mt-0.5">Số lượng nhân sự cần bổ sung theo từng khối bộ phận (nhập tay trực tiếp)</p>
+                      <p className="text-[10px] text-slate-500 font-bold mt-0.5">Số lượng nhân sự cần bổ sung theo từng khối bộ phận (nhập tay trực tiếp, lưu riêng theo từng tháng)</p>
                     </div>
 
-                    {/* Tỷ lệ tuyển dụng badge centered on page/card */}
+                    {/* Bộ lọc theo tháng — nhu cầu tuyển dụng lưu riêng từng tháng */}
+                    <div className="flex items-center gap-2 bg-white border border-slate-200 px-3 py-2 rounded-2xl shadow-sm shrink-0">
+                      <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Tháng:</span>
+                      <input
+                        type="month"
+                        value={needsMonth}
+                        onChange={(e) => setNeedsMonth(e.target.value || currentMonthKey)}
+                        className="text-xs font-bold text-slate-700 bg-transparent outline-none cursor-pointer"
+                      />
+                      {needsMonth !== currentMonthKey && (
+                        <button
+                          onClick={() => setNeedsMonth(currentMonthKey)}
+                          className="text-[10px] font-black text-[#005BAC] bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-1 rounded-lg transition-colors"
+                        >
+                          Về tháng này
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Tỷ lệ tuyển dụng THEO THÁNG = đã tuyển trong tháng (NHẬN + onboard) / nhu cầu tuyển trong tháng */}
                     <div className="sm:absolute sm:left-1/2 sm:-translate-x-1/2 flex items-center gap-3 bg-emerald-50 border-2 border-emerald-200 px-6 py-2 rounded-3xl shadow-sm hover:shadow-md hover:bg-emerald-100/40 transition-all duration-300 shrink-0">
                       <span className="w-3.5 h-3.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-                      <span className="text-lg font-black text-emerald-800 uppercase tracking-wider">Tỷ lệ tuyển dụng:</span>
+                      <span className="text-lg font-black text-emerald-800 uppercase tracking-wider">Tỷ lệ tuyển dụng T{parseInt(needsMonth.slice(5), 10)}:</span>
                       <span className="text-3xl font-black text-emerald-600 leading-none">
-                        {total > 0 ? Math.round((thuViecCount/total)*100) : 0}%
+                        {(officeTotalNeed + projectTotalNeed) > 0
+                          ? Math.round(((officeTotalHired + projectTotalHired) / (officeTotalNeed + projectTotalNeed)) * 100)
+                          : 0}%
+                      </span>
+                      <span className="text-xs font-bold text-emerald-700/70">
+                        ({officeTotalHired + projectTotalHired}/{officeTotalNeed + projectTotalNeed} người)
                       </span>
                     </div>
                   </div>
@@ -2089,7 +2122,7 @@ export default function RecruitmentPage() {
                     <div className="flex justify-between items-start">
                       <div>
                         <h3 className="font-heading font-black text-slate-800 text-sm">Khối Văn Phòng</h3>
-                        <p className="text-[10px] text-slate-400 mt-0.5">Số lượng nhân sự đã tuyển và tuyển thêm</p>
+                        <p className="text-[10px] text-slate-400 mt-0.5">Đã tuyển (NHẬN việc + onboard) trong tháng {parseInt(needsMonth.slice(5), 10)}/{needsMonth.slice(0, 4)} và cần tuyển thêm</p>
                       </div>
                     </div>
 
@@ -2171,7 +2204,7 @@ export default function RecruitmentPage() {
                     <div className="flex justify-between items-start">
                       <div>
                         <h3 className="font-heading font-black text-slate-800 text-sm">Khối Dự Án</h3>
-                        <p className="text-[10px] text-slate-400 mt-0.5">Số lượng nhân sự đã tuyển và tuyển thêm tại các dự án</p>
+                        <p className="text-[10px] text-slate-400 mt-0.5">Đã tuyển (NHẬN việc + onboard) tại các dự án trong tháng {parseInt(needsMonth.slice(5), 10)}/{needsMonth.slice(0, 4)} và cần tuyển thêm</p>
                       </div>
                     </div>
 
