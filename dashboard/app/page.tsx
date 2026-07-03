@@ -9,7 +9,6 @@ import {
   Users,
   UserPlus,
   BadgeCheck,
-  Hourglass,
   Wallet,
   Building2,
   Briefcase,
@@ -66,13 +65,6 @@ const parseDate = (s: string): Date | null => {
   }
   const d = new Date(s);
   return isNaN(d.getTime()) ? null : d;
-};
-
-const isThisMonth = (s: string): boolean => {
-  const d = parseDate(s);
-  if (!d) return false;
-  const now = new Date();
-  return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
 };
 
 // ─── Recruitment block (office / project) reused on dashboard ──────────────────
@@ -150,6 +142,14 @@ function RecruitBlock({
   );
 }
 
+// Tiện ích khoảng tháng cho bộ lọc tuyển dụng
+const monthFirstDay = (mk: string) => `${mk}-01`;
+const monthLastDay = (mk: string) => {
+  const [y, m] = mk.split("-").map(Number);
+  return `${mk}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`;
+};
+const fmtD = (iso: string) => (iso ? iso.split("-").reverse().join("/") : "");
+
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [employees, setEmployees] = useState<any[]>([]);
@@ -159,27 +159,35 @@ export default function DashboardPage() {
   const [officeNeeds, setOfficeNeeds] = useState<Record<string, number>>({});
   const [projectNeeds, setProjectNeeds] = useState<Record<string, number>>({});
 
+  // Bộ lọc thời gian khối Tuyển dụng — mặc định tháng hiện tại, cho phép chỉnh từ ngày/đến ngày.
+  const nowD = new Date();
+  const currentMonthKey = `${nowD.getFullYear()}-${String(nowD.getMonth() + 1).padStart(2, "0")}`;
+  const [recruitMonth, setRecruitMonth] = useState<string>(currentMonthKey);
+  const [recruitFrom, setRecruitFrom] = useState<string>(monthFirstDay(currentMonthKey));
+  const [recruitTo, setRecruitTo] = useState<string>(monthLastDay(currentMonthKey));
+  const [showRecruitFilter, setShowRecruitFilter] = useState(false);
+
+  const handleRecruitMonthChange = (mk: string) => {
+    if (!mk) return;
+    setRecruitMonth(mk);
+    setRecruitFrom(monthFirstDay(mk));
+    setRecruitTo(monthLastDay(mk));
+  };
+
   useEffect(() => {
     const fetchAll = async () => {
       try {
         setLoading(true);
-        const [empRes, candRes, reportRes, needsRes, contractRes] = await Promise.all([
+        const [empRes, candRes, reportRes, contractRes] = await Promise.all([
           supabase.from("employees").select("*"),
           supabase.from("candidates").select("*"),
           supabase.from("admin_monthly_reports").select("*"),
-          supabase.from("recruitment_needs").select("id, data"),
           supabase.from("contracts").select("type"),
         ]);
         if (empRes.data) setEmployees(empRes.data);
         if (candRes.data) setCandidates(candRes.data);
         if (reportRes.data) setReportRows(reportRes.data);
         if (contractRes.data) setContracts(contractRes.data);
-        if (needsRes.data) {
-          const office = needsRes.data.find((r: any) => r.id === "office_manual_needs");
-          const project = needsRes.data.find((r: any) => r.id === "project_manual_needs");
-          if (office?.data) setOfficeNeeds(office.data);
-          if (project?.data) setProjectNeeds(project.data);
-        }
       } catch (err) {
         console.error("Error loading dashboard data:", err);
       } finally {
@@ -188,6 +196,27 @@ export default function DashboardPage() {
     };
     fetchAll();
   }, []);
+
+  // Nhu cầu tuyển dụng theo THÁNG đang lọc (đồng bộ trang Tuyển dụng).
+  // Tháng hiện tại chưa có bản ghi theo tháng → dùng bản ghi cũ (di trú mềm).
+  useEffect(() => {
+    const loadNeeds = async () => {
+      try {
+        const isCurrent = recruitMonth === currentMonthKey;
+        const officeId = `office_manual_needs_${recruitMonth}`;
+        const projectId = `project_manual_needs_${recruitMonth}`;
+        const ids = [officeId, projectId, ...(isCurrent ? ["office_manual_needs", "project_manual_needs"] : [])];
+        const { data } = await supabase.from("recruitment_needs").select("id, data").in("id", ids);
+        const office = data?.find((r: any) => r.id === officeId) || (isCurrent ? data?.find((r: any) => r.id === "office_manual_needs") : null);
+        const project = data?.find((r: any) => r.id === projectId) || (isCurrent ? data?.find((r: any) => r.id === "project_manual_needs") : null);
+        setOfficeNeeds(office?.data || {});
+        setProjectNeeds(project?.data || {});
+      } catch (err) {
+        console.error("Error loading recruitment needs:", err);
+      }
+    };
+    loadNeeds();
+  }, [recruitMonth]);
 
   // ─── Admin cost totals (2 blocks) ───────────────────────────────────────────
   const cost = useMemo(() => {
@@ -203,14 +232,27 @@ export default function DashboardPage() {
     return { office, project, grand: office + project };
   }, [reportRows]);
 
-  // ─── Recruitment stats by block ─────────────────────────────────────────────
+  // ─── Recruitment stats by block (theo khoảng ngày đang lọc) ─────────────────
   const recruit = useMemo(() => {
+    const from = parseDate(recruitFrom);
+    const to = parseDate(recruitTo);
+    if (to) to.setHours(23, 59, 59, 999);
+    const inRange = (s: string) => {
+      const d = parseDate(s || "");
+      return !!d && (!from || d >= from) && (!to || d <= to);
+    };
+    // Đồng bộ trang Tuyển dụng: "đã tuyển" = Kết quả nhận việc NHẬN + ngày ONBOARD trong kỳ lọc.
+    const isHiredInRange = (c: any) => {
+      const res = String(c.probation_result || "").toUpperCase().trim();
+      return (res === "NHẬN" || res === "ĐẠT") && inRange(c.onboard_date);
+    };
+
     const byDept: Record<string, { total: number; hired: number }> = {};
     candidates.forEach((c) => {
       const dept = normalizeDepartment(c.department);
       if (!byDept[dept]) byDept[dept] = { total: 0, hired: 0 };
       byDept[dept].total++;
-      if (c.v2_result === "ĐẠT") byDept[dept].hired++;
+      if (isHiredInRange(c)) byDept[dept].hired++;
     });
     const deptEntries = Object.entries(byDept).sort((a, b) => b[1].total - a[1].total) as [string, { total: number; hired: number }][];
     const officeEntries = deptEntries.filter(([d]) => !isProjectBlock(d));
@@ -219,7 +261,7 @@ export default function DashboardPage() {
     const projectHired = projectEntries.reduce((s, [, v]) => s + v.hired, 0);
     const officeNeed = Object.values(officeNeeds).reduce((a, b) => a + b, 0);
     const projectNeed = Object.values(projectNeeds).reduce((a, b) => a + b, 0);
-    const probationThisMonth = candidates.filter((c) => c.v2_result === "ĐẠT" && (isThisMonth(c.onboard_date) || isThisMonth(c.v2_date))).length;
+    const probationInRange = candidates.filter((c) => c.v2_result === "ĐẠT" && (inRange(c.onboard_date) || inRange(c.v2_date))).length;
     const acceptedHires = candidates.filter((c) => (c.probation_result || "").toUpperCase().includes("NHẬN")).length;
     return {
       officeEntries,
@@ -228,28 +270,26 @@ export default function DashboardPage() {
       projectHired,
       officeToRecruit: Math.max(0, officeNeed - officeHired),
       projectToRecruit: Math.max(0, projectNeed - projectHired),
-      probationThisMonth,
+      probationInRange,
       acceptedHires,
     };
-  }, [candidates, officeNeeds, projectNeeds]);
+  }, [candidates, officeNeeds, projectNeeds, recruitFrom, recruitTo]);
 
   // ─── HR stats ───────────────────────────────────────────────────────────────
-  // Headcount từ danh sách nhân viên; HĐ chính thức / thử việc lấy từ bảng hợp đồng (loại HĐLĐ)
+  // Headcount từ danh sách nhân viên; HĐ chính thức lấy từ bảng hợp đồng (loại HĐLĐ)
   const hr = useMemo(() => {
     const headcount = employees.length;
-    const probation = contracts.filter((c) => (c.type || "").trim() === "Thử việc").length;
     const official = contracts.filter((c) => {
       const t = (c.type || "").trim();
       return t !== "" && t !== "Thử việc";
     }).length;
-    return { headcount, official, probation };
+    return { headcount, official };
   }, [employees, contracts]);
 
   const hrCards = [
     { label: "Nhân sự hiện tại", value: hr.headcount, icon: Users, grad: "from-indigo-500 to-blue-600" },
     { label: "Nhân sự mới vào (nhận việc)", value: recruit.acceptedHires, icon: UserPlus, grad: "from-emerald-500 to-teal-600" },
     { label: "HĐ lao động chính thức", value: hr.official, icon: BadgeCheck, grad: "from-blue-500 to-cyan-600" },
-    { label: "Đang thử việc", value: hr.probation, icon: Hourglass, grad: "from-amber-500 to-orange-600" },
   ];
 
   return (
@@ -297,12 +337,68 @@ export default function DashboardPage() {
 
               {/* ── Tuyển dụng nhân sự 2 khối ── */}
               <section className="space-y-4 animate-in fade-in duration-300">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-3">
                   <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Tuyển dụng nhân sự</h2>
                   <div className="flex items-center gap-3">
-                    <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full">
-                      Ứng viên thử việc trong tháng: {recruit.probationThisMonth}
-                    </span>
+                    {/* Bộ lọc thời gian dạng nút gọn — bấm mới bung lịch chọn */}
+                    <div className="relative">
+                      <button
+                        onClick={() => setShowRecruitFilter(v => !v)}
+                        className="flex items-center gap-2 bg-white border border-slate-200 hover:border-blue-300 hover:bg-blue-50/40 px-3 py-1.5 rounded-xl shadow-sm text-xs font-bold text-slate-700 transition-colors"
+                      >
+                        <span>📅</span>
+                        <span>
+                          {recruitFrom === monthFirstDay(recruitMonth) && recruitTo === monthLastDay(recruitMonth)
+                            ? `Tháng ${parseInt(recruitMonth.slice(5), 10)}/${recruitMonth.slice(0, 4)}`
+                            : `${fmtD(recruitFrom)} – ${fmtD(recruitTo)}`}
+                        </span>
+                        <ChevronRight size={12} className={`transition-transform ${showRecruitFilter ? "rotate-90" : ""}`} />
+                      </button>
+
+                      {showRecruitFilter && (
+                        <>
+                          {/* Lớp phủ trong suốt: bấm ra ngoài để đóng */}
+                          <div className="fixed inset-0 z-20" onClick={() => setShowRecruitFilter(false)} />
+                          <div className="absolute right-0 top-full mt-2 z-30 bg-white border border-slate-200 rounded-2xl shadow-xl p-4 w-64 space-y-3">
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Chọn nhanh theo tháng</label>
+                              <input
+                                type="month"
+                                value={recruitMonth}
+                                onChange={(e) => handleRecruitMonthChange(e.target.value)}
+                                className="w-full text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 outline-none focus:border-blue-300 cursor-pointer"
+                              />
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Từ ngày</label>
+                                <input
+                                  type="date"
+                                  value={recruitFrom}
+                                  onChange={(e) => { setRecruitFrom(e.target.value); if (e.target.value) setRecruitMonth(e.target.value.slice(0, 7)); }}
+                                  className="w-full text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-2 py-2 outline-none focus:border-blue-300 cursor-pointer"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Đến ngày</label>
+                                <input
+                                  type="date"
+                                  value={recruitTo}
+                                  onChange={(e) => setRecruitTo(e.target.value)}
+                                  className="w-full text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-2 py-2 outline-none focus:border-blue-300 cursor-pointer"
+                                />
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => setShowRecruitFilter(false)}
+                              className="w-full text-xs font-black text-white bg-[#005BAC] hover:bg-blue-700 rounded-lg py-2 transition-colors"
+                            >
+                              Xong
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
                     <a href="/recruitment" className="text-xs text-blue-600 font-semibold hover:underline flex items-center gap-1">
                       Xem chi tiết <ChevronRight size={12} />
                     </a>
@@ -311,14 +407,14 @@ export default function DashboardPage() {
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <RecruitBlock
                     title="Khối Văn Phòng"
-                    subtitle="Số lượng nhân sự đã tuyển và tuyển thêm"
+                    subtitle={`Đã tuyển (NHẬN việc + onboard) từ ${fmtD(recruitFrom)} đến ${fmtD(recruitTo)} và cần tuyển thêm`}
                     toRecruit={recruit.officeToRecruit}
                     totalHired={recruit.officeHired}
                     entries={recruit.officeEntries}
                   />
                   <RecruitBlock
                     title="Khối Dự Án"
-                    subtitle="Số lượng nhân sự đã tuyển và tuyển thêm tại các dự án"
+                    subtitle={`Đã tuyển (NHẬN việc + onboard) tại các dự án từ ${fmtD(recruitFrom)} đến ${fmtD(recruitTo)} và cần tuyển thêm`}
                     toRecruit={recruit.projectToRecruit}
                     totalHired={recruit.projectHired}
                     entries={recruit.projectEntries}
@@ -334,7 +430,7 @@ export default function DashboardPage() {
                     Lương &amp; Phúc lợi (C&amp;B) <ChevronRight size={12} />
                   </a>
                 </div>
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
                   {hrCards.map((c) => {
                     const Icon = c.icon;
                     return (
