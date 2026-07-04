@@ -5,6 +5,7 @@ import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { Settings, Database, Info, Key, CheckCircle, ShieldAlert, Check, X, Calendar, Briefcase, User } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { fetchApprovalPermissions, hasAnyApprovalPermission, NO_APPROVAL_PERMISSIONS, type ApprovalPermissions } from "@/lib/approvers";
 import { useSearchParams } from "next/navigation";
 
 function SettingsContent() {
@@ -25,6 +26,7 @@ function SettingsContent() {
     department: string;
     isAdmin: boolean;
   } | null>(null);
+  const [approvalPerms, setApprovalPerms] = useState<ApprovalPermissions>(NO_APPROVAL_PERMISSIONS);
   const [tasks, setTasks] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeApprovalTab, setActiveApprovalTab] = useState<"trip" | "leave" | "explanation">("trip");
@@ -77,6 +79,9 @@ function SettingsContent() {
         .select("name, role, department")
         .like("email", `%${email}%`)
         .maybeSingle();
+
+      // 3. Per-user approval grants from approval_permissions table
+      setApprovalPerms(await fetchApprovalPermissions(email));
 
       setCurrentUser({
         email,
@@ -272,6 +277,7 @@ function SettingsContent() {
   const isApprover = useMemo(() => {
     if (!currentUser) return false;
     if (currentUser.isAdmin) return true;
+    if (hasAnyApprovalPermission(approvalPerms)) return true;
     const roleLower = currentUser.role.toLowerCase();
     return (
       roleLower.includes("trưởng phòng") ||
@@ -284,7 +290,7 @@ function SettingsContent() {
       roleLower.includes("giam doc") ||
       roleLower.includes("leader")
     );
-  }, [currentUser]);
+  }, [currentUser, approvalPerms]);
 
   // Business trip approvals list (Trưởng phòng & Admin only)
   const pendingTrips = useMemo(() => {
@@ -300,14 +306,14 @@ function SettingsContent() {
                           (currentUser.role || "").toLowerCase().includes("quyền trưởng phòng") ||
                           (currentUser.role || "").toLowerCase().includes("quyen truong phong");
 
-    // Only Admin and Trưởng phòng can see/approve trips
-    if (!isUserAdmin && !isUserManager) return [];
+    // Only Admin, Trưởng phòng and users granted can_approve_trip can see/approve trips
+    if (!isUserAdmin && !isUserManager && !approvalPerms.canApproveTrip) return [];
 
     return tasks.filter(t => 
       t.status === "pending_approval" && 
       (t.title.toLowerCase().startsWith("công tác") || t.title.toLowerCase().includes("cong tac"))
     );
-  }, [tasks, currentUser, isApprover]);
+  }, [tasks, currentUser, isApprover, approvalPerms]);
 
   // Leave approvals list (custom rules)
   const pendingLeaves = useMemo(() => {
@@ -345,23 +351,20 @@ function SettingsContent() {
       const isQuyen = assigneeLower.includes("quyên") || assigneeLower.includes("quuyên") || assigneeLower.includes("quyen");
       if (isHoanhAnh && isQuyen && isOneDay) return true;
 
-      // 4. Managers/Admins can see and approve all leaves
-      if (isUserAdmin || isUserManager) return true;
+      // 4. Managers/Admins/users granted can_approve_leave can see and approve all leaves
+      if (isUserAdmin || isUserManager || approvalPerms.canApproveLeave) return true;
 
       return false;
     });
-  }, [tasks, currentUser, isApprover]);
+  }, [tasks, currentUser, isApprover, approvalPerms]);
 
   // Justifications approvals list (Admin, HR, Director, or department manager/deputy)
   const pendingExplanations = useMemo(() => {
     if (!currentUser || !isApprover) return [];
     
     const isUserAdmin = currentUser.isAdmin || (currentUser.role || "").toLowerCase() === "admin";
-    const isUserHR = currentUser.name === "Lại Nguyễn Lan Phương" || 
-                     currentUser.name === "Dương Nhật Hoành Anh" ||
-                     currentUser.name === "Lê Thị Hoa Đào" ||
-                     (currentUser.email || "").toLowerCase().trim() === "lehoadao2706@gmail.com" ||
-                     (currentUser.role || "").toLowerCase().includes("nhân sự") ||
+    // HR by role only — per-person grants now live in the approval_permissions table
+    const isUserHR = (currentUser.role || "").toLowerCase().includes("nhân sự") ||
                      (currentUser.role || "").toLowerCase().includes("nhan su");
     const isDirector = (currentUser.role || "").toLowerCase().includes("giám đốc") ||
                        (currentUser.role || "").toLowerCase().includes("giam doc");
@@ -382,7 +385,7 @@ function SettingsContent() {
                          (currentUser.role || "").toLowerCase().includes("leader");
 
     return explanations.filter(e => {
-      if (isUserAdmin || isUserHR || isDirector) return true;
+      if (isUserAdmin || isUserHR || isDirector || approvalPerms.canApproveJustification) return true;
       if (e.approver === currentUser.name) return true;
       
       // Department manager or deputy manager of the same department
@@ -391,7 +394,7 @@ function SettingsContent() {
 
       return false;
     });
-  }, [explanations, currentUser, isApprover]);
+  }, [explanations, currentUser, isApprover, approvalPerms]);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();

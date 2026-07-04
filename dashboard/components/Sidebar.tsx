@@ -21,6 +21,7 @@ import {
 import { useSidebar } from "./SidebarContext";
 import ThemeToggle from "./ThemeToggle";
 import { supabase } from "@/lib/supabase";
+import { fetchApprovalPermissions, hasAnyApprovalPermission } from "@/lib/approvers";
 
 function SidebarLinks({ isApprover, pathname, setSidebarOpen }: { isApprover: boolean; pathname: string; setSidebarOpen: (o: boolean) => void }) {
   const searchParams = useSearchParams();
@@ -107,10 +108,13 @@ export default function Sidebar() {
           .like("email", `%${email}%`)
           .maybeSingle();
 
+        const perms = await fetchApprovalPermissions(email);
+
         const role = empData?.role || (isAdmin ? "Admin" : "Nhân viên");
         const roleLower = role.toLowerCase();
-        const hasApprovalPrivileges = 
+        const hasApprovalPrivileges =
           isAdmin ||
+          hasAnyApprovalPermission(perms) ||
           roleLower.includes("trưởng phòng") ||
           roleLower.includes("truong phong") ||
           roleLower.includes("phó phòng") ||

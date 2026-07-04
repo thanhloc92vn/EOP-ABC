@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Bell, Search, Globe, ChevronDown, Menu, X, Sparkles, Loader2, Send, Copy, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { fetchApprovalPermissions, hasAnyApprovalPermission } from "@/lib/approvers";
 import { useSidebar } from "./SidebarContext";
 
 interface Props {
@@ -328,14 +329,14 @@ export default function Header({ title, subtitle }: Props) {
                            (userObj.role || "").toLowerCase().includes("pho truong phong") ||
                            (userObj.role || "").toLowerCase().includes("leader");
 
-      const isUserHR = userObj.name === "Lại Nguyễn Lan Phương" || 
-                       userObj.name === "Dương Nhật Hoành Anh" ||
-                       userObj.name === "Lê Thị Hoa Đào" ||
-                       (userObj.email || "").toLowerCase().trim() === "lehoadao2706@gmail.com" ||
-                       (userObj.role || "").toLowerCase().includes("nhân sự") ||
+      // HR by role only — per-person grants now live in the approval_permissions table
+      const isUserHR = (userObj.role || "").toLowerCase().includes("nhân sự") ||
                        (userObj.role || "").toLowerCase().includes("nhan su");
 
-      const hasApprovalPrivileges = isUserAdmin || isUserManager || isUserDeputy || isUserHR;
+      // Per-user approval grants from approval_permissions table
+      const perms = await fetchApprovalPermissions(userObj.email);
+
+      const hasApprovalPrivileges = isUserAdmin || isUserManager || isUserDeputy || isUserHR || hasAnyApprovalPermission(perms);
       if (!hasApprovalPrivileges) {
         setNotifications([]);
         return;
@@ -362,11 +363,11 @@ export default function Header({ title, subtitle }: Props) {
           const isQuyen = assigneeLower.includes("quyên") || assigneeLower.includes("quuyên") || assigneeLower.includes("quyen");
           if (isHoanhAnh && isQuyen && isOneDay) return true;
 
-          if (isUserAdmin || isUserManager || isUserHR) return true;
+          if (isUserAdmin || isUserManager || isUserHR || perms.canApproveLeave) return true;
         }
 
         if (isTrip) {
-          if (isUserAdmin || isUserManager || isUserHR) return true;
+          if (isUserAdmin || isUserManager || isUserHR || perms.canApproveTrip) return true;
         }
 
         return false;
@@ -377,7 +378,7 @@ export default function Header({ title, subtitle }: Props) {
                          (userObj.role || "").toLowerCase().includes("giam doc");
 
       const filteredJustifications = justificationsData.filter(e => {
-        if (isUserAdmin || isUserHR || isDirector) return true;
+        if (isUserAdmin || isUserHR || isDirector || perms.canApproveJustification) return true;
         if (userObj && e.approver === userObj.name) return true;
         
         // Department manager or deputy manager of the same department
