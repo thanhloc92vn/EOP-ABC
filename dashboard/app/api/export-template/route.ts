@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import PizZip from "pizzip";
 import Docxtemplater from "docxtemplater";
+import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import { docSoVietNam } from "@/lib/wordExporter";
 
@@ -16,8 +17,20 @@ export async function GET(request: NextRequest) {
       return new NextResponse("Missing taskId or type", { status: 400 });
     }
 
+    // RLS on tasks only allows authenticated reads — query with the caller's
+    // session token (same pattern as /api/ai-search), else the shared anon
+    // client returns no rows and every export 404s.
+    const supabaseToken = request.headers.get("x-supabase-auth");
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+    const dbClient = (supabaseToken && supabaseUrl && supabaseAnonKey)
+      ? createClient(supabaseUrl, supabaseAnonKey, {
+          global: { headers: { Authorization: `Bearer ${supabaseToken}` } }
+        })
+      : supabase;
+
     // 1. Fetch task from Supabase
-    const { data: task, error: taskError } = await supabase
+    const { data: task, error: taskError } = await dbClient
       .from("tasks")
       .select("notes, assignee, start_date, due_date")
       .eq("id", taskId)

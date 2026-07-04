@@ -892,8 +892,13 @@ ${tripRoutes.map((r, i) => `Chặng ${i + 1}:
     }
 
     try {
-      // 1. Try downloading from the API (which uses their original template docx files) with cache busting
-      const response = await fetch(`/api/export-template?taskId=${task.id}&type=${type}&t=${Date.now()}`);
+      // 1. Try downloading from the API (which uses their original template docx files) with cache busting.
+      // Send the session token so the API can read the task through RLS.
+      const { data: { session } } = await supabase.auth.getSession();
+      const headers: Record<string, string> = {};
+      if (session?.access_token) headers["x-supabase-auth"] = session.access_token;
+
+      const response = await fetch(`/api/export-template?taskId=${task.id}&type=${type}&t=${Date.now()}`, { headers });
       
       if (response.ok) {
         const blob = await response.blob();
