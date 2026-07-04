@@ -17,7 +17,7 @@ Nhiệm vụ của bạn là đọc nội dung văn bản (hoặc phân tích h�
 5. "sender_receiver": 
    - Nếu là công văn ĐẾN (incoming): Tên cơ quan/đơn vị GỬI ĐẾN (ví dụ: "Sở Xây dựng TP.HCM", "UBND TP. Cần Thơ").
    - Nếu là công văn ĐI (outgoing_1, outgoing_2, outgoing_hdqt): Tên cơ quan/đơn vị NHẬN (ví dụ: "Liên danh Nhà thầu thi công gói thầu XL-01", "Ủy ban nhân dân Quận 2").
-6. "summary": Tóm tắt nội dung chính (trích yếu) của công văn một cách ngắn gọn, súc tích (khoảng 1-3 câu).
+6. "summary": Trích yếu của công văn — KHÔNG tự tóm tắt. Hãy tìm dòng "V/v: ..." (Về việc) nằm ngay bên dưới dòng "Số: ..." ở góc trên bên trái văn bản, và CHÉP NGUYÊN VĂN nội dung sau chữ "V/v:" (bỏ dấu ngoặc kép nếu có, bỏ tiền tố "V/v:"/"Về việc:"). Ví dụ văn bản ghi: Số: 897/026/CV/TNE&C, dòng dưới là "V/v: Báo cáo tình hình triển khai thi công và khối lượng thực hiện tháng 06/2026..." thì summary = "Báo cáo tình hình triển khai thi công và khối lượng thực hiện tháng 06/2026...". CHỈ KHI văn bản hoàn toàn không có dòng "V/v"/"Về việc" mới được tự tóm tắt ngắn gọn 1-2 câu từ nội dung.
 7. "signer_recipient":
    - Nếu là công văn ĐẾN (incoming): Người nhận trực tiếp hoặc đơn vị nhận xử lý chính trong công ty.
    - Nếu là công văn ĐI (outgoing_1, outgoing_2, outgoing_hdqt): Người ký duyệt văn bản (ví dụ: "Giám đốc Dự án", "Trưởng phòng Vật tư").
