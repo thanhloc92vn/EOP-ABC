@@ -20,7 +20,11 @@ import {
   X,
   Upload,
   Check,
-  Settings
+  Settings,
+  UserX,
+  ArrowRightLeft,
+  ShieldAlert,
+  ChevronDown
 } from "lucide-react";
 
 const DEPARTMENTS = [
@@ -141,6 +145,15 @@ export default function EmployeeManagementPage() {
   // Batch Progress State
   const [totalFiles, setTotalFiles] = useState(0);
   const [processedFiles, setProcessedFiles] = useState(0);
+
+  // Handover Modal State (Admin Only)
+  const [showHandoverModal, setShowHandoverModal] = useState(false);
+  const [selectedEmployeeToHandover, setSelectedEmployeeToHandover] = useState<Employee | null>(null);
+  const [targetEmployeeId, setTargetEmployeeId] = useState<string>("");
+  const [transferTasks, setTransferTasks] = useState(true);
+  const [transferPermissions, setTransferPermissions] = useState(true);
+  const [lockAccount, setLockAccount] = useState(true);
+  const [isSubmittingHandover, setIsSubmittingHandover] = useState(false);
 
   // Fetch employees from Supabase
   const fetchEmployees = async () => {
@@ -705,6 +718,134 @@ export default function EmployeeManagementPage() {
 
   const canDeleteAll = canDelete;
 
+  const isOnlyAdmin = !!(currentUser && (
+    currentUser.isAdmin || 
+    currentUser.role.toLowerCase() === "admin" ||
+    currentUser.name === "Lại Nguyễn Lan Phương" ||
+    currentUser.name === "Dương Nhật Hoành Anh" ||
+    currentUser.email.toLowerCase().trim() === "lehoadao2706@gmail.com"
+  ));
+
+  const handleOpenHandoverModal = (emp: Employee) => {
+    setSelectedEmployeeToHandover(emp);
+    const availableTargets = employees.filter(
+      e => e.id !== emp.id && !e.status.toLowerCase().includes("nghỉ việc")
+    );
+    const sameDept = availableTargets.find(e => e.department === emp.department);
+    setTargetEmployeeId(sameDept ? sameDept.id : (availableTargets[0]?.id || ""));
+    setTransferTasks(true);
+    setTransferPermissions(true);
+    setLockAccount(true);
+    setShowHandoverModal(true);
+  };
+
+  const handleExecuteHandover = async () => {
+    if (!selectedEmployeeToHandover) return;
+
+    if (transferTasks || transferPermissions) {
+      if (!targetEmployeeId) {
+        alert("Vui lòng chọn nhân sự tiếp nhận bàn giao!");
+        return;
+      }
+    }
+
+    const targetEmp = employees.find(e => e.id === targetEmployeeId);
+
+    const oldName = selectedEmployeeToHandover.name.trim();
+    const oldEmail = (selectedEmployeeToHandover.email || "").trim().toLowerCase();
+    const newName = targetEmp ? targetEmp.name.trim() : "";
+    const newEmail = targetEmp ? (targetEmp.email || "").trim().toLowerCase() : "";
+
+    const confirmMsg = `XÁC NHẬN BÀN GIAO & KHÓA TÀI KHOẢN:\n\n` +
+      `• Nhân sự nghỉ việc: ${oldName} (${oldEmail || "Không có email"})\n` +
+      `• Nhân sự tiếp nhận: ${newName ? `${newName} (${newEmail})` : "Không chọn"}\n\n` +
+      `Các hành động sẽ được xử lý tự động:\n` +
+      `${transferPermissions ? "1. Chuyển toàn bộ quyền duyệt (xe, phòng họp, nghỉ phép, công tác) sang email mới.\n" : ""}` +
+      `${transferTasks ? "2. Chuyển tất cả Task công việc dở dang sang nhân sự mới.\n" : ""}` +
+      `${lockAccount ? "3. Cập nhật trạng thái 'NV Nghỉ việc' & khóa tài khoản đăng nhập Google ngay lập tức." : ""}\n\n` +
+      `Bạn có chắc chắn muốn thực hiện?`;
+
+    if (!confirm(confirmMsg)) return;
+
+    try {
+      setIsSubmittingHandover(true);
+
+      // 1. Transfer approval_permissions
+      if (transferPermissions && oldEmail && oldEmail !== "n/a" && newEmail && newEmail !== "n/a") {
+        const { data: permData } = await supabase
+          .from("approval_permissions")
+          .select("*")
+          .ilike("email", oldEmail)
+          .maybeSingle();
+
+        if (permData) {
+          const { id, created_at, email, ...permsToCopy } = permData;
+
+          const { data: targetPerm } = await supabase
+            .from("approval_permissions")
+            .select("id")
+            .ilike("email", newEmail)
+            .maybeSingle();
+
+          if (targetPerm) {
+            await supabase
+              .from("approval_permissions")
+              .update(permsToCopy)
+              .eq("id", targetPerm.id);
+          } else {
+            await supabase
+              .from("approval_permissions")
+              .insert([{ email: newEmail, ...permsToCopy }]);
+          }
+
+          await supabase
+            .from("approval_permissions")
+            .delete()
+            .ilike("email", oldEmail);
+        }
+      }
+
+      // 2. Transfer tasks
+      if (transferTasks && newName) {
+        await supabase
+          .from("tasks")
+          .update({
+            assignee_name: newName,
+            assigned_to: targetEmp?.id
+          })
+          .or(`assignee_name.ilike.%${oldName}%,assigned_to.eq.${selectedEmployeeToHandover.id}`);
+      }
+
+      // 3. Lock account & set NV Nghỉ việc
+      if (lockAccount) {
+        const noteTag = `[Đã bàn giao cho ${newName || "N/A"} ngày ${new Date().toLocaleDateString('vi-VN')}]`;
+        const updatedNotes = selectedEmployeeToHandover.notes
+          ? `${selectedEmployeeToHandover.notes} ${noteTag}`
+          : noteTag;
+
+        const { error: empErr } = await supabase
+          .from("employees")
+          .update({
+            status: "NV Nghỉ việc",
+            notes: updatedNotes
+          })
+          .eq("id", selectedEmployeeToHandover.id);
+
+        if (empErr) throw empErr;
+      }
+
+      alert(`Đã hoàn tất bàn giao & khóa tài khoản của nhân sự ${oldName}!`);
+      setShowHandoverModal(false);
+      setSelectedEmployeeToHandover(null);
+      fetchEmployees();
+    } catch (err: any) {
+      console.error("Error executing handover:", err);
+      alert("Lỗi khi bàn giao: " + (err.message || err));
+    } finally {
+      setIsSubmittingHandover(false);
+    }
+  };
+
   return (
     <div 
       className="flex min-h-screen bg-[#F7F9FC] relative"
@@ -790,6 +931,23 @@ export default function EmployeeManagementPage() {
                 multiple
                 className="hidden"
               />
+              {isOnlyAdmin && (
+                <button 
+                  onClick={() => {
+                    const activeEmps = employees.filter(e => !e.status.toLowerCase().includes("nghỉ việc"));
+                    if (activeEmps.length > 0) {
+                      handleOpenHandoverModal(activeEmps[0]);
+                    } else {
+                      alert("Không tìm thấy nhân sự khả thi để bàn giao.");
+                    }
+                  }}
+                  className="flex items-center gap-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-md shadow-amber-500/20 active:scale-95 transition-all cursor-pointer"
+                  title="Bàn giao công việc & Khóa tài khoản nhân sự nghỉ việc (Chỉ Admin)"
+                >
+                  <UserX size={14} />
+                  Bàn giao & Khóa tài khoản
+                </button>
+              )}
               <button 
                 onClick={() => fileInputRef.current?.click()}
                 className="flex items-center gap-1.5 bg-white border border-slate-200 text-slate-700 text-xs font-semibold px-4 py-2.5 rounded-xl hover:bg-slate-50 transition-all shadow-sm cursor-pointer"
@@ -1036,7 +1194,16 @@ export default function EmployeeManagementPage() {
 
                         {/* Thao tác */}
                         <td className="px-4 py-3 text-center">
-                          <div className="flex items-center justify-center gap-2">
+                          <div className="flex items-center justify-center gap-1.5">
+                            {isOnlyAdmin && (
+                              <button 
+                                onClick={() => handleOpenHandoverModal(emp)} 
+                                className="p-1.5 bg-amber-50 hover:bg-amber-100 border border-amber-200/80 rounded-lg text-amber-600 transition-all shadow-sm active:scale-95" 
+                                title="Bàn giao công việc & Khóa tài khoản (Chỉ Admin)"
+                              >
+                                <UserX size={13} />
+                              </button>
+                            )}
                             {canDelete && (
                               <button onClick={() => handleDelete(emp.id, emp.name)} className="p-1.5 hover:bg-rose-100 rounded-lg text-rose-500 transition-colors" title="Xóa nhân sự">
                                 <Trash2 size={13} />
@@ -1058,6 +1225,130 @@ export default function EmployeeManagementPage() {
           )}
         </main>
       </div>
+
+      {/* Handover & Lock Account Modal (Admin Only) */}
+      {showHandoverModal && selectedEmployeeToHandover && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl border border-slate-200/80 animate-in fade-in zoom-in-95 duration-200 text-xs">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-amber-600 to-amber-700 px-6 py-4 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-amber-500/30 rounded-xl">
+                  <UserX size={18} className="text-white" />
+                </div>
+                <div>
+                  <h3 className="font-heading font-extrabold text-sm tracking-tight">Bàn giao & Khóa tài khoản</h3>
+                  <p className="text-[11px] text-amber-100 font-medium">Chỉ Quản trị viên (Admin) được cấp quyền thao tác</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowHandoverModal(false)} 
+                className="text-amber-100 hover:text-white p-1 rounded-lg transition-colors cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 space-y-5 text-slate-700 font-medium">
+              {/* Employee to handover Selection */}
+              <SearchableEmployeeSelect
+                employees={employees}
+                selectedId={selectedEmployeeToHandover.id}
+                onSelect={(emp) => handleOpenHandoverModal(emp)}
+                label="1. Nhân sự nghỉ việc (Cần khóa tài khoản & bàn giao)"
+                placeholder="Gõ tên, email để tìm nhân sự nghỉ việc..."
+                themeColor="amber"
+              />
+
+              {/* Target Selection */}
+              <SearchableEmployeeSelect
+                employees={employees}
+                selectedId={targetEmployeeId}
+                onSelect={(emp) => setTargetEmployeeId(emp.id)}
+                excludeId={selectedEmployeeToHandover.id}
+                label="2. Nhân sự tiếp nhận mới (Nhận bàn giao Task & Quyền)"
+                placeholder="-- Gõ tên, email để tìm nhân sự tiếp nhận --"
+                themeColor="slate"
+              />
+
+              {/* Options Checkboxes */}
+              <div className="space-y-2.5 border-t border-slate-100 pt-3">
+                <div className="text-xs font-bold text-slate-800">Tùy chọn xử lý tự động:</div>
+
+                <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={transferPermissions}
+                    onChange={(e) => setTransferPermissions(e.target.checked)}
+                    className="mt-0.5 rounded border-slate-300 text-amber-600 focus:ring-amber-500"
+                  />
+                  <div>
+                    <span className="font-semibold text-slate-800">Chuyển quyền duyệt đơn (Tự động)</span>
+                    <p className="text-[11px] text-slate-500">Chuyển toàn bộ cờ duyệt xe, phòng họp, nghỉ phép, công tác trong bảng `approval_permissions` sang email mới.</p>
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={transferTasks}
+                    onChange={(e) => setTransferTasks(e.target.checked)}
+                    className="mt-0.5 rounded border-slate-300 text-amber-600 focus:ring-amber-500"
+                  />
+                  <div>
+                    <span className="font-semibold text-slate-800">Bàn giao tất cả Task dở dang</span>
+                    <p className="text-[11px] text-slate-500">Cập nhật người phụ trách (assignee) của các công việc đang thực hiện sang tên nhân sự mới.</p>
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={lockAccount}
+                    onChange={(e) => setLockAccount(e.target.checked)}
+                    className="mt-0.5 rounded border-slate-300 text-amber-600 focus:ring-amber-500"
+                  />
+                  <div>
+                    <span className="font-semibold text-slate-800">Khóa tài khoản & Đổi trạng thái NV Nghỉ việc</span>
+                    <p className="text-[11px] text-slate-500">Đổi trạng thái thành "NV Nghỉ việc". Cổng đăng nhập Google sẽ ngắt quyền truy cập ngay lập tức.</p>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            {/* Footer Buttons */}
+            <div className="bg-slate-50 px-6 py-4 flex items-center justify-end gap-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowHandoverModal(false)}
+                disabled={isSubmittingHandover}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 hover:bg-slate-200/50 rounded-xl transition-all cursor-pointer"
+              >
+                Hủy bỏ
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteHandover}
+                disabled={isSubmittingHandover}
+                className="flex items-center gap-2 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white text-xs font-bold px-5 py-2.5 rounded-xl shadow-lg shadow-amber-600/20 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
+              >
+                {isSubmittingHandover ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" />
+                    Đang xử lý bàn giao...
+                  </>
+                ) : (
+                  <>
+                    <ArrowRightLeft size={14} />
+                    Xác nhận bàn giao & Khóa
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add Employee Modal */}
       {showAddModal && (
@@ -1752,5 +2043,147 @@ function EditableNoteSelect({ value, onSave, readOnly = false }: EditableNoteSel
         </option>
       ))}
     </select>
+  );
+}
+
+function SearchableEmployeeSelect({
+  employees,
+  selectedId,
+  onSelect,
+  placeholder,
+  label,
+  excludeId,
+  themeColor = "slate"
+}: {
+  employees: Employee[];
+  selectedId: string;
+  onSelect: (emp: Employee) => void;
+  placeholder: string;
+  label: string;
+  excludeId?: string;
+  themeColor?: "amber" | "slate";
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const activeEmployees = employees.filter(
+    e => e.id !== excludeId && !e.status.toLowerCase().includes("nghỉ việc")
+  );
+
+  const filtered = activeEmployees.filter(e => {
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return true;
+    return (
+      e.name.toLowerCase().includes(q) ||
+      e.email.toLowerCase().includes(q) ||
+      e.department.toLowerCase().includes(q) ||
+      e.position.toLowerCase().includes(q) ||
+      e.employee_code.toLowerCase().includes(q)
+    );
+  });
+
+  const selectedEmp = employees.find(e => e.id === selectedId);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  return (
+    <div className="space-y-1.5 relative" ref={dropdownRef}>
+      <label className="block text-xs font-bold text-slate-800">
+        {label} <span className="text-rose-500">*</span>
+      </label>
+
+      {/* Selected Box Button */}
+      <div
+        onClick={() => setIsOpen(!isOpen)}
+        className={`w-full px-3.5 py-2.5 border rounded-xl flex items-center justify-between cursor-pointer transition-all shadow-sm ${
+          themeColor === "amber"
+            ? "border-amber-200 bg-amber-50/70 hover:bg-amber-100/60 text-slate-900 font-bold"
+            : "border-slate-200 bg-white hover:bg-slate-50 text-slate-800 font-semibold"
+        }`}
+      >
+        {selectedEmp ? (
+          <div className="flex flex-col min-w-0 pr-2">
+            <span className="font-bold text-slate-900 truncate">
+              {selectedEmp.name} <span className="text-slate-500 font-normal">({selectedEmp.position})</span>
+            </span>
+            <span className="text-[11px] text-slate-500 truncate font-mono">
+              {selectedEmp.department} {selectedEmp.email !== "N/A" ? `• ${selectedEmp.email}` : ""}
+            </span>
+          </div>
+        ) : (
+          <span className="text-slate-400 italic text-xs">{placeholder}</span>
+        )}
+        <ChevronDown size={15} className={`text-slate-400 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`} />
+      </div>
+
+      {/* Dropdown Menu Popup */}
+      {isOpen && (
+        <div className="absolute left-0 right-0 top-full mt-1.5 bg-white border border-slate-200 rounded-2xl shadow-2xl z-[60] overflow-hidden flex flex-col max-h-64 animate-in fade-in zoom-in-95 duration-150">
+          {/* Search Input inside Dropdown */}
+          <div className="p-2.5 border-b border-slate-100 bg-slate-50 flex items-center gap-2">
+            <Search size={14} className="text-slate-400 ml-1 shrink-0" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Gõ tên, email, phòng ban để tìm..."
+              autoFocus
+              className="w-full bg-transparent text-xs outline-none font-semibold text-slate-800 placeholder:text-slate-400"
+            />
+            {searchQuery && (
+              <button onClick={() => setSearchQuery("")} className="text-slate-400 hover:text-slate-600 p-0.5">
+                <X size={12} />
+              </button>
+            )}
+          </div>
+
+          {/* Employee List */}
+          <div className="overflow-y-auto flex-1 divide-y divide-slate-100">
+            {filtered.length > 0 ? (
+              filtered.map((emp) => {
+                const isSelected = emp.id === selectedId;
+                return (
+                  <div
+                    key={emp.id}
+                    onClick={() => {
+                      onSelect(emp);
+                      setIsOpen(false);
+                      setSearchQuery("");
+                    }}
+                    className={`p-2.5 hover:bg-amber-50/80 cursor-pointer transition-colors flex items-center justify-between gap-2 text-xs ${
+                      isSelected ? "bg-amber-100/60 font-bold" : ""
+                    }`}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-slate-900">{emp.name}</span>
+                        <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md font-semibold">{emp.position}</span>
+                      </div>
+                      <div className="text-[11px] text-slate-500 font-medium truncate mt-0.5">
+                        {emp.department} {emp.email !== "N/A" ? `• ${emp.email}` : ""}
+                      </div>
+                    </div>
+                    {isSelected && <Check size={14} className="text-amber-600 shrink-0" />}
+                  </div>
+                );
+              })
+            ) : (
+              <div className="p-4 text-center text-slate-400 text-xs italic">
+                Không tìm thấy nhân sự phù hợp với từ khóa "{searchQuery}"
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

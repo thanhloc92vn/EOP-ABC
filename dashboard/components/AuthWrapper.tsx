@@ -78,7 +78,7 @@ export default function AuthWrapper({ children }: { children: React.ReactNode })
         // 2. Check employees table (If not in allowed_users or not Admin)
         const { data: empData, error: empError } = await supabase
           .from("employees")
-          .select("role")
+          .select("role, status")
           .like("email", `%${userEmail.trim()}%`)
           .maybeSingle();
 
@@ -90,7 +90,14 @@ export default function AuthWrapper({ children }: { children: React.ReactNode })
         }
 
         if (empData) {
-          // Found in employees table -> allow login
+          const statusLower = (empData.status || "").toLowerCase().trim();
+          if (statusLower.includes("nghỉ việc") || statusLower.includes("nghi viec")) {
+            setAuthError("Tài khoản của bạn đã ở trạng thái Nghỉ việc và bị khóa quyền truy cập hệ thống. Vui lòng liên hệ Phòng HCNS.");
+            setIsAdmin(false);
+            return;
+          }
+
+          // Active employee -> allow login
           setIsAdmin(true);
           setAuthError(null);
           lastCheckedEmail.current = userEmail;
