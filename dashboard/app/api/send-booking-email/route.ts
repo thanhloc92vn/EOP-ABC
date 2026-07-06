@@ -174,8 +174,8 @@ export async function POST(request: NextRequest) {
       infoRow("Số lượng người", String(booking.attendee_count || attendees.length || "-")),
       attendees.length > 0 ? infoRow("Nhân viên tham dự", attendees.join(", ")) : "",
       booking.notes ? infoRow("Ghi chú hậu cần", booking.notes) : "",
-      infoRow("Trưởng phòng xác nhận", booking.manager_approved_by),
-      infoRow("Người duyệt cuối (HCNS)", approverName || booking.final_decision_by),
+      booking.manager_approved_by ? infoRow("Trưởng phòng xác nhận", booking.manager_approved_by) : "",
+      infoRow(isApproved ? "Người duyệt cuối (HCNS)" : "Người từ chối", approverName || booking.final_decision_by),
     ].join("");
 
     const resultBlock = isApproved

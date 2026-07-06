@@ -1101,13 +1101,22 @@ function SettingsContent() {
 
                             <div className="flex items-center justify-end gap-2 pt-1 border-t border-slate-100">
                               {isManagerStep ? (
-                                <button
-                                  type="button"
-                                  onClick={() => handleManagerConfirmBooking(b)}
-                                  className="bg-[#005BAC] hover:bg-blue-700 text-white text-[10px] font-bold px-4 py-2 rounded-lg transition-all active:scale-95 shadow-sm cursor-pointer"
-                                >
-                                  Xác nhận & chuyển HCNS
-                                </button>
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleManagerConfirmBooking(b)}
+                                    className="bg-[#005BAC] hover:bg-blue-700 text-white text-[10px] font-bold px-4 py-2 rounded-lg transition-all active:scale-95 shadow-sm cursor-pointer"
+                                  >
+                                    Xác nhận & chuyển HCNS
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleFinalBookingDecision(b, false)}
+                                    className="bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-bold px-4 py-2 rounded-lg transition-all active:scale-95 shadow-sm cursor-pointer"
+                                  >
+                                    Từ chối & gửi mail
+                                  </button>
+                                </>
                               ) : (
                                 <>
                                   <button
