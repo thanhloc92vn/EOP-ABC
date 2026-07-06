@@ -23,7 +23,7 @@ import {
   CalendarDays,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { isMarketingTeamBooking, MARKETING_TEAM_LEADER } from "@/lib/approvers";
+import { isMarketingTeamMember, MARKETING_TEAM_LEADER } from "@/lib/approvers";
 
 type BookingType = "xe" | "phong_hop";
 
@@ -362,7 +362,7 @@ function BookingContent() {
       // báo Tổ trưởng Marketing). Chạy nền, lỗi không chặn việc gửi đăng ký.
       try {
         let approverEmails = "";
-        if (isMarketingTeamBooking(currentUser.name)) {
+        if (isMarketingTeamMember(currentUser.name)) {
           approverEmails = employees
             .filter((e) => e.name.trim().toLowerCase() === MARKETING_TEAM_LEADER.toLowerCase())
             .map((e) => e.email)

@@ -5,7 +5,18 @@ import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { Settings, Database, Info, Key, CheckCircle, ShieldAlert, Check, X, Calendar, Briefcase, User, CarFront, DoorOpen, Mail } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { fetchApprovalPermissions, hasAnyApprovalPermission, isMarketingTeamBooking, isMarketingTeamLeader, NO_APPROVAL_PERMISSIONS, type ApprovalPermissions } from "@/lib/approvers";
+import {
+  fetchApprovalPermissions,
+  hasAnyApprovalPermission,
+  isMarketingTeamMember,
+  isMarketingTeamLeader,
+  isManagerRole,
+  getRequestStage,
+  isLeaveTripCap1Approver,
+  isLeaveTripCap2Approver,
+  NO_APPROVAL_PERMISSIONS,
+  type ApprovalPermissions,
+} from "@/lib/approvers";
 import { useSearchParams } from "next/navigation";
 
 function SettingsContent() {
@@ -38,6 +49,9 @@ function SettingsContent() {
   // Resource bookings (đăng ký xe / phòng họp) States
   const [resourceBookings, setResourceBookings] = useState<any[]>([]);
   const [loadingBookings, setLoadingBookings] = useState(false);
+
+  // Danh bạ email/phòng ban tra theo tên — bảng tasks không có cột email, cần tra khi gửi mail
+  const [employeeDirectory, setEmployeeDirectory] = useState<{ name: string; email: string; department: string; role: string }[]>([]);
 
   // SMTP gửi email — dùng chung bộ lưu trữ với trang C&B (localStorage tnec_cb_smtp_*)
   const [smtpConfig, setSmtpConfig] = useState({
@@ -78,6 +92,7 @@ function SettingsContent() {
       fetchTasks();
       fetchExplanations();
       fetchResourceBookings();
+      fetchEmployeeDirectory();
     }
   }, []);
 
@@ -164,6 +179,25 @@ function SettingsContent() {
       console.error("Error fetching justifications in settings:", err);
     } finally {
       setLoadingExplanations(false);
+    }
+  };
+
+  const fetchEmployeeDirectory = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("employees")
+        .select("name, email, department, role");
+      if (error) throw error;
+      if (data) {
+        setEmployeeDirectory(data.map((e: any) => ({
+          name: e.name,
+          email: e.email || "",
+          department: e.department || "",
+          role: e.role || ""
+        })));
+      }
+    } catch (err) {
+      console.error("Error fetching employee directory in settings:", err);
     }
   };
 
@@ -310,111 +344,176 @@ function SettingsContent() {
     }
   };
 
-  const handleApprove = async (taskId: string, isTrip: boolean) => {
+  // Cấp 1: Trưởng phòng/Tổ trưởng xác nhận -> chuyển HCNS duyệt cuối + báo email cấp 2
+  const handleCap1Confirm = async (task: any, isTrip: boolean) => {
+    if (!currentUser) return;
     try {
-      if (isTrip) {
-        // Fetch task details to copy to business_trips
-        const { data: taskData } = await supabase
-          .from("tasks")
-          .select("*")
-          .eq("id", taskId)
-          .maybeSingle();
+      const { error } = await supabase
+        .from("tasks")
+        .update({
+          approval_stage: "pending_hcns",
+          manager_approved_by: currentUser.name,
+          manager_approved_at: new Date().toISOString(),
+        })
+        .eq("id", task.id);
 
-        if (taskData) {
-          let cleanDest = "Chưa xác định";
-          let cleanMission = "Đi công tác";
-          if (taskData.notes) {
-            const destMatch = taskData.notes.match(/-\s+\*\*Điểm công tác chính\*\*:\s*(.*)/i);
-            if (destMatch) cleanDest = destMatch[1].trim();
+      if (error) throw error;
 
-            const missionMatch = taskData.notes.match(/-\s+\*\*Nhiệm vụ cụ thể\*\*:\s*(.*)/i);
-            if (missionMatch) cleanMission = missionMatch[1].trim();
-          }
+      let emailMsg = "";
+      try {
+        const { data: perms } = await supabase
+          .from("approval_permissions")
+          .select("email, can_approve_trip, can_approve_leave");
+        const approverEmails = (perms || [])
+          .filter((p: any) => (isTrip ? p.can_approve_trip : p.can_approve_leave) && p.email)
+          .map((p: any) => p.email)
+          .join(", ");
 
-          let costVal = 0;
-          if (taskData.notes) {
-            const metaMatch = taskData.notes.match(/<!--METADATA:(.*?)-->/);
-            if (metaMatch) {
-              try {
-                const meta = JSON.parse(metaMatch[1]);
-                if (meta && typeof meta.totalAmount !== "undefined") {
-                  costVal = Number(meta.totalAmount);
-                }
-              } catch (e) {
-                console.error("Error parsing task metadata in settings:", e);
+        if (approverEmails) {
+          const res = await fetch("/api/send-request-email", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              mode: "notify_approver",
+              stage: "hcns",
+              requestType: isTrip ? "trip" : "leave",
+              smtpConfig: readSmtpConfig(),
+              task: { ...task, manager_approved_by: currentUser.name },
+              approverEmails,
+              siteUrl: window.location.origin,
+            }),
+          });
+          const result = await res.json();
+          emailMsg = res.ok ? `\n📧 ${result.message}` : `\n⚠️ Chưa gửi được email báo HCNS: ${result.error}`;
+        }
+      } catch (mailErr: any) {
+        emailMsg = `\n⚠️ Chưa gửi được email báo HCNS: ${mailErr.message || "lỗi kết nối"}`;
+      }
+
+      alert(`Đã xác nhận! Yêu cầu được chuyển sang HCNS để duyệt cuối.${emailMsg}`);
+      fetchTasks();
+    } catch (err) {
+      console.error("Error confirming request (manager step):", err);
+      alert("Lỗi khi xác nhận yêu cầu!");
+    }
+  };
+
+  // Cấp 2 (HCNS) hoặc từ chối ở cấp 1 — duyệt cuối / từ chối + gửi email kết quả cho người gửi đơn
+  const handleFinalDecision = async (task: any, isTrip: boolean, approve: boolean) => {
+    if (!currentUser) return;
+    let rejectReason = "";
+    if (!approve) {
+      rejectReason = window.prompt("Nhập lý do từ chối (sẽ được gửi email cho người gửi đơn):") || "";
+      if (!rejectReason.trim()) {
+        alert("Vui lòng nhập lý do từ chối!");
+        return;
+      }
+    }
+
+    try {
+      if (approve && isTrip) {
+        let cleanDest = "Chưa xác định";
+        let cleanMission = "Đi công tác";
+        if (task.notes) {
+          const destMatch = task.notes.match(/-\s+\*\*Điểm công tác chính\*\*:\s*(.*)/i);
+          if (destMatch) cleanDest = destMatch[1].trim();
+
+          const missionMatch = task.notes.match(/-\s+\*\*Nhiệm vụ cụ thể\*\*:\s*(.*)/i);
+          if (missionMatch) cleanMission = missionMatch[1].trim();
+        }
+
+        let costVal = 0;
+        if (task.notes) {
+          const metaMatch = task.notes.match(/<!--METADATA:(.*?)-->/);
+          if (metaMatch) {
+            try {
+              const meta = JSON.parse(metaMatch[1]);
+              if (meta && typeof meta.totalAmount !== "undefined") {
+                costVal = Number(meta.totalAmount);
               }
-            }
-            
-            if (!costVal) {
-              const totalMatch = taskData.notes.match(/\*\*TỔNG ĐỀ NGHỊ THANH TOÁN\*\*:\s*([0-9.,\s]+)/i);
-              if (totalMatch) {
-                const cleanNum = totalMatch[1].replace(/[.,\s]/g, "");
-                costVal = Number(cleanNum);
-              }
+            } catch (e) {
+              console.error("Error parsing task metadata in settings:", e);
             }
           }
 
           if (!costVal) {
-            const days = taskData.start_date && taskData.due_date 
-              ? Math.max(1, Math.round((new Date(taskData.due_date).getTime() - new Date(taskData.start_date).getTime()) / (1000 * 60 * 60 * 24)) + 1)
-              : 1;
-            const nights = days >= 2 ? days - 1 : 0;
-            const hotelRate = 350000;
-            costVal = days * 120000 + nights * hotelRate;
+            const totalMatch = task.notes.match(/\*\*TỔNG ĐỀ NGHỊ THANH TOÁN\*\*:\s*([0-9.,\s]+)/i);
+            if (totalMatch) {
+              const cleanNum = totalMatch[1].replace(/[.,\s]/g, "");
+              costVal = Number(cleanNum);
+            }
           }
+        }
 
-          const newTrip = {
-            name: taskData.assignee || "Nhân viên",
-            dest: cleanDest,
-            from_date: taskData.start_date || new Date().toISOString().split("T")[0],
-            to_date: taskData.due_date || new Date().toISOString().split("T")[0],
-            purpose: cleanMission,
-            cost: costVal,
-            status: "Đã duyệt",
-            task_id: taskId
-          };
+        if (!costVal) {
+          const days = task.start_date && task.due_date
+            ? Math.max(1, Math.round((new Date(task.due_date).getTime() - new Date(task.start_date).getTime()) / (1000 * 60 * 60 * 24)) + 1)
+            : 1;
+          const nights = days >= 2 ? days - 1 : 0;
+          const hotelRate = 350000;
+          costVal = days * 120000 + nights * hotelRate;
+        }
 
-          // Insert into business_trips
-          const { error: insertError } = await supabase
-            .from("business_trips")
-            .insert([newTrip]);
+        const newTrip = {
+          name: task.assignee || "Nhân viên",
+          dest: cleanDest,
+          from_date: task.start_date || new Date().toISOString().split("T")[0],
+          to_date: task.due_date || new Date().toISOString().split("T")[0],
+          purpose: cleanMission,
+          cost: costVal,
+          status: "Đã duyệt",
+          task_id: task.id
+        };
 
-          if (insertError) {
-            console.error("Error inserting business trip:", insertError.message);
-          }
+        const { error: insertError } = await supabase
+          .from("business_trips")
+          .insert([newTrip]);
+
+        if (insertError) {
+          console.error("Error inserting business trip:", insertError.message);
         }
       }
 
       const { error } = await supabase
         .from("tasks")
-        .update({
-          status: isTrip ? "in_progress" : "completed",
-          progress: isTrip ? 50 : 100
-        })
-        .eq("id", taskId);
-      
-      if (error) throw error;
-      alert(`Đã phê duyệt thành công yêu cầu ${isTrip ? "đi công tác" : "nghỉ phép"}!`);
-      fetchTasks();
-    } catch (err) {
-      console.error("Error approving task:", err);
-      alert("Lỗi khi phê duyệt yêu cầu!");
-    }
-  };
+        .update(
+          approve
+            ? { status: isTrip ? "in_progress" : "completed", progress: isTrip ? 50 : 100, final_decision_by: currentUser.name, final_decision_at: new Date().toISOString() }
+            : { status: "need_revision", reject_reason: rejectReason.trim(), final_decision_by: currentUser.name, final_decision_at: new Date().toISOString() }
+        )
+        .eq("id", task.id);
 
-  const handleReject = async (taskId: string) => {
-    try {
-      const { error } = await supabase
-        .from("tasks")
-        .update({ status: "need_revision" })
-        .eq("id", taskId);
-      
       if (error) throw error;
-      alert("Đã từ chối yêu cầu.");
+
+      let emailMsg = "";
+      try {
+        const requesterEmail = employeeDirectory.find(e => e.name === task.assignee)?.email || "";
+        if (requesterEmail) {
+          const res = await fetch("/api/send-request-email", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              requestType: isTrip ? "trip" : "leave",
+              smtpConfig: readSmtpConfig(),
+              task,
+              requesterEmail,
+              decision: approve ? "approved" : "rejected",
+              rejectReason: rejectReason.trim(),
+              deciderName: currentUser.name,
+            }),
+          });
+          const result = await res.json();
+          emailMsg = res.ok ? `\n📧 ${result.message}` : `\n⚠️ Chưa gửi được email: ${result.error}`;
+        }
+      } catch (mailErr: any) {
+        emailMsg = `\n⚠️ Chưa gửi được email: ${mailErr.message || "lỗi kết nối"}`;
+      }
+
+      alert(`${approve ? "Đã phê duyệt" : "Đã từ chối"} yêu cầu ${isTrip ? "đi công tác" : "nghỉ phép"}.${emailMsg}`);
       fetchTasks();
     } catch (err) {
-      console.error("Error rejecting task:", err);
-      alert("Lỗi khi từ chối yêu cầu!");
+      console.error("Error finalizing request decision:", err);
+      alert("Lỗi khi xử lý yêu cầu!");
     }
   };
 
@@ -473,69 +572,56 @@ function SettingsContent() {
   }, [currentUser, approvalPerms]);
 
   // Business trip approvals list (Trưởng phòng & Admin only)
+  // Đơn công tác chờ duyệt — 2 cấp: Trưởng phòng/Tổ trưởng xác nhận (manager) -> HCNS duyệt cuối (hcns).
+  // Mỗi task được gắn thêm `stage` để UI hiển thị đúng badge + nút thao tác tương ứng.
   const pendingTrips = useMemo(() => {
     if (!currentUser || !isApprover) return [];
-    
     const isUserAdmin = currentUser.isAdmin || (currentUser.role || "").toLowerCase() === "admin";
-    const isUserManager = (currentUser.role || "").toLowerCase().includes("trưởng phòng") || 
-                          (currentUser.role || "").toLowerCase().includes("truong phong") ||
-                          (currentUser.role || "").toLowerCase().includes("giám đốc") ||
-                          (currentUser.role || "").toLowerCase().includes("giam doc") ||
-                          (currentUser.role || "").toLowerCase().includes("quản lý") ||
-                          (currentUser.role || "").toLowerCase().includes("quan ly") ||
-                          (currentUser.role || "").toLowerCase().includes("quyền trưởng phòng") ||
-                          (currentUser.role || "").toLowerCase().includes("quyen truong phong");
 
-    // Only Admin, Trưởng phòng and users granted can_approve_trip can see/approve trips
-    if (!isUserAdmin && !isUserManager && !approvalPerms.canApproveTrip) return [];
-
-    return tasks.filter(t => 
-      t.status === "pending_approval" && 
-      (t.title.toLowerCase().startsWith("công tác") || t.title.toLowerCase().includes("cong tac"))
-    );
+    return tasks
+      .filter(t => t.status === "pending_approval" && (t.title.toLowerCase().startsWith("công tác") || t.title.toLowerCase().includes("cong tac")))
+      .map(t => ({ ...t, stage: getRequestStage(t) }))
+      .filter(t => {
+        if (t.stage === "manager") {
+          return isLeaveTripCap1Approver({
+            currentUserName: currentUser.name,
+            currentUserRole: currentUser.role,
+            currentUserIsAdmin: isUserAdmin,
+            assigneeName: t.assignee,
+            taskNotes: t.notes,
+            taskTitleLower: t.title.toLowerCase(),
+          });
+        }
+        return isLeaveTripCap2Approver({ currentUserIsAdmin: isUserAdmin, approvalPerms, isTrip: true });
+      });
   }, [tasks, currentUser, isApprover, approvalPerms]);
 
-  // Leave approvals list (custom rules)
+  // Đơn nghỉ phép chờ duyệt — cùng luồng 2 cấp, giữ nguyên các quy tắc đặc cách hiện có
+  // (người duyệt được chỉ định tường minh, Quỳnh/Hằng, Hoành Anh/Quyên) ở cấp 1.
   const pendingLeaves = useMemo(() => {
     if (!currentUser || !isApprover) return [];
-
     const isUserAdmin = currentUser.isAdmin || (currentUser.role || "").toLowerCase() === "admin";
-    const isUserManager = (currentUser.role || "").toLowerCase().includes("trưởng phòng") || 
-                          (currentUser.role || "").toLowerCase().includes("truong phong") ||
-                          (currentUser.role || "").toLowerCase().includes("giám đốc") ||
-                          (currentUser.role || "").toLowerCase().includes("giam doc") ||
-                          (currentUser.role || "").toLowerCase().includes("quản lý") ||
-                          (currentUser.role || "").toLowerCase().includes("quan ly") ||
-                          (currentUser.role || "").toLowerCase().includes("quyền trưởng phòng") ||
-                          (currentUser.role || "").toLowerCase().includes("quyen truong phong");
 
-    return tasks.filter(t => {
-      if (t.status !== "pending_approval") return false;
-      const titleLower = t.title.toLowerCase();
-      if (!titleLower.startsWith("nghỉ phép") && !titleLower.includes("nghi phep")) return false;
-
-      // 1. Explicitly designated approver
-      if (t.notes && t.notes.includes(`Người duyệt: ${currentUser.name}`)) return true;
-
-      const assigneeLower = t.assignee.toLowerCase();
-      const currentUserNameLower = currentUser.name.toLowerCase();
-
-      // 2. Quỳnh approves Hằng's 1-day leave
-      const isQuynh = currentUserNameLower.includes("quỳnh") || currentUserNameLower.includes("quynh");
-      const isHang = assigneeLower.includes("hằng") || assigneeLower.includes("hang");
-      const isOneDay = titleLower.includes("1 ngày") || titleLower.includes("1 ngay");
-      if (isQuynh && isHang && isOneDay) return true;
-
-      // 3. Hoành Anh approves Quyên's 1-day leave
-      const isHoanhAnh = currentUserNameLower.includes("hoành anh") || currentUserNameLower.includes("hoanh anh");
-      const isQuyen = assigneeLower.includes("quyên") || assigneeLower.includes("quuyên") || assigneeLower.includes("quyen");
-      if (isHoanhAnh && isQuyen && isOneDay) return true;
-
-      // 4. Managers/Admins/users granted can_approve_leave can see and approve all leaves
-      if (isUserAdmin || isUserManager || approvalPerms.canApproveLeave) return true;
-
-      return false;
-    });
+    return tasks
+      .filter(t => {
+        if (t.status !== "pending_approval") return false;
+        const titleLower = t.title.toLowerCase();
+        return titleLower.startsWith("nghỉ phép") || titleLower.includes("nghi phep");
+      })
+      .map(t => ({ ...t, stage: getRequestStage(t) }))
+      .filter(t => {
+        if (t.stage === "manager") {
+          return isLeaveTripCap1Approver({
+            currentUserName: currentUser.name,
+            currentUserRole: currentUser.role,
+            currentUserIsAdmin: isUserAdmin,
+            assigneeName: t.assignee,
+            taskNotes: t.notes,
+            taskTitleLower: t.title.toLowerCase(),
+          });
+        }
+        return isLeaveTripCap2Approver({ currentUserIsAdmin: isUserAdmin, approvalPerms, isTrip: false });
+      });
   }, [tasks, currentUser, isApprover, approvalPerms]);
 
   // Justifications approvals list (Admin, HR, Director, or department manager/deputy)
@@ -597,7 +683,7 @@ function SettingsContent() {
       if (b.status === "pending_manager") {
         if (isUserAdmin) return true;
         // Tổ Marketing (thuộc HCNS): cấp 1 do Tổ trưởng Marketing duyệt, không qua Trưởng phòng HCNS
-        if (isMarketingTeamBooking(b.requester_name)) {
+        if (isMarketingTeamMember(b.requester_name)) {
           return isMarketingTeamLeader(currentUser.name);
         }
         return isUserManager && currentUser.department === b.department;
@@ -856,6 +942,7 @@ function SettingsContent() {
                             <th className="py-3 px-4">Thời gian</th>
                             <th className="py-3 px-4">Điểm đến</th>
                             <th className="py-3 px-4">Nhiệm vụ</th>
+                            <th className="py-3 px-4">Cấp duyệt</th>
                             <th className="py-3 px-4 text-center">Thao tác</th>
                           </tr>
                         </thead>
@@ -867,10 +954,11 @@ function SettingsContent() {
                             if (req.notes) {
                               const destMatch = req.notes.match(/-\s+\*\*Điểm công tác chính\*\*:\s*(.*)/i);
                               if (destMatch) cleanDest = destMatch[1].trim();
-                              
+
                               const missionMatch = req.notes.match(/-\s+\*\*Nhiệm vụ cụ thể\*\*:\s*(.*)/i);
                               if (missionMatch) cleanMission = missionMatch[1].trim();
                             }
+                            const isManagerStage = req.stage === "manager";
 
                             return (
                               <tr key={req.id} className="hover:bg-slate-50/50 transition-all duration-150">
@@ -886,21 +974,49 @@ function SettingsContent() {
                                 <td className="py-3.5 px-4 text-slate-700 font-bold">{cleanDest}</td>
                                 <td className="py-3.5 px-4 text-slate-450 font-normal max-w-[200px] truncate" title={cleanMission}>{cleanMission}</td>
                                 <td className="py-3.5 px-4">
+                                  <span className={`inline-block px-2.5 py-1 rounded-full border text-[9px] font-extrabold uppercase ${
+                                    isManagerStage ? "bg-amber-50 text-amber-700 border-amber-200" : "bg-indigo-50 text-indigo-700 border-indigo-200"
+                                  }`}>
+                                    {isManagerStage ? "Cấp 1: Trưởng phòng" : "Cấp 2: HCNS"}
+                                  </span>
+                                </td>
+                                <td className="py-3.5 px-4">
                                   <div className="flex items-center justify-center gap-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleApprove(req.id, true)}
-                                      className="bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 shadow-sm cursor-pointer"
-                                    >
-                                      Duyệt
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleReject(req.id)}
-                                      className="bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 shadow-sm cursor-pointer"
-                                    >
-                                      Từ chối
-                                    </button>
+                                    {isManagerStage ? (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleCap1Confirm(req, true)}
+                                          className="bg-[#005BAC] hover:bg-blue-700 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 shadow-sm cursor-pointer"
+                                        >
+                                          Xác nhận & chuyển HCNS
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleFinalDecision(req, true, false)}
+                                          className="bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 shadow-sm cursor-pointer"
+                                        >
+                                          Từ chối
+                                        </button>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleFinalDecision(req, true, true)}
+                                          className="bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 shadow-sm cursor-pointer"
+                                        >
+                                          Duyệt & gửi mail
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleFinalDecision(req, true, false)}
+                                          className="bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 shadow-sm cursor-pointer"
+                                        >
+                                          Từ chối
+                                        </button>
+                                      </>
+                                    )}
                                   </div>
                                 </td>
                               </tr>
@@ -923,6 +1039,7 @@ function SettingsContent() {
                             <th className="py-3 px-4">Nhân sự</th>
                             <th className="py-3 px-4">Thời gian</th>
                             <th className="py-3 px-4">Lý do nghỉ</th>
+                            <th className="py-3 px-4">Cấp duyệt</th>
                             <th className="py-3 px-4 text-center">Thao tác</th>
                           </tr>
                         </thead>
@@ -933,6 +1050,7 @@ function SettingsContent() {
                               const reasonMatch = req.notes.match(/Lý do:\s*(.*)/i);
                               if (reasonMatch) cleanReason = reasonMatch[1].trim();
                             }
+                            const isManagerStage = req.stage === "manager";
 
                             return (
                               <tr key={req.id} className="hover:bg-slate-50/50 transition-all duration-150">
@@ -947,21 +1065,49 @@ function SettingsContent() {
                                 </td>
                                 <td className="py-3.5 px-4 text-slate-450 font-normal max-w-[250px] truncate" title={cleanReason}>{cleanReason}</td>
                                 <td className="py-3.5 px-4">
+                                  <span className={`inline-block px-2.5 py-1 rounded-full border text-[9px] font-extrabold uppercase ${
+                                    isManagerStage ? "bg-amber-50 text-amber-700 border-amber-200" : "bg-indigo-50 text-indigo-700 border-indigo-200"
+                                  }`}>
+                                    {isManagerStage ? "Cấp 1: Trưởng phòng" : "Cấp 2: HCNS"}
+                                  </span>
+                                </td>
+                                <td className="py-3.5 px-4">
                                   <div className="flex items-center justify-center gap-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleApprove(req.id, false)}
-                                      className="bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 shadow-sm cursor-pointer"
-                                    >
-                                      Duyệt
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleReject(req.id)}
-                                      className="bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 shadow-sm cursor-pointer"
-                                    >
-                                      Từ chối
-                                    </button>
+                                    {isManagerStage ? (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleCap1Confirm(req, false)}
+                                          className="bg-[#005BAC] hover:bg-blue-700 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 shadow-sm cursor-pointer"
+                                        >
+                                          Xác nhận & chuyển HCNS
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleFinalDecision(req, false, false)}
+                                          className="bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 shadow-sm cursor-pointer"
+                                        >
+                                          Từ chối
+                                        </button>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleFinalDecision(req, false, true)}
+                                          className="bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 shadow-sm cursor-pointer"
+                                        >
+                                          Duyệt & gửi mail
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleFinalDecision(req, false, false)}
+                                          className="bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 shadow-sm cursor-pointer"
+                                        >
+                                          Từ chối
+                                        </button>
+                                      </>
+                                    )}
                                   </div>
                                 </td>
                               </tr>

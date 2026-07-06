@@ -115,16 +115,12 @@ Trang web quản trị tập trung dành cho các cấp quản lý và nhân s�
 
 ## ✈️ Luồng Đi Của Dữ Liệu Công Tác & Quyết Toán (Business Trip Data Flow)
 
-1.  **Đăng ký công tác (`/calendar` hoặc `/tasks`)**:
-    *   Nhân viên tạo đơn đi công tác trên giao diện Lịch trình. Hệ thống tự động tính toán phụ cấp công tác phí, tiền khách sạn tạm tính, vé di chuyển và chi phí khác.
-    *   Toàn bộ chi tiết tính toán và tổng số tiền được đóng gói dưới dạng comment JSON Metadata (`<!--METADATA:{"employeeName":"...","totalAmount":690000,...}-->`) ở cuối trường `notes` và lưu vào bảng `tasks` với trạng thái `pending_approval`.
-2.  **Phê duyệt công tác (`/settings?tab=approvals`)**:
-    *   Trưởng phòng hoặc Admin tiến hành phê duyệt đơn đi công tác trong danh sách chờ duyệt.
-    *   Hàm `handleApprove` trong [settings/page.tsx](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/dashboard/app/settings/page.tsx) sẽ:
-        *   Trích xuất dữ liệu chi phí `totalAmount` từ JSON Metadata nằm trong `notes`.
-        *   Nếu không có Metadata, hệ thống sử dụng Regex để tìm cụm từ hiển thị `**TỔNG ĐỀ NGHỊ THANH TOÁN**: [số tiền]`, hoặc tự động tính toán lại chi phí dự phòng dựa trên thời gian đi công tác (`số ngày * 120.000đ + số đêm * 350.000đ`).
-        *   Tạo bản ghi mới trong bảng `business_trips` trên Supabase với thuộc tính `cost` bằng số tiền đề nghị được duyệt, `status` là `'Đã duyệt'` và `task_id` liên kết.
-        *   Cập nhật trạng thái công việc trong bảng `tasks` thành `in_progress` với tiến độ `50%`.
+1.  **Đăng ký nghỉ phép/công tác (`/calendar`)**: Nhân viên tạo đơn trên giao diện Lịch trình (nút *Xin nghỉ phép*/*Đi công tác*). Đơn công tác tự tính phụ cấp, tiền khách sạn, vé di chuyển... đóng gói JSON Metadata (`<!--METADATA:{...}-->`) cuối trường `notes`; lưu vào bảng `tasks` (dùng chung với Kanban Quản lý Công việc) với `status: pending_approval`.
+2.  **Duyệt 2 cấp (Trưởng phòng/Tổ trưởng → HCNS)**: Để không phá vỡ 5 cột Kanban cố định của `tasks`, luồng duyệt dùng cột phụ **`approval_stage`** (`pending_manager` → `pending_hcns`, thêm qua [supabase_schema_task_approval_stages.sql](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/dashboard/supabase_schema_task_approval_stages.sql)) thay vì đổi `status`:
+    *   **Cấp 1**: Trưởng/Phó phòng bất kỳ (hoặc người được nhân viên chỉ định tường minh trong đơn nghỉ phép, hoặc Tổ trưởng Marketing cho Nhàn/Thuận) bấm *Xác nhận & chuyển HCNS* (chuyển `approval_stage` sang `pending_hcns`) hoặc *Từ chối* (kết thúc ngay, không qua cấp 2).
+    *   **Cấp 2 (HCNS)**: Người có quyền `can_approve_trip`/`can_approve_leave` trong `approval_permissions` (hoặc Admin) bấm *Duyệt & gửi mail* — hàm `handleFinalDecision` trong [settings/page.tsx](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/dashboard/app/settings/page.tsx) trích `totalAmount` từ Metadata/Regex, tạo bản ghi `business_trips` (`cost`, `status: 'Đã duyệt'`, `task_id`), cập nhật `tasks.status` thành `in_progress`/`completed`.
+    *   Logic phân quyền dùng chung tại [lib/approvers.ts](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/dashboard/lib/approvers.ts) (`isLeaveTripCap1Approver`/`isLeaveTripCap2Approver`/`getRequestStage`) — áp dụng đồng nhất ở cả `calendar/page.tsx` (panel duyệt nhanh cấp 1), `settings/page.tsx` (tab 1 & 2 của Duyệt yêu cầu) và `Header.tsx` (chuông thông báo), tránh 3 nơi có quy tắc lệch nhau như trước.
+    *   **Email**: mỗi bước chuyển cấp/kết quả đều gọi [send-request-email/route.ts](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/dashboard/app/api/send-request-email/route.ts) (nodemailer, cùng chuẩn SMTP ưu tiên server với module Đăng ký xe/phòng họp) gửi mail có nút bấm mở thẳng trang duyệt, hoặc mail kết quả duyệt/từ chối kèm lý do cho người gửi đơn.
 3.  **Quyết toán & Chỉnh sửa thủ công (`/cb` - Tab Chấm công -> Công tác)**:
     *   Giao diện C&B tải dữ liệu hành trình công tác từ bảng `business_trips` lên bảng theo dõi.
     *   Nhân sự hoặc Admin có quyền `hasFullAccess` (được xác thực qua kiểm tra tài khoản Admin hoặc phòng ban HCNS trong [cb/page.tsx](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/dashboard/app/cb/page.tsx)) có thể nhấp trực tiếp vào ô số tiền của cột **"Tổng chi phí thực tế"** để mở chế độ nhập liệu thủ công (Inline Input) trong trường hợp có sai sót hoặc cần quyết toán lại.

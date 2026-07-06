@@ -3,7 +3,15 @@
 import { useEffect, useState } from "react";
 import { Bell, Search, Globe, ChevronDown, Menu, X, Sparkles, Loader2, Send, Copy, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { fetchApprovalPermissions, hasAnyApprovalPermission, isMarketingTeamBooking, isMarketingTeamLeader } from "@/lib/approvers";
+import {
+  fetchApprovalPermissions,
+  hasAnyApprovalPermission,
+  isMarketingTeamMember,
+  isMarketingTeamLeader,
+  getRequestStage,
+  isLeaveTripCap1Approver,
+  isLeaveTripCap2Approver,
+} from "@/lib/approvers";
 import { useSidebar } from "./SidebarContext";
 
 interface Props {
@@ -356,35 +364,28 @@ export default function Header({ title, subtitle }: Props) {
         return;
       }
 
-      // Filter tasks notifications
+      // Filter tasks notifications — Nghỉ phép/Công tác giờ theo luồng 2 cấp (Trưởng phòng/Tổ
+      // trưởng xác nhận -> HCNS duyệt cuối), dùng chung logic với settings/page.tsx và
+      // calendar/page.tsx (lib/approvers.ts) để tránh 3 nơi có quy tắc lệch nhau.
       const filteredTasks = (tasksData || []).filter(t => {
         const titleLower = t.title.toLowerCase();
         const isLeave = titleLower.startsWith("nghỉ phép") || titleLower.includes("nghi phep");
         const isTrip = titleLower.startsWith("công tác") || titleLower.includes("cong tac");
+        if (!isLeave && !isTrip) return false;
 
-        if (isLeave) {
-          if (t.notes && t.notes.includes(`Người duyệt: ${userObj.name}`)) return true;
-
-          const assigneeLower = t.assignee.toLowerCase();
-          const currentUserNameLower = userObj.name.toLowerCase();
-
-          const isQuynh = currentUserNameLower.includes("quỳnh") || currentUserNameLower.includes("quynh");
-          const isHang = assigneeLower.includes("hằng") || assigneeLower.includes("hang");
-          const isOneDay = titleLower.includes("1 ngày") || titleLower.includes("1 ngay");
-          if (isQuynh && isHang && isOneDay) return true;
-
-          const isHoanhAnh = currentUserNameLower.includes("hoành anh") || currentUserNameLower.includes("hoanh anh");
-          const isQuyen = assigneeLower.includes("quyên") || assigneeLower.includes("quuyên") || assigneeLower.includes("quyen");
-          if (isHoanhAnh && isQuyen && isOneDay) return true;
-
-          if (isUserAdmin || isUserManager || isUserHR || perms.canApproveLeave) return true;
+        const stage = getRequestStage(t);
+        if (stage === "manager") {
+          return isLeaveTripCap1Approver({
+            currentUserName: userObj.name,
+            currentUserRole: userObj.role,
+            currentUserIsAdmin: isUserAdmin,
+            assigneeName: t.assignee,
+            taskNotes: t.notes,
+            taskTitleLower: titleLower,
+          });
         }
-
-        if (isTrip) {
-          if (isUserAdmin || isUserManager || isUserHR || perms.canApproveTrip) return true;
-        }
-
-        return false;
+        // isUserHR giữ đúng hành vi cũ (HR luôn thấy đơn công tác/nghỉ phép chờ HCNS duyệt cuối)
+        return isUserHR || isLeaveTripCap2Approver({ currentUserIsAdmin: isUserAdmin, approvalPerms: perms, isTrip });
       });
 
       // Filter justifications notifications (Admin, HR, Director, or the specifically designated approver, or department managers/deputies)
@@ -425,6 +426,10 @@ export default function Header({ title, subtitle }: Props) {
           messageText = `${t.assignee} xin đi công tác tại ${dest}`;
         }
 
+        if (getRequestStage(t) === "hcns") {
+          messageText += " (đã qua Trưởng phòng/Tổ trưởng, chờ HCNS duyệt cuối)";
+        }
+
         return {
           id: t.id,
           type: isLeave ? "leave" : "trip",
@@ -454,7 +459,7 @@ export default function Header({ title, subtitle }: Props) {
         if (b.status === "pending_manager") {
           if (isUserAdmin) return true;
           // Tổ Marketing (thuộc HCNS): thông báo cấp 1 chỉ đến Tổ trưởng Marketing
-          if (isMarketingTeamBooking(b.requester_name)) {
+          if (isMarketingTeamMember(b.requester_name)) {
             return isMarketingTeamLeader(userObj.name);
           }
           return (isUserManager || isUserDeputy) && userObj.department === b.department;
@@ -618,6 +623,10 @@ export default function Header({ title, subtitle }: Props) {
                           ? "/settings?tab=approvals&subtab=explanation"
                           : notif.type === "booking"
                           ? "/settings?tab=approvals&subtab=booking"
+                          : notif.type === "leave"
+                          ? "/settings?tab=approvals&subtab=leave"
+                          : notif.type === "trip"
+                          ? "/settings?tab=approvals&subtab=trip"
                           : "/settings?tab=approvals"
                       }
                       onClick={() => setShowDropdown(false)}

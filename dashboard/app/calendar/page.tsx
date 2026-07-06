@@ -6,6 +6,13 @@ import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
 import { exportPhieuThanhToan, exportPhieuCongTac, downloadDocFile } from "@/lib/wordExporter";
 import {
+  isManagerRole,
+  isMarketingTeamMember,
+  MARKETING_TEAM_LEADER,
+  getRequestStage,
+  isLeaveTripCap1Approver,
+} from "@/lib/approvers";
+import {
   Search,
   ChevronLeft,
   ChevronRight,
@@ -38,6 +45,8 @@ interface Task {
   description?: string;
   link?: string;
   notes?: string;
+  approval_stage?: string | null;
+  manager_approved_by?: string | null;
 }
 
 interface Employee {
@@ -104,6 +113,8 @@ export default function CalendarPage() {
   const [selectedApprover, setSelectedApprover] = useState("");
   const [deputiesList, setDeputiesList] = useState<{ id: string; name: string; role: string }[]>([]);
   const [managersList, setManagersList] = useState<{ id: string; name: string; role: string }[]>([]);
+  // Danh bạ email/phòng ban tra theo tên — dùng để gửi email thông báo duyệt (tasks không có cột email)
+  const [employeeDirectory, setEmployeeDirectory] = useState<{ name: string; email: string; department: string; role: string }[]>([]);
 
   // Business trip specific states
   const [tripDestination, setTripDestination] = useState("");
@@ -215,14 +226,16 @@ export default function CalendarPage() {
           status: t.status || "planning",
           description: t.description || "",
           link: t.link || "",
-          notes: t.notes || ""
+          notes: t.notes || "",
+          approval_stage: t.approval_stage || null,
+          manager_approved_by: t.manager_approved_by || null
         })));
       }
 
       // Fetch Employees
       const { data: empsData, error: empsError } = await supabase
         .from("employees")
-        .select("id, name, avatar, role")
+        .select("id, name, avatar, role, email, department")
         .order("name", { ascending: true });
 
       if (empsError) throw empsError;
@@ -232,6 +245,13 @@ export default function CalendarPage() {
           id: e.id,
           name: e.name,
           avatar: e.avatar || e.name.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2)
+        })));
+
+        setEmployeeDirectory(empsData.map((e: any) => ({
+          name: e.name,
+          email: e.email || "",
+          department: e.department || "",
+          role: e.role || ""
         })));
 
         // Filter deputies (Phó phòng)
@@ -521,100 +541,158 @@ export default function CalendarPage() {
     }
   }, [tripDaysCount]);
 
-  // Approval list for current manager
+  // Đọc cấu hình SMTP dùng chung (Cài đặt hệ thống / C&B) — email hệ thống trên server luôn
+  // được API ưu tiên trước, đây chỉ là phương án dự phòng khi server chưa cấu hình.
+  const readSmtpConfig = () => ({
+    user: typeof window !== "undefined" ? localStorage.getItem("tnec_cb_smtp_user") || "" : "",
+    pass: typeof window !== "undefined" ? localStorage.getItem("tnec_cb_smtp_pass") || "" : "",
+    host: typeof window !== "undefined" ? localStorage.getItem("tnec_cb_smtp_host") || "smtp.gmail.com" : "smtp.gmail.com",
+    port: typeof window !== "undefined" ? Number(localStorage.getItem("tnec_cb_smtp_port")) || 465 : 465,
+    secure: typeof window === "undefined" || localStorage.getItem("tnec_cb_smtp_secure") !== "false",
+  });
+
+  // Danh sách CẤP 1 (Trưởng phòng/Tổ trưởng xác nhận) chờ người dùng hiện tại xử lý.
+  // Cấp 2 (HCNS duyệt cuối) chỉ hiển thị & xử lý tại Cài đặt hệ thống > Duyệt yêu cầu,
+  // để tránh 2 nơi cùng có quyền duyệt cuối và lỡ bỏ qua bước chuyển HCNS.
   const pendingApprovals = useMemo(() => {
     if (!currentUser) return [];
-    const isUserAdmin = currentUser.isAdmin || 
+    // Giữ lại ngoại lệ lịch sử: 2 tài khoản này được coi như Admin dù chưa gắn role "Admin"
+    const isUserAdmin = currentUser.isAdmin ||
                         (currentUser.role || "").toLowerCase() === "admin" ||
                         currentUser.name === "Huỳnh Giáp Nhân" ||
                         currentUser.name === "Nguyễn Duy Hưng";
-    const isUserManager = (currentUser.role || "").toLowerCase().includes("trưởng phòng") || 
-                          (currentUser.role || "").toLowerCase().includes("truong phong") ||
-                          (currentUser.role || "").toLowerCase().includes("giám đốc") ||
-                          (currentUser.role || "").toLowerCase().includes("giam doc") ||
-                          (currentUser.department && (
-                            currentUser.department.toLowerCase().includes("giám đốc") ||
-                            currentUser.department.toLowerCase().includes("giam doc")
-                          )) ||
-                          (currentUser.role || "").toLowerCase().includes("quản lý") ||
-                          (currentUser.role || "").toLowerCase().includes("quan ly") ||
-                          (currentUser.role || "").toLowerCase().includes("quyền trưởng phòng") ||
-                          (currentUser.role || "").toLowerCase().includes("quyen truong phong");
 
     return tasks.filter(t => {
       if (t.status !== "pending_approval") return false;
+      if (getRequestStage(t) !== "manager") return false;
       const titleLower = t.title.toLowerCase();
       const isLeave = titleLower.startsWith("nghỉ phép") || titleLower.includes("nghi phep");
       const isTrip = titleLower.startsWith("công tác") || titleLower.includes("cong tac");
-      
-      if (isLeave) {
-        // Enforce leave approval rules:
-        // 1. Explicitly designated approver in notes
-        if (t.notes && t.notes.includes(`Người duyệt: ${currentUser.name}`)) return true;
+      if (!isLeave && !isTrip) return false;
 
-        const assigneeLower = t.assignee.toLowerCase();
-        const currentUserNameLower = currentUser.name.toLowerCase();
-
-        // 2. Quỳnh approves Hằng's 1-day leave
-        const isQuynh = currentUserNameLower.includes("quỳnh") || currentUserNameLower.includes("quynh");
-        const isHang = assigneeLower.includes("hằng") || assigneeLower.includes("hang");
-        const isOneDay = titleLower.includes("1 ngày") || titleLower.includes("1 ngay");
-        if (isQuynh && isHang && isOneDay) return true;
-
-        // 3. Hoành Anh approves Quyên's 1-day leave
-        const isHoanhAnh = currentUserNameLower.includes("hoành anh") || currentUserNameLower.includes("hoanh anh");
-        const isQuyen = assigneeLower.includes("quyên") || assigneeLower.includes("quuyên") || assigneeLower.includes("quyen");
-        if (isHoanhAnh && isQuyen && isOneDay) return true;
-
-        // 4. Managers/Admins can see and approve all leaves
-        if (isUserAdmin || isUserManager) return true;
-      }
-      
-      if (isTrip) {
-        // Trưởng phòng & Admin can see and approve business trips
-        if (isUserAdmin || isUserManager) return true;
-      }
-      
-      return false;
+      return isLeaveTripCap1Approver({
+        currentUserName: currentUser.name,
+        currentUserRole: currentUser.role,
+        currentUserIsAdmin: isUserAdmin,
+        assigneeName: t.assignee,
+        taskNotes: t.notes,
+        taskTitleLower: titleLower,
+      });
     });
   }, [tasks, currentUser]);
 
-  const handleApproveLeave = async (taskId: string) => {
+  // Cấp 1 xác nhận -> chuyển sang HCNS duyệt cuối + báo email cho người có quyền duyệt cuối
+  const handleCap1Confirm = async (taskId: string) => {
+    if (!currentUser) return;
     try {
       const task = tasks.find(t => t.id === taskId);
       if (!task) return;
       const isTrip = task.title.toLowerCase().startsWith("công tác") || task.title.toLowerCase().includes("cong tac");
-      
+
       const { error } = await supabase
         .from("tasks")
-        .update({ 
-          status: isTrip ? "in_progress" : "completed", 
-          progress: isTrip ? 50 : 100 
+        .update({
+          approval_stage: "pending_hcns",
+          manager_approved_by: currentUser.name,
+          manager_approved_at: new Date().toISOString(),
         })
         .eq("id", taskId);
-      
+
       if (error) throw error;
-      alert(`Đã phê duyệt đơn ${isTrip ? "đi công tác" : "nghỉ phép"} thành công!`);
+
+      let emailMsg = "";
+      try {
+        const { data: perms } = await supabase
+          .from("approval_permissions")
+          .select("email, can_approve_trip, can_approve_leave");
+        const approverEmails = (perms || [])
+          .filter((p: any) => (isTrip ? p.can_approve_trip : p.can_approve_leave) && p.email)
+          .map((p: any) => p.email)
+          .join(", ");
+
+        if (approverEmails) {
+          const res = await fetch("/api/send-request-email", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              mode: "notify_approver",
+              stage: "hcns",
+              requestType: isTrip ? "trip" : "leave",
+              smtpConfig: readSmtpConfig(),
+              task: { ...task, manager_approved_by: currentUser.name },
+              approverEmails,
+              siteUrl: window.location.origin,
+            }),
+          });
+          const result = await res.json();
+          emailMsg = res.ok ? `\n📧 ${result.message}` : `\n⚠️ Chưa gửi được email báo HCNS: ${result.error}`;
+        }
+      } catch (mailErr: any) {
+        emailMsg = `\n⚠️ Chưa gửi được email báo HCNS: ${mailErr.message || "lỗi kết nối"}`;
+      }
+
+      alert(`Đã xác nhận! Yêu cầu được chuyển sang HCNS để duyệt cuối.${emailMsg}`);
       fetchData();
     } catch (err) {
       console.error(err);
-      alert("Lỗi khi phê duyệt đơn!");
+      alert("Lỗi khi xác nhận yêu cầu!");
     }
   };
 
-  const handleRejectLeave = async (taskId: string) => {
+  // Cấp 1 từ chối luôn (không cần chuyển HCNS) — bắt buộc nhập lý do, gửi email cho người gửi đơn
+  const handleCap1Reject = async (taskId: string) => {
+    if (!currentUser) return;
+    const reason = window.prompt("Nhập lý do từ chối (sẽ được gửi email cho người gửi đơn):") || "";
+    if (!reason.trim()) {
+      alert("Vui lòng nhập lý do từ chối!");
+      return;
+    }
     try {
+      const task = tasks.find(t => t.id === taskId);
+      if (!task) return;
+
       const { error } = await supabase
         .from("tasks")
-        .update({ status: "need_revision" })
+        .update({
+          status: "need_revision",
+          reject_reason: reason.trim(),
+          final_decision_by: currentUser.name,
+          final_decision_at: new Date().toISOString(),
+        })
         .eq("id", taskId);
-      
+
       if (error) throw error;
-      alert("Đã từ chối đơn thành công.");
+
+      let emailMsg = "";
+      try {
+        const requesterEmail = employeeDirectory.find(e => e.name === task.assignee)?.email || "";
+        if (requesterEmail) {
+          const isTrip = task.title.toLowerCase().startsWith("công tác") || task.title.toLowerCase().includes("cong tac");
+          const res = await fetch("/api/send-request-email", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              requestType: isTrip ? "trip" : "leave",
+              smtpConfig: readSmtpConfig(),
+              task,
+              requesterEmail,
+              decision: "rejected",
+              rejectReason: reason.trim(),
+              deciderName: currentUser.name,
+            }),
+          });
+          const result = await res.json();
+          emailMsg = res.ok ? `\n📧 ${result.message}` : `\n⚠️ Chưa gửi được email: ${result.error}`;
+        }
+      } catch (mailErr: any) {
+        emailMsg = `\n⚠️ Chưa gửi được email: ${mailErr.message || "lỗi kết nối"}`;
+      }
+
+      alert(`Đã từ chối yêu cầu.${emailMsg}`);
       fetchData();
     } catch (err) {
       console.error(err);
-      alert("Lỗi khi từ chối đơn!");
+      alert("Lỗi khi từ chối yêu cầu!");
     }
   };
 
@@ -659,10 +737,55 @@ export default function CalendarPage() {
           priority: "Thấp",
           progress: duration === 0.5 ? 100 : 0,
           status: status,
-          notes: notesStr
+          notes: notesStr,
+          approval_stage: duration === 0.5 ? null : "pending_manager"
         }]);
 
       if (error) throw error;
+
+      // Gửi email xác nhận — chạy nền, không chặn việc nộp đơn nếu gửi mail lỗi
+      const taskForEmail = { title: titleStr, assignee: modalName, start_date: modalStart, due_date: modalEnd, notes: notesStr };
+      const smtpConfig = readSmtpConfig();
+      try {
+        if (duration === 0.5) {
+          // Nửa ngày: tự động duyệt ngay, vẫn gửi email xác nhận cho người xin nghỉ
+          const requesterEmail = employeeDirectory.find(e => e.name === modalName)?.email || "";
+          if (requesterEmail) {
+            fetch("/api/send-request-email", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                requestType: "leave",
+                smtpConfig,
+                task: taskForEmail,
+                requesterEmail,
+                decision: "approved",
+                deciderName: "Hệ thống (Tự động duyệt - Nghỉ nửa ngày)",
+              }),
+            }).catch(e => console.warn("Không gửi được email xác nhận nghỉ nửa ngày:", e));
+          }
+        } else {
+          // Báo email cho người được chọn duyệt cấp 1 (Trưởng/Phó phòng đã chọn trong form)
+          const approverEmail = employeeDirectory.find(e => e.name === selectedApprover)?.email || "";
+          if (approverEmail) {
+            fetch("/api/send-request-email", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                mode: "notify_approver",
+                stage: "manager",
+                requestType: "leave",
+                smtpConfig,
+                task: taskForEmail,
+                approverEmails: approverEmail,
+                siteUrl: window.location.origin,
+              }),
+            }).catch(e => console.warn("Không gửi được email báo người duyệt cấp 1:", e));
+          }
+        }
+      } catch (notifyErr) {
+        console.warn("Bỏ qua lỗi gửi email nghỉ phép:", notifyErr);
+      }
 
       // Reset
       setModalStart("2026-06-05");
@@ -673,7 +796,7 @@ export default function CalendarPage() {
       setLeaveType("Nghỉ phép năm hưởng lương");
       setIsLeaveModalOpen(false);
       fetchData();
-      alert(duration === 0.5 ? "Đơn xin nghỉ phép đã được tự động duyệt thành công!" : "Đã gửi đơn xin nghỉ phép chờ phê duyệt.");
+      alert(duration === 0.5 ? "Đơn xin nghỉ phép đã được tự động duyệt thành công!" : "Đã gửi đơn xin nghỉ phép chờ Trưởng phòng/Tổ trưởng xác nhận.");
     } catch (err: any) {
       console.error(err);
       alert("Lỗi khi xin nghỉ phép: " + (err.message || err));
@@ -738,21 +861,63 @@ ${tripRoutes.map((r, i) => `Chặng ${i + 1}:
 
 <!--METADATA:${JSON.stringify(tripMetadata)}-->`;
 
+    const tripTitle = `Công tác: ${modalName} - ${tripDestination} (${duration} ngày)`;
+
     try {
       const { error } = await supabase
         .from("tasks")
         .insert([{
-          title: `Công tác: ${modalName} - ${tripDestination} (${duration} ngày)`,
+          title: tripTitle,
           assignee: modalName,
           start_date: modalStart,
           due_date: modalEnd,
           priority: "Trung bình",
           progress: 0,
           status: "pending_approval",
-          notes: notesMarkdown
+          notes: notesMarkdown,
+          approval_stage: "pending_manager"
         }]);
 
       if (error) throw error;
+
+      // Báo email cho người duyệt cấp 1: Tổ trưởng Marketing (nếu là Nhàn/Thuận) hoặc
+      // Trưởng/Phó phòng cùng phòng ban với người đăng ký — chạy nền, không chặn việc gửi đơn
+      try {
+        let approverEmails = "";
+        if (isMarketingTeamMember(modalName)) {
+          approverEmails = employeeDirectory
+            .filter(e => e.name.trim().toLowerCase() === MARKETING_TEAM_LEADER.toLowerCase())
+            .map(e => e.email)
+            .filter(Boolean)
+            .join(", ");
+        } else {
+          const requesterDept = employeeDirectory.find(e => e.name === modalName)?.department || "";
+          if (requesterDept) {
+            approverEmails = employeeDirectory
+              .filter(e => e.department === requesterDept && isManagerRole(e.role) && e.email)
+              .map(e => e.email)
+              .join(", ");
+          }
+        }
+
+        if (approverEmails) {
+          fetch("/api/send-request-email", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              mode: "notify_approver",
+              stage: "manager",
+              requestType: "trip",
+              smtpConfig: readSmtpConfig(),
+              task: { title: tripTitle, assignee: modalName, start_date: modalStart, due_date: modalEnd, notes: notesMarkdown },
+              approverEmails,
+              siteUrl: window.location.origin,
+            }),
+          }).catch(e => console.warn("Không gửi được email báo người duyệt cấp 1 (công tác):", e));
+        }
+      } catch (notifyErr) {
+        console.warn("Bỏ qua lỗi gửi email báo duyệt cấp 1 (công tác):", notifyErr);
+      }
 
       // Reset states
       setTripDestination("");
@@ -768,7 +933,7 @@ ${tripRoutes.map((r, i) => `Chặng ${i + 1}:
       setModalNotes("");
       setIsTripModalOpen(false);
       fetchData();
-      alert("Đã đăng ký lịch đi công tác thành công!");
+      alert("Đã đăng ký lịch đi công tác thành công! Đang chờ Trưởng phòng/Tổ trưởng xác nhận.");
     } catch (err: any) {
       console.error(err);
       alert("Lỗi khi đăng ký đi công tác: " + (err.message || err));
@@ -1230,7 +1395,7 @@ ${tripRoutes.map((r, i) => `Chặng ${i + 1}:
               {/* Approval Queue Section */}
               {pendingApprovals.length > 0 && (
                 <div className="space-y-2.5 border-b border-slate-100 pb-4">
-                  <span className="text-[10px] font-extrabold text-indigo-600 uppercase tracking-wider block">📥 Yêu cầu chờ bạn duyệt ({pendingApprovals.length})</span>
+                  <span className="text-[10px] font-extrabold text-indigo-600 uppercase tracking-wider block">📥 Chờ bạn xác nhận - Cấp 1 ({pendingApprovals.length})</span>
                   <div className="space-y-2">
                     {pendingApprovals.map(t => (
                       <div key={t.id} className="p-3 bg-indigo-50/30 border border-indigo-100 rounded-xl space-y-2 text-left">
@@ -1239,15 +1404,16 @@ ${tripRoutes.map((r, i) => `Chặng ${i + 1}:
                           Nhân sự: <span className="font-bold text-slate-800">{t.assignee}</span> <br />
                           Thời gian: {t.start_date ? new Date(t.start_date).toLocaleDateString("vi-VN") : ""} ➔ {t.due_date ? new Date(t.due_date).toLocaleDateString("vi-VN") : ""}
                         </p>
+                        <p className="text-[8px] text-indigo-400 font-semibold leading-relaxed">Xác nhận xong sẽ tự động chuyển sang HCNS duyệt cuối.</p>
                         <div className="flex gap-2 pt-1">
                           <button
-                            onClick={() => handleApproveLeave(t.id)}
+                            onClick={() => handleCap1Confirm(t.id)}
                             className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] font-bold rounded-lg cursor-pointer transition-colors text-center active:scale-95"
                           >
-                            Duyệt
+                            Xác nhận
                           </button>
                           <button
-                            onClick={() => handleRejectLeave(t.id)}
+                            onClick={() => handleCap1Reject(t.id)}
                             className="flex-1 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-[9px] font-bold rounded-lg cursor-pointer transition-colors text-center active:scale-95"
                           >
                             Từ chối
