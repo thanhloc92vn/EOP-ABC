@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
@@ -113,6 +113,10 @@ export default function CalendarPage() {
   const [selectedApprover, setSelectedApprover] = useState("");
   const [deputiesList, setDeputiesList] = useState<{ id: string; name: string; role: string }[]>([]);
   const [managersList, setManagersList] = useState<{ id: string; name: string; role: string }[]>([]);
+  // Ô chọn người duyệt kiểu search — tìm tên nhanh thay vì cuộn dropdown dài
+  const [approverSearch, setApproverSearch] = useState("");
+  const [showApproverDropdown, setShowApproverDropdown] = useState(false);
+  const approverPickerRef = useRef<HTMLDivElement>(null);
   // Danh bạ email/phòng ban tra theo tên — dùng để gửi email thông báo duyệt (tasks không có cột email)
   const [employeeDirectory, setEmployeeDirectory] = useState<{ name: string; email: string; department: string; role: string }[]>([]);
 
@@ -477,6 +481,74 @@ export default function CalendarPage() {
     }
   }, [isSingleDay]);
 
+  // Danh sách người duyệt hợp lệ theo đúng quy tắc hiện có: đơn 1 ngày của Hằng/Quyên
+  // chỉ được chọn Phó phòng đặc cách (Quỳnh/Hoành Anh), còn lại là mọi Trưởng phòng/Admin.
+  const approverOptions = useMemo(() => {
+    const nameLower = modalName.toLowerCase();
+    if (leaveDaysCount === 1) {
+      if (nameLower.includes("hằng") || nameLower.includes("hang")) {
+        return deputiesList.filter(d => d.name.toLowerCase().includes("quỳnh") || d.name.toLowerCase().includes("quynh"));
+      }
+      if (nameLower.includes("quyên") || nameLower.includes("quyen")) {
+        return deputiesList.filter(d => d.name.toLowerCase().includes("hoành anh") || d.name.toLowerCase().includes("hoanh anh"));
+      }
+    }
+    return managersList;
+  }, [modalName, leaveDaysCount, deputiesList, managersList]);
+
+  // Tự động đề xuất đúng Trưởng phòng của phòng ban người xin nghỉ (vd: phòng Dự án -> anh Vinh),
+  // ưu tiên Trưởng phòng chính thức trước Phó phòng nếu phòng ban có cả hai.
+  const recommendedApprover = useMemo(() => {
+    if (approverOptions.length === 0) return "";
+    const dept = currentUser?.department;
+    if (dept) {
+      const deptManagers = employeeDirectory.filter(e => e.department === dept && isManagerRole(e.role));
+      const primary = deptManagers.find(e => {
+        const r = e.role.toLowerCase();
+        return (r.includes("trưởng phòng") || r.includes("truong phong")) && !r.includes("phó") && !r.includes("pho ");
+      }) || deptManagers[0];
+      if (primary && approverOptions.some(o => o.name === primary.name)) {
+        return primary.name;
+      }
+    }
+    return approverOptions.length === 1 ? approverOptions[0].name : "";
+  }, [approverOptions, currentUser, employeeDirectory]);
+
+  // Đặt người duyệt mặc định khi mở modal nghỉ phép
+  useEffect(() => {
+    if (isLeaveModalOpen) {
+      setSelectedApprover(prev => prev || recommendedApprover);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLeaveModalOpen]);
+
+  // Nếu lựa chọn hiện tại không còn hợp lệ với bộ tuỳ chọn mới (vd đổi từ đơn 1 ngày
+  // sang nhiều ngày), tự động chọn lại người được đề xuất
+  useEffect(() => {
+    if (!isLeaveModalOpen) return;
+    if (selectedApprover && !approverOptions.some(o => o.name === selectedApprover)) {
+      setSelectedApprover(recommendedApprover || "");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [approverOptions]);
+
+  // Đóng dropdown tìm người duyệt khi bấm ra ngoài
+  useEffect(() => {
+    const onClickOutside = (e: MouseEvent) => {
+      if (approverPickerRef.current && !approverPickerRef.current.contains(e.target as Node)) {
+        setShowApproverDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
+
+  const filteredApproverOptions = useMemo(() => {
+    const q = approverSearch.trim().toLowerCase();
+    if (!q) return approverOptions;
+    return approverOptions.filter(m => m.name.toLowerCase().includes(q) || (m.role || "").toLowerCase().includes(q));
+  }, [approverOptions, approverSearch]);
+
   // Business trip calculation helpers
   const tripDaysCount = useMemo(() => {
     if (!modalStart || !modalEnd) return 0;
@@ -793,6 +865,8 @@ export default function CalendarPage() {
       setModalNotes("");
       setIsHalfDay(false);
       setSelectedApprover("");
+      setApproverSearch("");
+      setShowApproverDropdown(false);
       setLeaveType("Nghỉ phép năm hưởng lương");
       setIsLeaveModalOpen(false);
       fetchData();
@@ -1670,50 +1744,54 @@ ${tripRoutes.map((r, i) => `Chặng ${i + 1}:
                 </div>
               )}
 
-              {leaveDaysCount === 1 && (
-                <div className="space-y-1.5 animate-in fade-in duration-200">
+              {leaveDaysCount >= 1 && (
+                <div className="space-y-1.5 animate-in fade-in duration-200" ref={approverPickerRef}>
                   <label className="text-slate-500 text-[11px] font-bold">
-                    {modalName.toLowerCase().includes("hằng") || modalName.toLowerCase().includes("hang") || modalName.toLowerCase().includes("quyên") || modalName.toLowerCase().includes("quyen")
-                      ? "Người duyệt (Phó phòng) *" 
+                    {leaveDaysCount === 1 && (modalName.toLowerCase().includes("hằng") || modalName.toLowerCase().includes("hang") || modalName.toLowerCase().includes("quyên") || modalName.toLowerCase().includes("quyen"))
+                      ? "Người duyệt (Phó phòng) *"
                       : "Người duyệt (Trưởng phòng) *"}
                   </label>
-                  <select
-                    required
-                    value={selectedApprover}
-                    onChange={(e) => setSelectedApprover(e.target.value)}
-                    className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-indigo-500/20 bg-white font-semibold text-slate-800 text-xs"
-                  >
-                    <option value="">Chọn người duyệt...</option>
-                    {modalName.toLowerCase().includes("hằng") || modalName.toLowerCase().includes("hang")
-                      ? deputiesList.filter(d => d.name.toLowerCase().includes("quỳnh") || d.name.toLowerCase().includes("quynh")).map(d => (
-                          <option key={d.id} value={d.name}>{d.name} ({d.role})</option>
-                        ))
-                      : modalName.toLowerCase().includes("quyên") || modalName.toLowerCase().includes("quyen")
-                      ? deputiesList.filter(d => d.name.toLowerCase().includes("hoành anh") || d.name.toLowerCase().includes("hoanh anh")).map(d => (
-                          <option key={d.id} value={d.name}>{d.name} ({d.role})</option>
-                        ))
-                      : managersList.map(m => (
-                          <option key={m.id} value={m.name}>{m.name} ({m.role})</option>
-                        ))
-                    }
-                  </select>
-                </div>
-              )}
-
-              {leaveDaysCount >= 2 && (
-                <div className="space-y-1.5 animate-in fade-in duration-200">
-                  <label className="text-slate-500 text-[11px] font-bold">Người duyệt (Trưởng phòng) <span className="text-rose-500">*</span></label>
-                  <select
-                    required
-                    value={selectedApprover}
-                    onChange={(e) => setSelectedApprover(e.target.value)}
-                    className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-indigo-500/20 bg-white font-semibold text-slate-800 text-xs"
-                  >
-                    <option value="">Chọn trưởng phòng duyệt...</option>
-                    {managersList.map(m => (
-                      <option key={m.id} value={m.name}>{m.name} ({m.role})</option>
-                    ))}
-                  </select>
+                  <div className="relative">
+                    <div className="relative">
+                      <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                      <input
+                        type="text"
+                        required
+                        value={showApproverDropdown ? approverSearch : selectedApprover}
+                        onFocus={() => { setShowApproverDropdown(true); setApproverSearch(""); }}
+                        onChange={(e) => setApproverSearch(e.target.value)}
+                        placeholder="Tìm tên người duyệt..."
+                        className="w-full pl-8 pr-3 border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-indigo-500/20 bg-white font-semibold text-slate-800 text-xs"
+                      />
+                    </div>
+                    {showApproverDropdown && (
+                      <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-premium z-20 max-h-48 overflow-y-auto animate-in fade-in duration-150">
+                        {filteredApproverOptions.length === 0 ? (
+                          <p className="text-center text-slate-400 text-[11px] italic py-3">Không tìm thấy người phù hợp.</p>
+                        ) : (
+                          filteredApproverOptions.map(m => (
+                            <button
+                              key={m.id}
+                              type="button"
+                              onClick={() => { setSelectedApprover(m.name); setShowApproverDropdown(false); setApproverSearch(""); }}
+                              className={`w-full flex items-center justify-between gap-2 px-3 py-2 hover:bg-slate-50 transition-colors text-left cursor-pointer text-xs ${m.name === selectedApprover ? "bg-indigo-50/60" : ""}`}
+                            >
+                              <span className="font-bold text-slate-700 truncate">{m.name}</span>
+                              <span className="flex items-center gap-1.5 shrink-0">
+                                {m.name === recommendedApprover && (
+                                  <span className="text-[8px] font-extrabold text-indigo-500 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded-full">ĐỀ XUẤT</span>
+                                )}
+                                <span className="text-[10px] text-slate-400">{m.role}</span>
+                              </span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  {recommendedApprover && selectedApprover === recommendedApprover && (
+                    <p className="text-[10px] text-indigo-400 font-semibold">💡 Tự động chọn theo phòng ban: {currentUser?.department}</p>
+                  )}
                 </div>
               )}
 

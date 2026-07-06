@@ -4,15 +4,15 @@ import { useState, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
-import { 
-  Search, 
-  Filter, 
-  Loader2, 
-  Check, 
-  MessageSquare, 
-  Building, 
-  Calendar, 
-  User, 
+import {
+  Search,
+  Filter,
+  Loader2,
+  Check,
+  MessageSquare,
+  Building,
+  Calendar,
+  User,
   ExternalLink,
   QrCode,
   Download,
@@ -22,8 +22,10 @@ import {
   Archive,
   Hourglass,
   RefreshCw,
-  Trash2
+  Trash2,
+  ShieldAlert
 } from "lucide-react";
+import { fetchApprovalPermissions, NO_APPROVAL_PERMISSIONS, type ApprovalPermissions } from "@/lib/approvers";
 
 interface Suggestion {
   id: string;
@@ -72,40 +74,14 @@ export default function AdminSuggestions() {
     department: string;
     isAdmin: boolean;
   } | null>(null);
+  const [approvalPerms, setApprovalPerms] = useState<ApprovalPermissions>(NO_APPROVAL_PERMISSIONS);
 
   const selectedSuggestion = suggestions.find(s => s.id === selectedId) || null;
 
-  const canManage = !!(currentUser && (
-    currentUser.isAdmin ||
-    currentUser.role.toLowerCase() === "admin" ||
-    currentUser.name === "Lê Thị Hoa Đào" ||
-    currentUser.email.toLowerCase().trim() === "lehoadao2706@gmail.com" ||
-    currentUser.name === "Lại Nguyễn Lan Phương" ||
-    currentUser.name === "Dương Nhật Hoành Anh" ||
-    currentUser.role === "Tổ trưởng Nhân sự" ||
-    currentUser.name === "Huỳnh Giáp Nhân" ||
-    currentUser.name === "Nguyễn Duy Hưng" ||
-    currentUser.role.toLowerCase().includes("giám đốc") ||
-    currentUser.role.toLowerCase().includes("giam doc") ||
-    (currentUser.department && (
-      currentUser.department.toLowerCase().includes("giám đốc") ||
-      currentUser.department.toLowerCase().includes("giam doc")
-    )) ||
-    (
-      (
-        currentUser.role.toLowerCase().includes("trưởng phòng") || 
-        currentUser.role.toLowerCase().includes("truong phong") ||
-        currentUser.role.toLowerCase().includes("tổ trưởng") ||
-        currentUser.role.toLowerCase().includes("to truong")
-      ) &&
-      (
-        currentUser.department.toLowerCase().includes("hành chính") ||
-        currentUser.department.toLowerCase().includes("hcns") ||
-        currentUser.role.toLowerCase().includes("nhân sự") ||
-        currentUser.role.toLowerCase().includes("nhan su")
-      )
-    )
-  ));
+  // Chỉ Admin hoặc người được cấp quyền can_view_suggestions (quản lý trong bảng
+  // approval_permissions trên Supabase — hiện là Hoành Anh & Hoa Đào, không cần sửa
+  // code khi cấp/thu hồi quyền) mới được xem và xử lý Góp ý & Kiến nghị.
+  const canManage = !!(currentUser && (currentUser.isAdmin || approvalPerms.canViewSuggestions));
 
   const fetchSuggestions = async () => {
     setLoading(true);
@@ -153,6 +129,9 @@ export default function AdminSuggestions() {
         .select("name, role, department")
         .like("email", `%${email}%`)
         .maybeSingle();
+
+      // 3. Per-user grant for xem Góp ý & Kiến nghị (bảng approval_permissions)
+      setApprovalPerms(await fetchApprovalPermissions(email));
 
       setCurrentUser({
         email,
@@ -300,9 +279,39 @@ export default function AdminSuggestions() {
     return matchesSearch && matchesStatus && matchesDept;
   });
 
-  const qrImageUrl = qrUrl 
+  const qrImageUrl = qrUrl
     ? `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrUrl)}`
     : "";
+
+  if (currentUser && !canManage) {
+    return (
+      <div className="flex min-h-screen bg-[#F7F9FC]">
+        <Sidebar />
+        <div className="ml-60 flex-1 flex flex-col min-w-0">
+          <Header title="Góp ý & Kiến nghị" subtitle="Quản lý các đóng góp ý kiến xây dựng công ty từ khối văn phòng và các Ban điều hành" />
+          <main className="flex-1 p-8 flex flex-col items-center justify-center max-w-4xl">
+            <div className="glass bg-white rounded-2xl p-8 border border-slate-200/50 shadow-premium text-center space-y-4 max-w-md">
+              <div className="w-16 h-16 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center mx-auto shadow-sm">
+                <ShieldAlert size={32} />
+              </div>
+              <h2 className="font-heading font-extrabold text-slate-800 text-lg">Truy cập bị từ chối</h2>
+              <p className="text-xs text-slate-500 font-semibold leading-relaxed">
+                Tài khoản của bạn ({currentUser.email}) không có quyền xem nội dung Góp ý & Kiến nghị. Chỉ Admin và cán bộ được cấp quyền riêng (Phòng HCNS) mới truy cập được mục này.
+              </p>
+              <div className="pt-2">
+                <a
+                  href="/"
+                  className="inline-block px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-all shadow active:scale-95"
+                >
+                  Quay lại Dashboard
+                </a>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen bg-[#F7F9FC] relative">
@@ -542,76 +551,58 @@ export default function AdminSuggestions() {
                   )}
                 </div>
 
-                {/* Read-Only Status & Response (for regular users) or Edit Form (for managers) */}
-                {!canManage ? (
-                  <div className="space-y-4 pt-4 border-t border-slate-100">
-                    <div className="space-y-1.5">
-                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Trạng thái xử lý</span>
-                      <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-3 py-1 rounded-full border ${STATUS_LABELS[selectedSuggestion.status]?.color || STATUS_LABELS.pending.color}`}>
-                        {STATUS_LABELS[selectedSuggestion.status]?.label || STATUS_LABELS.pending.label}
-                      </span>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Phản hồi của HCNS</span>
-                      <p className="text-xs text-slate-705 leading-relaxed font-medium bg-slate-50 p-3.5 rounded-2xl border border-slate-100 whitespace-pre-wrap">
-                        {selectedSuggestion.response || "Chưa có phản hồi từ Ban nhân sự."}
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <form onSubmit={handleUpdateStatusAndResponse} className="space-y-4 pt-4 border-t border-slate-100">
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Trạng thái xử lý</label>
-                      <select
-                        value={editStatus}
-                        onChange={(e) => setEditStatus(e.target.value as Suggestion["status"])}
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 text-xs font-semibold text-slate-700 cursor-pointer"
-                      >
-                        <option value="pending">Chờ xử lý</option>
-                        <option value="processing">Đang xử lý</option>
-                        <option value="resolved">Đã giải quyết</option>
-                        <option value="archived">Lưu trữ</option>
-                      </select>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Ghi chú xử lý / Phản hồi của HCNS</label>
-                      <textarea
-                        value={editResponse}
-                        onChange={(e) => setEditResponse(e.target.value)}
-                        placeholder="Ghi nhận phương án xử lý tại đây..."
-                        rows={4}
-                        className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500/20 text-xs font-medium resize-none placeholder-slate-400"
-                      />
-                    </div>
-
-                    {errorMsg && (
-                      <div className="flex items-start gap-2 text-rose-500 text-[10px] font-bold">
-                        <AlertCircle size={13} className="shrink-0 mt-0.5" />
-                        <span>{errorMsg}</span>
-                      </div>
-                    )}
-
-                    <button
-                      type="submit"
-                      disabled={saving}
-                      className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 disabled:text-slate-500 text-white font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all shadow-md shadow-blue-500/10 cursor-pointer"
+                {/* Chỉ Admin/người được cấp quyền mới vào được trang này nên luôn hiện form chỉnh sửa */}
+                <form onSubmit={handleUpdateStatusAndResponse} className="space-y-4 pt-4 border-t border-slate-100">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Trạng thái xử lý</label>
+                    <select
+                      value={editStatus}
+                      onChange={(e) => setEditStatus(e.target.value as Suggestion["status"])}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 text-xs font-semibold text-slate-700 cursor-pointer"
                     >
-                      {saving ? (
-                        <>
-                          <Loader2 className="animate-spin" size={13} />
-                          Đang cập nhật...
-                        </>
-                      ) : (
-                        <>
-                          <Check size={13} />
-                          Cập nhật kết quả
-                        </>
-                      )}
-                    </button>
-                  </form>
-                )}
+                      <option value="pending">Chờ xử lý</option>
+                      <option value="processing">Đang xử lý</option>
+                      <option value="resolved">Đã giải quyết</option>
+                      <option value="archived">Lưu trữ</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Ghi chú xử lý / Phản hồi của HCNS</label>
+                    <textarea
+                      value={editResponse}
+                      onChange={(e) => setEditResponse(e.target.value)}
+                      placeholder="Ghi nhận phương án xử lý tại đây..."
+                      rows={4}
+                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500/20 text-xs font-medium resize-none placeholder-slate-400"
+                    />
+                  </div>
+
+                  {errorMsg && (
+                    <div className="flex items-start gap-2 text-rose-500 text-[10px] font-bold">
+                      <AlertCircle size={13} className="shrink-0 mt-0.5" />
+                      <span>{errorMsg}</span>
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={saving}
+                    className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 disabled:text-slate-500 text-white font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all shadow-md shadow-blue-500/10 cursor-pointer"
+                  >
+                    {saving ? (
+                      <>
+                        <Loader2 className="animate-spin" size={13} />
+                        Đang cập nhật...
+                      </>
+                    ) : (
+                      <>
+                        <Check size={13} />
+                        Cập nhật kết quả
+                      </>
+                    )}
+                  </button>
+                </form>
               </div>
             ) : (
               <div className="bg-white p-6 border border-slate-200/60 rounded-3xl shadow-sm text-center py-12 text-slate-400 font-medium text-xs">

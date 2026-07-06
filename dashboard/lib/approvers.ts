@@ -5,6 +5,9 @@ export type ApprovalPermissions = {
   canApproveLeave: boolean;
   canApproveJustification: boolean;
   canApproveBooking: boolean;
+  // Xem/quản lý Góp ý & Kiến nghị — không phải quyền "duyệt", tách riêng khỏi
+  // hasAnyApprovalPermission() để không ảnh hưởng hiển thị menu "Duyệt yêu cầu".
+  canViewSuggestions: boolean;
 };
 
 export const NO_APPROVAL_PERMISSIONS: ApprovalPermissions = {
@@ -12,6 +15,7 @@ export const NO_APPROVAL_PERMISSIONS: ApprovalPermissions = {
   canApproveLeave: false,
   canApproveJustification: false,
   canApproveBooking: false,
+  canViewSuggestions: false,
 };
 
 export function hasAnyApprovalPermission(perms: ApprovalPermissions): boolean {
@@ -136,6 +140,7 @@ export async function fetchApprovalPermissions(email?: string | null): Promise<A
       canApproveLeave: !!row.can_approve_leave,
       canApproveJustification: !!row.can_approve_justification,
       canApproveBooking: !!row.can_approve_booking,
+      canViewSuggestions: !!row.can_view_suggestions,
     };
   } catch {
     return NO_APPROVAL_PERMISSIONS;
