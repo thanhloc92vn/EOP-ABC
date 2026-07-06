@@ -185,8 +185,17 @@ function SettingsContent() {
     }
   };
 
-  // Cấp 1: Trưởng phòng xác nhận -> chuyển sang HCNS duyệt cuối
-  const handleManagerConfirmBooking = async (bookingId: string) => {
+  // Đọc SMTP dùng chung (Cài đặt hệ thống / C&B) từ localStorage
+  const readSmtpConfig = () => ({
+    user: localStorage.getItem("tnec_cb_smtp_user") || "",
+    pass: localStorage.getItem("tnec_cb_smtp_pass") || "",
+    host: localStorage.getItem("tnec_cb_smtp_host") || "smtp.gmail.com",
+    port: Number(localStorage.getItem("tnec_cb_smtp_port")) || 465,
+    secure: localStorage.getItem("tnec_cb_smtp_secure") !== "false",
+  });
+
+  // Cấp 1: Trưởng phòng xác nhận -> chuyển sang HCNS duyệt cuối + email báo người duyệt cuối
+  const handleManagerConfirmBooking = async (booking: any) => {
     if (!currentUser) return;
     try {
       const { error } = await supabase
@@ -196,10 +205,44 @@ function SettingsContent() {
           manager_approved_by: currentUser.name,
           manager_approved_at: new Date().toISOString(),
         })
-        .eq("id", bookingId);
+        .eq("id", booking.id);
 
       if (error) throw error;
-      alert("Đã xác nhận! Yêu cầu được chuyển sang Phòng HCNS (điều phối xe & phòng họp) để duyệt cuối.");
+
+      // Gửi email thông báo cho người duyệt cuối (HCNS - can_approve_booking, vd chị Quỳnh)
+      let emailMsg = "";
+      try {
+        const { data: perms } = await supabase
+          .from("approval_permissions")
+          .select("email, can_approve_booking");
+        const approverEmails = (perms || [])
+          .filter((p: any) => p.can_approve_booking && p.email)
+          .map((p: any) => p.email)
+          .join(", ");
+
+        if (approverEmails) {
+          const res = await fetch("/api/send-booking-email", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              mode: "notify_approver",
+              stage: "final",
+              smtpConfig: readSmtpConfig(),
+              booking: { ...booking, manager_approved_by: currentUser.name },
+              approverEmails,
+              siteUrl: window.location.origin,
+            }),
+          });
+          const result = await res.json();
+          emailMsg = res.ok
+            ? `\n📧 ${result.message}`
+            : `\n⚠️ Chưa gửi được email báo người duyệt cuối: ${result.error}`;
+        }
+      } catch (mailErr: any) {
+        emailMsg = `\n⚠️ Chưa gửi được email báo người duyệt cuối: ${mailErr.message || "lỗi kết nối"}`;
+      }
+
+      alert(`Đã xác nhận! Yêu cầu được chuyển sang Phòng HCNS (điều phối xe & phòng họp) để duyệt cuối.${emailMsg}`);
       fetchResourceBookings();
     } catch (err) {
       console.error("Error confirming booking (manager step):", err);
@@ -237,19 +280,11 @@ function SettingsContent() {
       // server sẽ fallback sang biến môi trường nếu chưa cấu hình.
       let emailMsg = "";
       try {
-        const smtpConfig = {
-          user: localStorage.getItem("tnec_cb_smtp_user") || "",
-          pass: localStorage.getItem("tnec_cb_smtp_pass") || "",
-          host: localStorage.getItem("tnec_cb_smtp_host") || "smtp.gmail.com",
-          port: Number(localStorage.getItem("tnec_cb_smtp_port")) || 465,
-          secure: localStorage.getItem("tnec_cb_smtp_secure") !== "false",
-        };
-
         const res = await fetch("/api/send-booking-email", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            smtpConfig,
+            smtpConfig: readSmtpConfig(),
             booking: { ...booking, manager_approved_by: booking.manager_approved_by },
             decision,
             rejectReason: rejectReason.trim(),
@@ -1068,7 +1103,7 @@ function SettingsContent() {
                               {isManagerStep ? (
                                 <button
                                   type="button"
-                                  onClick={() => handleManagerConfirmBooking(b.id)}
+                                  onClick={() => handleManagerConfirmBooking(b)}
                                   className="bg-[#005BAC] hover:bg-blue-700 text-white text-[10px] font-bold px-4 py-2 rounded-lg transition-all active:scale-95 shadow-sm cursor-pointer"
                                 >
                                   Xác nhận & chuyển HCNS

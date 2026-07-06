@@ -1,13 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import nodemailer from "nodemailer";
 
-// Gửi email thông báo kết quả duyệt đăng ký xe / phòng họp cho người đăng ký.
-// SMTP config ưu tiên lấy từ body (localStorage của người duyệt — cùng pattern C&B),
+// Email của module Đăng ký xe / phòng họp. Hai chế độ:
+//  - mode "notify_approver": báo người duyệt (Trưởng phòng / HCNS) có yêu cầu mới chờ xử lý,
+//    kèm nút bấm mở thẳng trang Duyệt yêu cầu.
+//  - mặc định ("result"): gửi kết quả duyệt / từ chối cho người đăng ký.
+// SMTP config ưu tiên lấy từ body (localStorage của người thao tác — cùng pattern C&B),
 // nếu không có thì fallback sang biến môi trường SMTP_USER / SMTP_PASS / SMTP_HOST / SMTP_PORT.
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { smtpConfig, booking, decision, rejectReason, approverName } = body;
+    const { smtpConfig, booking, decision, rejectReason, approverName, mode, approverEmails, stage } = body;
+    const isNotifyMode = mode === "notify_approver";
 
     const smtpUser = smtpConfig?.user || process.env.SMTP_USER || "";
     const smtpPass = smtpConfig?.pass || process.env.SMTP_PASS || "";
@@ -15,10 +19,16 @@ export async function POST(request: NextRequest) {
     const portNum = Number(smtpConfig?.port || process.env.SMTP_PORT) || 465;
 
     if (!smtpUser || !smtpPass) {
-      return NextResponse.json({ error: "Chưa cấu hình SMTP gửi email (cấu hình tại trang C&B hoặc biến môi trường SMTP_USER/SMTP_PASS)!" }, { status: 400 });
+      return NextResponse.json({ error: "Chưa cấu hình SMTP gửi email (cấu hình tại Cài đặt hệ thống / trang C&B hoặc biến môi trường SMTP_USER/SMTP_PASS)!" }, { status: 400 });
     }
-    if (!booking || !booking.requester_email) {
-      return NextResponse.json({ error: "Thiếu thông tin đăng ký hoặc email người nhận!" }, { status: 400 });
+    if (!booking) {
+      return NextResponse.json({ error: "Thiếu thông tin đăng ký!" }, { status: 400 });
+    }
+    if (isNotifyMode && !approverEmails) {
+      return NextResponse.json({ error: "Thiếu email người duyệt để gửi thông báo!" }, { status: 400 });
+    }
+    if (!isNotifyMode && !booking.requester_email) {
+      return NextResponse.json({ error: "Thiếu email người nhận kết quả!" }, { status: 400 });
     }
 
     const isApproved = decision === "approved";
@@ -50,6 +60,105 @@ export async function POST(request: NextRequest) {
         <td style="padding: 10px 14px; width: 38%; background-color: #f8fafc; color: #64748b; font-size: 12px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.03em;">${label}</td>
         <td style="padding: 10px 14px; color: #1e293b; font-size: 13px; font-weight: 600;">${value || "-"}</td>
       </tr>`;
+
+    const dateStr2 = booking.start_time ? new Date(booking.start_time).toLocaleDateString("vi-VN") : "";
+
+    // ━━━ CHẾ ĐỘ THÔNG BÁO NGƯỜI DUYỆT: có yêu cầu mới chờ xử lý ━━━
+    if (isNotifyMode) {
+      const isFinalStage = stage === "final";
+      const stageLabel = isFinalStage
+        ? "duyệt cuối (điều phối xe & phòng họp)"
+        : "xác nhận cấp Trưởng phòng / Tổ trưởng";
+      const siteOrigin = body.siteUrl || request.headers.get("origin") || process.env.NEXT_PUBLIC_SITE_URL || "https://nhansutrungnamec.com";
+      const approvalUrl = `${siteOrigin}/settings?tab=approvals&subtab=booking`;
+
+      const notifyRows = [
+        infoRow("Loại đăng ký", typeLabel),
+        infoRow(isVehicle ? "Xe đăng ký" : "Phòng họp", booking.resource_name),
+        infoRow("Người đăng ký", `${booking.requester_name || "-"} — ${booking.department || ""}`),
+        infoRow("Người chủ trì", booking.host_name),
+        infoRow("Thời gian", `${fmtTime(booking.start_time)} ➔ ${fmtTime(booking.end_time)}`),
+        infoRow(isVehicle ? "Mục đích sử dụng xe" : "Nội dung cuộc họp", booking.content),
+        infoRow("Số lượng người", String(booking.attendee_count || attendees.length || "-")),
+        attendees.length > 0 ? infoRow("Nhân viên tham dự", attendees.join(", ")) : "",
+        booking.participant_type === "khach_hang" ? infoRow("Khách hàng bên ngoài", booking.customer_info || "Có") : "",
+        booking.notes ? infoRow("Ghi chú hậu cần", booking.notes) : "",
+        isFinalStage && booking.manager_approved_by ? infoRow("Trưởng phòng đã xác nhận", booking.manager_approved_by) : "",
+      ].join("");
+
+      const notifyHtml = `
+        <!DOCTYPE html>
+        <html>
+        <head><meta charset="utf-8"><title>Yêu cầu chờ duyệt</title></head>
+        <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f1f5f9; color: #1e293b;">
+          <div style="max-width: 640px; margin: 40px auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.05); border: 1px solid #e2e8f0;">
+
+            <!-- Banner Header -->
+            <div style="background: linear-gradient(135deg, #005BAC 0%, #1e40af 100%); padding: 32px 40px; color: #ffffff;">
+              <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.15em; color: #93c5fd; margin-bottom: 8px;">TRUNG NAM E&C — HỆ THỐNG HCNS</div>
+              <h1 style="margin: 0; font-size: 22px; font-weight: 850; letter-spacing: -0.025em; color: #ffffff;">🔔 Yêu Cầu ${typeLabel} Chờ Duyệt</h1>
+              <div style="font-size: 13px; color: #bfdbfe; margin-top: 6px; font-weight: 500;">Hệ thống điều phối xe & phòng họp — PM-HCNS-TNEC</div>
+            </div>
+
+            <!-- Greeting -->
+            <div style="padding: 28px 40px 8px 40px;">
+              <p style="margin: 0 0 10px 0; font-size: 15px; line-height: 1.6; color: #334155;">
+                Kính gửi Anh/Chị,
+              </p>
+              <p style="margin: 0; font-size: 14px; line-height: 1.7; color: #475569;">
+                Có một yêu cầu <strong>${typeLabel.toLowerCase()}</strong> từ
+                <strong style="color: #005BAC;">${booking.requester_name || "nhân viên"}</strong>
+                (${booking.department || "—"}) đang <strong>chờ Anh/Chị ${stageLabel}</strong> trên hệ thống. Thông tin chi tiết:
+              </p>
+            </div>
+
+            <!-- Booking Details -->
+            <div style="padding: 18px 40px 8px 40px;">
+              <div style="border: 1px solid #e2e8f0; border-left: 4px solid #005BAC; border-radius: 12px; overflow: hidden;">
+                <table style="width: 100%; border-collapse: collapse;">${notifyRows}</table>
+              </div>
+            </div>
+
+            <!-- CTA Button -->
+            <div style="padding: 26px 40px 10px 40px; text-align: center;">
+              <a href="${approvalUrl}"
+                 style="display: inline-block; background: linear-gradient(135deg, #005BAC 0%, #00AEEF 100%); color: #ffffff; font-weight: 800; font-size: 14px; padding: 14px 36px; border-radius: 12px; text-decoration: none; letter-spacing: 0.02em; box-shadow: 0 6px 16px rgba(0,91,172,0.25);">
+                ✅ Xem & Duyệt yêu cầu ngay
+              </a>
+              <p style="margin: 12px 0 0 0; font-size: 11px; color: #94a3b8;">
+                Nút sẽ mở trang <strong>Duyệt yêu cầu → 4. Duyệt Đăng ký</strong> (đăng nhập bằng tài khoản Google của Anh/Chị nếu được hỏi).
+              </p>
+            </div>
+
+            <!-- Footer -->
+            <div style="background-color: #f8fafc; padding: 24px 40px; text-align: center; border-top: 1px solid #e2e8f0; font-size: 11px; color: #64748b; line-height: 1.5; margin-top: 16px;">
+              Trực thuộc hệ thống quản trị nhân sự <strong>PM-HCNS-TNEC</strong><br>
+              Email này được gửi tự động khi có yêu cầu mới. Vui lòng không trả lời trực tiếp email này.
+            </div>
+          </div>
+        </body>
+        </html>
+      `;
+
+      // approverEmails: chuỗi "a@x.com, b@y.com" — khử trùng lặp trước khi gửi
+      const uniqueRecipients = Array.from(
+        new Set(
+          String(approverEmails)
+            .split(",")
+            .map((e: string) => e.trim().toLowerCase())
+            .filter(Boolean)
+        )
+      ).join(", ");
+
+      await transporter.sendMail({
+        from: `"Phòng HCNS TNEC" <${smtpUser}>`,
+        to: uniqueRecipients,
+        subject: `[Trung Nam E&C] 🔔 Chờ duyệt: ${typeLabel} ${booking.resource_name} - ${booking.requester_name || ""} (${dateStr2})`,
+        html: notifyHtml,
+      });
+
+      return NextResponse.json({ success: true, message: `Đã gửi email thông báo chờ duyệt tới: ${uniqueRecipients}` });
+    }
 
     const detailRows = [
       infoRow("Loại đăng ký", typeLabel),

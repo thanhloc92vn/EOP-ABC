@@ -20,6 +20,7 @@ import {
   Handshake,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { isMarketingTeamBooking, MARKETING_TEAM_LEADER } from "@/lib/approvers";
 
 type BookingType = "xe" | "phong_hop";
 
@@ -298,26 +299,79 @@ function BookingContent() {
         }
       }
 
-      const { error } = await supabase.from("resource_bookings").insert([
-        {
-          booking_type: bookingType,
-          resource_name: resourceName,
-          host_name: hostName.trim(),
-          requester_name: currentUser.name,
-          requester_email: currentUser.contactEmail,
-          department,
-          start_time: startISO,
-          end_time: endISO,
-          content: content.trim(),
-          attendees,
-          attendee_count: finalCount,
-          participant_type: participantType,
-          customer_info: participantType === "khach_hang" ? customerInfo.trim() : null,
-          notes: notes.trim() || null,
-          status: "pending_manager",
-        },
-      ]);
+      const { data: inserted, error } = await supabase
+        .from("resource_bookings")
+        .insert([
+          {
+            booking_type: bookingType,
+            resource_name: resourceName,
+            host_name: hostName.trim(),
+            requester_name: currentUser.name,
+            requester_email: currentUser.contactEmail,
+            department,
+            start_time: startISO,
+            end_time: endISO,
+            content: content.trim(),
+            attendees,
+            attendee_count: finalCount,
+            participant_type: participantType,
+            customer_info: participantType === "khach_hang" ? customerInfo.trim() : null,
+            notes: notes.trim() || null,
+            status: "pending_manager",
+          },
+        ])
+        .select();
       if (error) throw error;
+
+      // Gửi email báo người duyệt cấp 1 (Trưởng phòng cùng phòng ban; tổ Marketing thì
+      // báo Tổ trưởng Marketing). Chạy nền, lỗi không chặn việc gửi đăng ký.
+      try {
+        let approverEmails = "";
+        if (isMarketingTeamBooking(currentUser.name)) {
+          approverEmails = employees
+            .filter((e) => e.name.trim().toLowerCase() === MARKETING_TEAM_LEADER.toLowerCase())
+            .map((e) => e.email)
+            .filter(Boolean)
+            .join(", ");
+        } else {
+          approverEmails = employees
+            .filter((e) => {
+              if (e.department !== department || !e.email) return false;
+              const r = (e.role || "").toLowerCase();
+              return (
+                r.includes("trưởng phòng") || r.includes("truong phong") ||
+                r.includes("phó phòng") || r.includes("pho phong") ||
+                r.includes("giám đốc") || r.includes("giam doc") ||
+                r.startsWith("tp.") || r.startsWith("tp ")
+              );
+            })
+            .map((e) => e.email)
+            .join(", ");
+        }
+
+        if (approverEmails && inserted && inserted[0]) {
+          fetch("/api/send-booking-email", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              mode: "notify_approver",
+              stage: "manager",
+              smtpConfig: {
+                user: localStorage.getItem("tnec_cb_smtp_user") || "",
+                pass: localStorage.getItem("tnec_cb_smtp_pass") || "",
+                host: localStorage.getItem("tnec_cb_smtp_host") || "smtp.gmail.com",
+                port: Number(localStorage.getItem("tnec_cb_smtp_port")) || 465,
+                secure: localStorage.getItem("tnec_cb_smtp_secure") !== "false",
+              },
+              booking: inserted[0],
+              approverEmails,
+              siteUrl: window.location.origin,
+            }),
+          }).catch((e) => console.warn("Không gửi được email báo người duyệt cấp 1:", e));
+        }
+      } catch (notifyErr) {
+        console.warn("Bỏ qua lỗi gửi email báo duyệt cấp 1:", notifyErr);
+      }
 
       showToast("success", "Đã gửi đăng ký thành công! Yêu cầu đang chờ Trưởng phòng xác nhận.");
       resetForm();
