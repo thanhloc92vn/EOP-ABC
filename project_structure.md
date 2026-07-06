@@ -88,6 +88,18 @@ Trang web quản trị tập trung dành cho các cấp quản lý và nhân s�
     *   `/tasks`: Quản lý dự án / công việc nội bộ.
     *   `/van-thu`: Giao diện số hóa lưu trữ công văn đến, đi và duyệt tờ trình trực tuyến.
     *   `/document-control`: Thư viện quy trình, chính sách, quy định nội bộ của Trung Nam E&C.
+    *   `/meeting-team`: Module Biên bản họp AI (ghi âm → transcript → tóm tắt → xuất Word).
+    *   `/dang-ky`: **Quản lý Đăng ký** — 2 mục con trên sidebar: *Đăng ký xe* (`?tab=xe`, Fortuner/Xpander 7 chỗ) và *Đăng ký phòng họp* (`?tab=phong-hop`, Phòng họp lớn/nhỏ). Form gồm: người chủ trì, xe/phòng, thời gian bắt đầu–kết thúc, nội dung, phòng ban, chọn nhân viên tham dự từ danh bạ (search + dropdown, tự tính số lượng, cho sửa tay), nội bộ/khách hàng (kèm thông tin khách tự điền), ghi chú hậu cần (nước, trà, bánh kẹo...). Có cảnh báo trùng lịch xe/phòng trước khi gửi duyệt.
+
+---
+
+## 🚗 Luồng Duyệt Đăng Ký Xe & Phòng Họp (Resource Booking Flow)
+
+1.  **Gửi đăng ký (`/dang-ky`)**: Nhân viên điền form và bấm *Gửi duyệt* → bản ghi lưu vào bảng `resource_bookings` (Supabase) với trạng thái `pending_manager`.
+2.  **Cấp 1 — Trưởng phòng xác nhận**: Trưởng/Phó phòng cùng phòng ban với người đăng ký (hoặc Admin) nhận thông báo trên chuông Header (realtime) và duyệt tại `/settings?tab=approvals&subtab=booking` → bấm *Xác nhận & chuyển HCNS* → trạng thái `pending_hcns`.
+3.  **Cấp 2 — HCNS duyệt cuối**: Người được cấp cờ `can_approve_booking` trong bảng `approval_permissions` (hiện là chị **Nguyễn Bích Như Quỳnh** — điều phối xe & phòng họp, phòng HCNS) bấm *Duyệt* hoặc *Từ chối* (bắt buộc nhập lý do khi từ chối).
+4.  **Gửi mail kết quả**: Hệ thống gọi [send-booking-email/route.ts](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/dashboard/app/api/send-booking-email/route.ts) (nodemailer) gửi email chuyên nghiệp cho người đăng ký, gồm đầy đủ thông tin buổi họp/chuyến xe, trạng thái duyệt/từ chối kèm lý do. SMTP dùng chung cấu hình trang C&B (localStorage `tnec_cb_smtp_*`), fallback biến môi trường `SMTP_USER`/`SMTP_PASS`.
+5.  **Schema**: chạy file [supabase_schema_resource_bookings.sql](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/dashboard/supabase_schema_resource_bookings.sql) trên Supabase SQL Editor (tạo bảng `resource_bookings` + thêm cột `can_approve_booking` + cấp quyền cho chị Quỳnh).
 
 ---
 

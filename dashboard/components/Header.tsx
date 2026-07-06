@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Bell, Search, Globe, ChevronDown, Menu, X, Sparkles, Loader2, Send, Copy, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { fetchApprovalPermissions, hasAnyApprovalPermission } from "@/lib/approvers";
+import { fetchApprovalPermissions, hasAnyApprovalPermission, isMarketingTeamBooking, isMarketingTeamLeader } from "@/lib/approvers";
 import { useSidebar } from "./SidebarContext";
 
 interface Props {
@@ -311,6 +311,20 @@ export default function Header({ title, subtitle }: Props) {
         console.warn("Could not fetch justifications for header:", err);
       }
 
+      // 3. Fetch resource bookings (đăng ký xe / phòng họp) pending approval
+      let bookingsData: any[] = [];
+      try {
+        const { data, error } = await supabase
+          .from("resource_bookings")
+          .select("*")
+          .in("status", ["pending_manager", "pending_hcns"]);
+        if (!error && data) {
+          bookingsData = data;
+        }
+      } catch (err) {
+        console.warn("Could not fetch resource bookings for header:", err);
+      }
+
       const isUserAdmin = userObj.isAdmin || (userObj.role || "").toLowerCase() === "admin";
       const isUserManager = (userObj.role || "").toLowerCase().includes("trưởng phòng") || 
                             (userObj.role || "").toLowerCase().includes("truong phong") ||
@@ -336,7 +350,7 @@ export default function Header({ title, subtitle }: Props) {
       // Per-user approval grants from approval_permissions table
       const perms = await fetchApprovalPermissions(userObj.email);
 
-      const hasApprovalPrivileges = isUserAdmin || isUserManager || isUserDeputy || isUserHR || hasAnyApprovalPermission(perms);
+      const hasApprovalPrivileges = isUserAdmin || isUserManager || isUserDeputy || isUserHR || hasAnyApprovalPermission(perms) || isMarketingTeamLeader(userObj.name);
       if (!hasApprovalPrivileges) {
         setNotifications([]);
         return;
@@ -433,8 +447,42 @@ export default function Header({ title, subtitle }: Props) {
         };
       });
 
+      // Filter booking notifications:
+      // - pending_manager: Trưởng/Phó phòng cùng phòng ban người đăng ký (hoặc Admin)
+      // - pending_hcns: người có quyền can_approve_booking (HCNS điều phối) hoặc Admin
+      const filteredBookings = bookingsData.filter(b => {
+        if (b.status === "pending_manager") {
+          if (isUserAdmin) return true;
+          // Tổ Marketing (thuộc HCNS): thông báo cấp 1 chỉ đến Tổ trưởng Marketing
+          if (isMarketingTeamBooking(b.requester_name)) {
+            return isMarketingTeamLeader(userObj.name);
+          }
+          return (isUserManager || isUserDeputy) && userObj.department === b.department;
+        }
+        if (b.status === "pending_hcns") {
+          return isUserAdmin || perms.canApproveBooking;
+        }
+        return false;
+      });
+
+      // Map bookings to notification format
+      const mappedBookings = filteredBookings.map(b => {
+        const isVehicleBooking = b.booking_type === "xe";
+        const timeStr = b.start_time
+          ? new Date(b.start_time).toLocaleString("vi-VN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })
+          : "";
+        return {
+          id: b.id,
+          type: "booking",
+          typeText: isVehicleBooking ? "Đăng ký xe" : "Đăng ký phòng họp",
+          message: `${b.requester_name} đăng ký ${isVehicleBooking ? "xe" : ""} ${b.resource_name} lúc ${timeStr}${b.status === "pending_hcns" ? " (đã qua Trưởng phòng, chờ HCNS duyệt cuối)" : ""}`,
+          time: b.created_at ? new Date(b.created_at).toLocaleTimeString("vi-VN", { hour: '2-digit', minute: '2-digit' }) + " " + new Date(b.created_at).toLocaleDateString("vi-VN") : "",
+          timestamp: b.created_at ? new Date(b.created_at).getTime() : 0
+        };
+      });
+
       // Combine and sort by timestamp descending
-      const allNotifications = [...mappedTasks, ...mappedJustifications].sort((a, b) => b.timestamp - a.timestamp);
+      const allNotifications = [...mappedTasks, ...mappedJustifications, ...mappedBookings].sort((a, b) => b.timestamp - a.timestamp);
       setNotifications(allNotifications);
     } catch (err) {
       console.error("Error fetching notifications for header:", err);
@@ -470,6 +518,13 @@ export default function Header({ title, subtitle }: Props) {
         .on(
           "postgres_changes",
           { event: "*", schema: "public", table: "attendance_justifications" },
+          () => {
+            fetchNotifications(currentUser);
+          }
+        )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "resource_bookings" },
           () => {
             fetchNotifications(currentUser);
           }
@@ -558,16 +613,24 @@ export default function Header({ title, subtitle }: Props) {
                   notifications.map((notif) => (
                     <a
                       key={notif.id}
-                      href={notif.type === "justification" ? "/settings?tab=approvals&subtab=explanation" : "/settings?tab=approvals"}
+                      href={
+                        notif.type === "justification"
+                          ? "/settings?tab=approvals&subtab=explanation"
+                          : notif.type === "booking"
+                          ? "/settings?tab=approvals&subtab=booking"
+                          : "/settings?tab=approvals"
+                      }
                       onClick={() => setShowDropdown(false)}
                       className="block p-4 hover:bg-slate-50/80 transition-colors space-y-1 text-left"
                     >
                       <div className="flex items-center justify-between">
                         <span className={`text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full ${
-                          notif.type === "leave" 
-                            ? "bg-emerald-50 text-emerald-700" 
+                          notif.type === "leave"
+                            ? "bg-emerald-50 text-emerald-700"
                             : notif.type === "trip"
                             ? "bg-indigo-50 text-indigo-700"
+                            : notif.type === "booking"
+                            ? "bg-sky-50 text-sky-700"
                             : "bg-amber-50 text-amber-700"
                         }`}>
                           {notif.typeText}

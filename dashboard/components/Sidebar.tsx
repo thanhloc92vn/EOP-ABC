@@ -16,16 +16,22 @@ import {
   X,
   CheckSquare,
   MessageSquare,
-  Mic
+  Mic,
+  CalendarCheck,
+  CarFront,
+  DoorOpen,
+  ChevronDown
 } from "lucide-react";
 import { useSidebar } from "./SidebarContext";
 import ThemeToggle from "./ThemeToggle";
 import { supabase } from "@/lib/supabase";
-import { fetchApprovalPermissions, hasAnyApprovalPermission } from "@/lib/approvers";
+import { fetchApprovalPermissions, hasAnyApprovalPermission, isMarketingTeamLeader } from "@/lib/approvers";
 
 function SidebarLinks({ isApprover, pathname, setSidebarOpen }: { isApprover: boolean; pathname: string; setSidebarOpen: (o: boolean) => void }) {
   const searchParams = useSearchParams();
   const currentTab = searchParams.get("tab");
+  const isBookingSection = pathname.startsWith("/dang-ky");
+  const [bookingGroupOpen, setBookingGroupOpen] = useState(isBookingSection);
 
   const navItems = [
     { label: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -45,6 +51,57 @@ function SidebarLinks({ isApprover, pathname, setSidebarOpen }: { isApprover: bo
     navItems.push({ label: "Duyệt yêu cầu", href: "/settings?tab=approvals", icon: CheckSquare });
   }
 
+  const bookingChildren = [
+    { label: "Đăng ký xe", href: "/dang-ky?tab=xe", tab: "xe", icon: CarFront },
+    { label: "Đăng ký phòng họp", href: "/dang-ky?tab=phong-hop", tab: "phong-hop", icon: DoorOpen },
+  ];
+
+  const bookingGroup = (
+    <div key="booking-group" className="space-y-1.5">
+      <button
+        type="button"
+        onClick={() => setBookingGroupOpen((o) => !o)}
+        className={`w-full flex items-center gap-3 px-5 py-2.5 rounded-full text-xs font-bold transition-all duration-200 active:scale-[0.97] border cursor-pointer ${
+          isBookingSection
+            ? "bg-gradient-to-r from-[#005BAC] to-[#00AEEF] border-transparent text-white shadow-md shadow-blue-500/15"
+            : "bg-slate-50/50 border-slate-100 text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+        }`}
+      >
+        <CalendarCheck size={15} className={isBookingSection ? "text-white" : "text-slate-500"} />
+        <span className="flex-1 text-left">Quản lý Đăng ký</span>
+        <ChevronDown
+          size={13}
+          className={`transition-transform duration-200 ${bookingGroupOpen || isBookingSection ? "rotate-180" : ""} ${isBookingSection ? "text-white" : "text-slate-400"}`}
+        />
+      </button>
+
+      {(bookingGroupOpen || isBookingSection) && (
+        <div className="pl-5 space-y-1.5 animate-in fade-in duration-150">
+          {bookingChildren.map((child) => {
+            const ChildIcon = child.icon;
+            const activeChildTab = currentTab || "phong-hop";
+            const isChildActive = isBookingSection && activeChildTab === child.tab;
+            return (
+              <Link
+                key={child.href}
+                href={child.href}
+                onClick={() => setSidebarOpen(false)}
+                className={`flex items-center gap-2.5 px-4 py-2 rounded-full text-[11px] font-bold transition-all duration-200 active:scale-[0.97] hover:translate-x-1 border ${
+                  isChildActive
+                    ? "bg-blue-50 border-blue-200 text-[#005BAC]"
+                    : "bg-white border-slate-100 text-slate-500 hover:bg-slate-50 hover:text-slate-800"
+                }`}
+              >
+                <ChildIcon size={13} className={isChildActive ? "text-[#005BAC]" : "text-slate-400"} />
+                <span>{child.label}</span>
+              </Link>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <>
       {navItems.map((item) => {
@@ -61,7 +118,7 @@ function SidebarLinks({ isApprover, pathname, setSidebarOpen }: { isApprover: bo
           isActive = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href) && !pathname.startsWith("/settings"));
         }
 
-        return (
+        const linkEl = (
           <Link
             key={item.href}
             href={item.href}
@@ -76,6 +133,18 @@ function SidebarLinks({ isApprover, pathname, setSidebarOpen }: { isApprover: bo
             <span>{item.label}</span>
           </Link>
         );
+
+        // Chèn nhóm "Quản lý Đăng ký" ngay sau mục Lịch công việc
+        if (item.href === "/calendar") {
+          return (
+            <div key={item.href} className="space-y-2.5">
+              {linkEl}
+              {bookingGroup}
+            </div>
+          );
+        }
+
+        return linkEl;
       })}
     </>
   );
@@ -104,7 +173,7 @@ export default function Sidebar() {
         // Check Employees
         const { data: empData } = await supabase
           .from("employees")
-          .select("role")
+          .select("name, role")
           .like("email", `%${email}%`)
           .maybeSingle();
 
@@ -115,6 +184,9 @@ export default function Sidebar() {
         const hasApprovalPrivileges =
           isAdmin ||
           hasAnyApprovalPermission(perms) ||
+          isMarketingTeamLeader(empData?.name) ||
+          roleLower.includes("tổ trưởng") ||
+          roleLower.includes("to truong") ||
           roleLower.includes("trưởng phòng") ||
           roleLower.includes("truong phong") ||
           roleLower.includes("phó phòng") ||
