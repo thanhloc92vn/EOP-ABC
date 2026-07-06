@@ -98,7 +98,7 @@ export async function POST(request: NextRequest) {
           <div style="max-width: 640px; margin: 40px auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.05); border: 1px solid #e2e8f0;">
 
             <!-- Banner Header -->
-            <div style="background: linear-gradient(135deg, #005BAC 0%, #1e40af 100%); padding: 32px 40px; color: #ffffff;">
+            <div style="background-color: #005BAC; background: linear-gradient(135deg, #005BAC 0%, #1e40af 100%); padding: 32px 40px; color: #ffffff;">
               <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.15em; color: #93c5fd; margin-bottom: 8px;">TRUNG NAM E&C — HỆ THỐNG HCNS</div>
               <h1 style="margin: 0; font-size: 22px; font-weight: 850; letter-spacing: -0.025em; color: #ffffff;">🔔 Yêu Cầu ${typeLabel} Chờ Duyệt</h1>
               <div style="font-size: 13px; color: #bfdbfe; margin-top: 6px; font-weight: 500;">Hệ thống điều phối xe & phòng họp — PM-HCNS-TNEC</div>
@@ -123,12 +123,18 @@ export async function POST(request: NextRequest) {
               </div>
             </div>
 
-            <!-- CTA Button -->
+            <!-- CTA Button (bulletproof: dùng bgcolor trên <td> để Outlook hiển thị đúng màu nền) -->
             <div style="padding: 26px 40px 10px 40px; text-align: center;">
-              <a href="${approvalUrl}"
-                 style="display: inline-block; background: linear-gradient(135deg, #005BAC 0%, #00AEEF 100%); color: #ffffff; font-weight: 800; font-size: 14px; padding: 14px 36px; border-radius: 12px; text-decoration: none; letter-spacing: 0.02em; box-shadow: 0 6px 16px rgba(0,91,172,0.25);">
-                ✅ Xem & Duyệt yêu cầu ngay
-              </a>
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin: 0 auto;">
+                <tr>
+                  <td align="center" bgcolor="#005BAC" style="background-color: #005BAC; border-radius: 12px;">
+                    <a href="${approvalUrl}" target="_blank"
+                       style="display: inline-block; padding: 14px 36px; font-family: Arial, Helvetica, sans-serif; font-size: 14px; font-weight: bold; color: #ffffff; text-decoration: none; border-radius: 12px; letter-spacing: 0.02em;">
+                      ✅ Xem &amp; Duyệt yêu cầu ngay
+                    </a>
+                  </td>
+                </tr>
+              </table>
               <p style="margin: 12px 0 0 0; font-size: 11px; color: #94a3b8;">
                 Nút sẽ mở trang <strong>Duyệt yêu cầu → 4. Duyệt Đăng ký</strong> (đăng nhập bằng tài khoản Google của Anh/Chị nếu được hỏi).
               </p>
@@ -216,7 +222,7 @@ export async function POST(request: NextRequest) {
         <div style="max-width: 640px; margin: 40px auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.05); border: 1px solid #e2e8f0;">
 
           <!-- Banner Header -->
-          <div style="background: linear-gradient(135deg, #005BAC 0%, #1e40af 100%); padding: 32px 40px; color: #ffffff;">
+          <div style="background-color: #005BAC; background: linear-gradient(135deg, #005BAC 0%, #1e40af 100%); padding: 32px 40px; color: #ffffff;">
             <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.15em; color: #93c5fd; margin-bottom: 8px;">TRUNG NAM E&C — PHÒNG HÀNH CHÍNH NHÂN SỰ</div>
             <h1 style="margin: 0; font-size: 22px; font-weight: 850; letter-spacing: -0.025em; color: #ffffff;">Kết Quả ${typeLabel}</h1>
             <div style="font-size: 13px; color: #bfdbfe; margin-top: 6px; font-weight: 500;">Hệ thống điều phối xe & phòng họp — PM-HCNS-TNEC</div>
