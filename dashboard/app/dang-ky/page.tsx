@@ -18,6 +18,9 @@ import {
   Building2,
   StickyNote,
   Handshake,
+  ChevronLeft,
+  ChevronRight,
+  CalendarDays,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { isMarketingTeamBooking, MARKETING_TEAM_LEADER } from "@/lib/approvers";
@@ -87,6 +90,27 @@ function formatDateTime(iso: string) {
   );
 }
 
+// ━━━ Lịch timeline theo ngày (dạng lịch phòng họp cổ điển: hàng = xe/phòng, cột = giờ) ━━━
+const TIMELINE_START_HOUR = 6; // 06:00
+const TIMELINE_END_HOUR = 22; // 22:00 (không bao gồm)
+const TIMELINE_HOURS = Array.from({ length: TIMELINE_END_HOUR - TIMELINE_START_HOUR }, (_, i) => TIMELINE_START_HOUR + i);
+
+function toDateKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function clamp(n: number, min: number, max: number) {
+  return Math.min(Math.max(n, min), max);
+}
+
+function formatDateVi(dateKey: string): string {
+  const d = new Date(`${dateKey}T00:00:00`);
+  return d.toLocaleDateString("vi-VN", { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
 function BookingContent() {
   const searchParams = useSearchParams();
   const tabParam = searchParams.get("tab");
@@ -123,6 +147,17 @@ function BookingContent() {
   const [attendeeSearch, setAttendeeSearch] = useState("");
   const [showAttendeeDropdown, setShowAttendeeDropdown] = useState(false);
   const attendeePickerRef = useRef<HTMLDivElement>(null);
+
+  // Lịch timeline theo ngày
+  const [viewDate, setViewDate] = useState<string>(() => toDateKey(new Date()));
+  const todayKey = useMemo(() => toDateKey(new Date()), []);
+  const isViewingToday = viewDate === todayKey;
+
+  const shiftViewDate = (deltaDays: number) => {
+    const d = new Date(`${viewDate}T00:00:00`);
+    d.setDate(d.getDate() + deltaDays);
+    setViewDate(toDateKey(d));
+  };
 
   // Reset resource when switching tab
   useEffect(() => {
@@ -415,6 +450,43 @@ function BookingContent() {
       .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
       .slice(0, 12);
   }, [bookings, bookingType]);
+
+  // Đăng ký trùng ngày đang xem trên timeline (bao gồm cả booking nhiều ngày đè qua ngày này)
+  const timelineBookings = useMemo(() => {
+    const dayStart = new Date(`${viewDate}T00:00:00`);
+    const dayEnd = new Date(`${viewDate}T23:59:59`);
+    return bookings.filter(
+      (b) =>
+        b.booking_type === bookingType &&
+        b.status !== "rejected" &&
+        new Date(b.start_time) <= dayEnd &&
+        new Date(b.end_time) >= dayStart
+    );
+  }, [bookings, bookingType, viewDate]);
+
+  const timelineWindowStartMin = TIMELINE_START_HOUR * 60;
+  const timelineWindowEndMin = TIMELINE_END_HOUR * 60;
+  const timelineTotalMin = timelineWindowEndMin - timelineWindowStartMin;
+
+  const getTimelineBlockStyle = (b: BookingRow) => {
+    const dayStart = new Date(`${viewDate}T00:00:00`).getTime();
+    const startMinRaw = Math.round((new Date(b.start_time).getTime() - dayStart) / 60000);
+    const endMinRaw = Math.round((new Date(b.end_time).getTime() - dayStart) / 60000);
+    const startMin = clamp(startMinRaw, timelineWindowStartMin, timelineWindowEndMin);
+    let endMin = clamp(endMinRaw, timelineWindowStartMin, timelineWindowEndMin);
+    if (endMin <= startMin) endMin = Math.min(startMin + 20, timelineWindowEndMin);
+    const leftPct = ((startMin - timelineWindowStartMin) / timelineTotalMin) * 100;
+    const widthPct = ((endMin - startMin) / timelineTotalMin) * 100;
+    return { left: `${leftPct}%`, width: `${widthPct}%` };
+  };
+
+  const nowLinePct = useMemo(() => {
+    if (!isViewingToday) return null;
+    const now = new Date();
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    if (nowMin < timelineWindowStartMin || nowMin > timelineWindowEndMin) return null;
+    return ((nowMin - timelineWindowStartMin) / timelineTotalMin) * 100;
+  }, [isViewingToday, timelineWindowStartMin, timelineTotalMin, timelineWindowEndMin]);
 
   const TabIcon = isVehicle ? CarFront : DoorOpen;
 
@@ -745,6 +817,120 @@ function BookingContent() {
                 </button>
               </div>
             </form>
+          </div>
+
+          {/* Lịch timeline trực quan theo ngày: hàng = xe/phòng, cột = giờ, màu theo trạng thái */}
+          <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="font-heading font-bold text-slate-800 text-sm flex items-center gap-2">
+                <CalendarDays size={16} className="text-blue-600" />
+                Lịch {isVehicle ? "xe" : "phòng họp"} theo ngày
+              </h2>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => shiftViewDate(-1)}
+                  className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-800 transition-all active:scale-95 cursor-pointer"
+                  title="Ngày trước"
+                >
+                  <ChevronLeft size={14} />
+                </button>
+                <input
+                  type="date"
+                  value={viewDate}
+                  onChange={(e) => e.target.value && setViewDate(e.target.value)}
+                  className="px-3 py-1.5 border border-slate-200 rounded-lg outline-none text-xs font-bold text-slate-700 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40"
+                />
+                <button
+                  type="button"
+                  onClick={() => shiftViewDate(1)}
+                  className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-800 transition-all active:scale-95 cursor-pointer"
+                  title="Ngày sau"
+                >
+                  <ChevronRight size={14} />
+                </button>
+                {!isViewingToday && (
+                  <button
+                    type="button"
+                    onClick={() => setViewDate(todayKey)}
+                    className="px-3 py-1.5 rounded-lg bg-blue-50 text-[#005BAC] border border-blue-200 text-[10px] font-bold hover:bg-blue-100 transition-all active:scale-95 cursor-pointer"
+                  >
+                    Hôm nay
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-400 font-semibold capitalize">{formatDateVi(viewDate)}</p>
+
+            {/* Legend */}
+            <div className="flex items-center gap-4 text-[10px] font-bold text-slate-500">
+              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-amber-400 inline-block shrink-0" /> Chờ duyệt</span>
+              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-emerald-500 inline-block shrink-0" /> Đã duyệt</span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <div className="min-w-[860px]">
+                {/* Hàng giờ (header) */}
+                <div className="flex pl-32">
+                  {TIMELINE_HOURS.map((h) => (
+                    <div key={h} className="flex-1 text-[10px] font-bold text-slate-400 border-l border-slate-100 pl-1.5 pb-1">
+                      {String(h).padStart(2, "0")}h
+                    </div>
+                  ))}
+                </div>
+
+                {/* Các hàng xe / phòng họp */}
+                <div className="space-y-2">
+                  {resources.map((res) => {
+                    const rowBookings = timelineBookings.filter((b) => b.resource_name === res);
+                    return (
+                      <div key={res} className="flex items-center gap-2">
+                        <div className="w-32 shrink-0 text-xs font-bold text-slate-700 truncate pr-2" title={res}>
+                          {res}
+                        </div>
+                        <div className="relative flex-1 h-11 bg-slate-50 rounded-lg border border-slate-100 overflow-hidden">
+                          {/* Đường kẻ dọc mỗi giờ */}
+                          <div className="absolute inset-0 flex pointer-events-none">
+                            {TIMELINE_HOURS.map((h, i) => (
+                              <div key={h} className={`flex-1 ${i !== 0 ? "border-l border-slate-150" : ""}`} />
+                            ))}
+                          </div>
+
+                          {/* Vạch giờ hiện tại */}
+                          {nowLinePct !== null && (
+                            <div
+                              className="absolute top-0 bottom-0 w-[2px] bg-rose-400 z-20"
+                              style={{ left: `${nowLinePct}%` }}
+                              title="Giờ hiện tại"
+                            />
+                          )}
+
+                          {/* Khối đăng ký */}
+                          {rowBookings.map((b) => {
+                            const isApprovedBlock = b.status === "approved";
+                            return (
+                              <div
+                                key={b.id}
+                                title={`${b.host_name} • ${formatDateTime(b.start_time)} ➔ ${formatDateTime(b.end_time)} • ${b.content}${
+                                  isApprovedBlock ? "" : " (chờ duyệt)"
+                                }`}
+                                className={`absolute top-1 bottom-1 rounded-md px-2 flex items-center text-[10px] font-bold text-white truncate shadow-sm cursor-default z-10 ${
+                                  isApprovedBlock ? "bg-emerald-500" : "bg-amber-400"
+                                }`}
+                                style={getTimelineBlockStyle(b)}
+                              >
+                                {b.host_name}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* Lịch sắp tới của xe / phòng họp */}
