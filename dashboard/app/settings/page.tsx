@@ -764,8 +764,9 @@ function SettingsContent() {
                 )}
                 <p className="text-[10px] text-slate-400 font-normal leading-relaxed">
                   Dùng cho email kết quả duyệt Đăng ký xe / phòng họp và gửi bảng công bên C&amp;B.
-                  Cấu hình lưu trên trình duyệt này (dùng chung với trang C&amp;B) — người phụ trách duyệt
-                  (chị Quỳnh / Admin) cấu hình một lần trên máy của mình là xong.
+                  Lưu ý: nếu quản trị đã đặt email hệ thống trên máy chủ (biến SMTP_USER/SMTP_PASS)
+                  thì mọi email của module Đăng ký luôn gửi bằng email hệ thống đó — cấu hình tại đây
+                  chỉ là phương án dự phòng khi máy chủ chưa thiết lập.
                 </p>
               </div>
               <button

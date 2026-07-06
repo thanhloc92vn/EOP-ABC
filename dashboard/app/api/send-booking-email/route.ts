@@ -13,10 +13,14 @@ export async function POST(request: NextRequest) {
     const { smtpConfig, booking, decision, rejectReason, approverName, mode, approverEmails, stage } = body;
     const isNotifyMode = mode === "notify_approver";
 
-    const smtpUser = smtpConfig?.user || process.env.SMTP_USER || "";
-    const smtpPass = smtpConfig?.pass || process.env.SMTP_PASS || "";
-    const smtpHost = smtpConfig?.host || process.env.SMTP_HOST || "smtp.gmail.com";
-    const portNum = Number(smtpConfig?.port || process.env.SMTP_PORT) || 465;
+    // ƯU TIÊN email hệ thống trên server (SMTP_USER/SMTP_PASS — ổn định, không phụ thuộc
+    // máy người dùng). Cấu hình từ trình duyệt chỉ dùng khi server CHƯA đặt biến môi trường,
+    // tránh trường hợp nhân viên tự cấu hình sai làm mail thất bại âm thầm.
+    const envConfigured = !!(process.env.SMTP_USER && process.env.SMTP_PASS);
+    const smtpUser = envConfigured ? (process.env.SMTP_USER as string) : (smtpConfig?.user || "");
+    const smtpPass = envConfigured ? (process.env.SMTP_PASS as string) : (smtpConfig?.pass || "");
+    const smtpHost = envConfigured ? (process.env.SMTP_HOST || "smtp.gmail.com") : (smtpConfig?.host || "smtp.gmail.com");
+    const portNum = envConfigured ? (Number(process.env.SMTP_PORT) || 465) : (Number(smtpConfig?.port) || 465);
 
     if (!smtpUser || !smtpPass) {
       return NextResponse.json({ error: "Chưa cấu hình SMTP gửi email (cấu hình tại Cài đặt hệ thống / trang C&B hoặc biến môi trường SMTP_USER/SMTP_PASS)!" }, { status: 400 });
@@ -38,7 +42,7 @@ export async function POST(request: NextRequest) {
     const transporter = nodemailer.createTransport({
       host: smtpHost,
       port: portNum,
-      secure: smtpConfig?.secure === undefined ? portNum === 465 : !!smtpConfig?.secure,
+      secure: envConfigured ? portNum === 465 : (smtpConfig?.secure === undefined ? portNum === 465 : !!smtpConfig?.secure),
       auth: { user: smtpUser, pass: smtpPass },
       tls: { rejectUnauthorized: false },
     });
