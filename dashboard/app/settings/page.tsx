@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, Suspense } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
-import { Settings, Database, Info, Key, CheckCircle, ShieldAlert, Check, X, Calendar, Briefcase, User, CarFront, DoorOpen } from "lucide-react";
+import { Settings, Database, Info, Key, CheckCircle, ShieldAlert, Check, X, Calendar, Briefcase, User, CarFront, DoorOpen, Mail } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { fetchApprovalPermissions, hasAnyApprovalPermission, isMarketingTeamBooking, isMarketingTeamLeader, NO_APPROVAL_PERMISSIONS, type ApprovalPermissions } from "@/lib/approvers";
 import { useSearchParams } from "next/navigation";
@@ -39,13 +39,41 @@ function SettingsContent() {
   const [resourceBookings, setResourceBookings] = useState<any[]>([]);
   const [loadingBookings, setLoadingBookings] = useState(false);
 
+  // SMTP gửi email — dùng chung bộ lưu trữ với trang C&B (localStorage tnec_cb_smtp_*)
+  const [smtpConfig, setSmtpConfig] = useState({
+    user: "",
+    pass: "",
+    provider: "gmail",
+    host: "smtp.gmail.com",
+    port: 465,
+    secure: true
+  });
+  const [showEmailConfigModal, setShowEmailConfigModal] = useState(false);
+  const [modalProvider, setModalProvider] = useState("gmail");
+
+  useEffect(() => {
+    if (showEmailConfigModal) {
+      setModalProvider(smtpConfig.provider || "gmail");
+    }
+  }, [showEmailConfigModal, smtpConfig.provider]);
+
   // Load configuration from local storage on mount
   useEffect(() => {
     if (typeof window !== "undefined") {
       setApiKey(localStorage.getItem("openai_api_key") || "");
       setWebhookUrl(localStorage.getItem("apps_script_url") || "");
       setModel(localStorage.getItem("openai_model") || "gpt-4o-mini");
-      
+
+      // Nạp cấu hình SMTP dùng chung với trang C&B
+      setSmtpConfig({
+        user: localStorage.getItem("tnec_cb_smtp_user") || "",
+        pass: localStorage.getItem("tnec_cb_smtp_pass") || "",
+        provider: localStorage.getItem("tnec_cb_smtp_provider") || "gmail",
+        host: localStorage.getItem("tnec_cb_smtp_host") || "smtp.gmail.com",
+        port: Number(localStorage.getItem("tnec_cb_smtp_port")) || 465,
+        secure: localStorage.getItem("tnec_cb_smtp_secure") !== "false",
+      });
+
       fetchUserRoleAndDept();
       fetchTasks();
       fetchExplanations();
@@ -546,6 +574,21 @@ function SettingsContent() {
     });
   }, [resourceBookings, currentUser, isApprover, approvalPerms]);
 
+  // Lưu SMTP vào cùng bộ khoá với trang C&B — cấu hình một nơi, cả hệ thống dùng chung
+  const handleSaveSmtpConfig = (user: string, pass: string, provider: string, host: string, port: number, secure: boolean) => {
+    setSmtpConfig({ user, pass, provider, host, port, secure });
+    if (typeof window !== "undefined") {
+      localStorage.setItem("tnec_cb_smtp_user", user);
+      localStorage.setItem("tnec_cb_smtp_pass", pass);
+      localStorage.setItem("tnec_cb_smtp_provider", provider);
+      localStorage.setItem("tnec_cb_smtp_host", host);
+      localStorage.setItem("tnec_cb_smtp_port", String(port));
+      localStorage.setItem("tnec_cb_smtp_secure", String(secure));
+    }
+    setShowEmailConfigModal(false);
+    alert("Đã lưu cấu hình gửi email SMTP! Các nút Duyệt & gửi mail sẽ dùng tài khoản này.");
+  };
+
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     if (typeof window !== "undefined") {
@@ -664,6 +707,40 @@ function SettingsContent() {
                 </button>
               </div>
             </form>
+          </div>
+
+          {/* Cấu hình Email gửi thông báo (SMTP) — dùng chung với C&B và Duyệt Đăng ký */}
+          <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium">
+            <h2 className="font-heading font-bold text-slate-800 text-sm flex items-center gap-2 mb-4">
+              <Mail size={18} className="text-blue-600" /> Cấu hình gửi Email hệ thống (SMTP)
+            </h2>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="text-xs font-semibold text-slate-600 space-y-1">
+                {smtpConfig.user ? (
+                  <p className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                    Đang dùng tài khoản gửi: <span className="text-[#005BAC] font-bold">{smtpConfig.user}</span>
+                  </p>
+                ) : (
+                  <p className="flex items-center gap-2 text-amber-600">
+                    <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" />
+                    Chưa cấu hình — các nút &quot;Duyệt &amp; gửi mail&quot; sẽ không gửi được email kết quả.
+                  </p>
+                )}
+                <p className="text-[10px] text-slate-400 font-normal leading-relaxed">
+                  Dùng cho email kết quả duyệt Đăng ký xe / phòng họp và gửi bảng công bên C&amp;B.
+                  Cấu hình lưu trên trình duyệt này (dùng chung với trang C&amp;B) — người phụ trách duyệt
+                  (chị Quỳnh / Admin) cấu hình một lần trên máy của mình là xong.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowEmailConfigModal(true)}
+                className="shrink-0 px-5 py-2.5 bg-[#005BAC] hover:bg-blue-700 text-white text-xs font-bold rounded-xl active:scale-95 transition-all shadow-md shadow-blue-500/10 flex items-center gap-2 cursor-pointer"
+              >
+                <Settings size={14} /> {smtpConfig.user ? "Thay đổi cấu hình email" : "Cấu hình gửi email"}
+              </button>
+            </div>
           </div>
         </>
       )}
@@ -1052,6 +1129,194 @@ function SettingsContent() {
                 </div>
               </div>
             </>
+          )}
+          {/* ─── MODAL CẤU HÌNH SMTP GỬI THƯ (y hệt trang C&B, dùng chung localStorage) ─── */}
+          {showEmailConfigModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+              <div className="bg-white w-full max-w-md rounded-2xl shadow-premium border border-slate-100 overflow-hidden transform transition-all animate-in zoom-in-95 duration-150">
+                <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-[#005BAC] text-white">
+                  <h3 className="font-heading font-black text-sm flex items-center gap-2">
+                    <Settings size={16} /> Cấu hình tài khoản SMTP gửi email
+                  </h3>
+                  <button
+                    onClick={() => setShowEmailConfigModal(false)}
+                    className="text-white/80 hover:text-white transition-all cursor-pointer p-1 rounded-lg hover:bg-white/10"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const formData = new FormData(e.currentTarget);
+                    const user = String(formData.get("smtp_user") || "").trim();
+                    const pass = String(formData.get("smtp_pass") || "").trim();
+                    const provider = modalProvider;
+
+                    let host = "smtp.gmail.com";
+                    let port = 465;
+                    let secure = true;
+
+                    if (provider === "gmail") {
+                      host = "smtp.gmail.com";
+                      port = 465;
+                      secure = true;
+                    } else if (provider === "outlook") {
+                      host = "smtp.office365.com";
+                      port = 587;
+                      secure = false;
+                    } else {
+                      host = String(formData.get("smtp_host") || "").trim() || "smtp.gmail.com";
+                      port = Number(formData.get("smtp_port")) || 465;
+                      secure = formData.get("smtp_secure") === "true";
+                    }
+
+                    if (!user || !pass) {
+                      alert("Vui lòng điền đầy đủ email và mật khẩu!");
+                      return;
+                    }
+                    handleSaveSmtpConfig(user, pass, provider, host, port, secure);
+                  }}
+                  className="p-6 space-y-4 text-xs font-semibold text-slate-700"
+                >
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Nhà cung cấp Email</label>
+                    <select
+                      value={modalProvider}
+                      onChange={(e) => setModalProvider(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none transition-all cursor-pointer"
+                    >
+                      <option value="gmail">Gmail</option>
+                      <option value="outlook">Outlook / Microsoft Office 365 (Doanh nghiệp)</option>
+                      <option value="custom">Cấu hình SMTP khác (Thủ công)</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Tài khoản Email gửi đi</label>
+                    <input
+                      type="email"
+                      name="smtp_user"
+                      defaultValue={smtpConfig.user}
+                      placeholder={modalProvider === "gmail" ? "vidu@gmail.com" : "quynhnbn@trungnamgroup.com.vn"}
+                      required
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none transition-all"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider flex items-center justify-between">
+                      <span>Mật khẩu hoặc Mật khẩu ứng dụng</span>
+                      {modalProvider === "gmail" && (
+                        <a
+                          href="https://myaccount.google.com/apppasswords"
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[#005BAC] hover:underline normal-case font-bold"
+                        >
+                          Cách lấy mật khẩu Gmail?
+                        </a>
+                      )}
+                      {modalProvider === "outlook" && (
+                        <a
+                          href="https://mysignins.microsoft.com/security-info"
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[#005BAC] hover:underline normal-case font-bold"
+                        >
+                          Cài đặt bảo mật Microsoft?
+                        </a>
+                      )}
+                    </label>
+                    <input
+                      type="password"
+                      name="smtp_pass"
+                      defaultValue={smtpConfig.pass}
+                      placeholder="Mật khẩu tài khoản hoặc mật khẩu ứng dụng"
+                      required
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none transition-all font-mono tracking-widest"
+                    />
+                  </div>
+
+                  {modalProvider === "custom" && (
+                    <div className="grid grid-cols-2 gap-3 border border-slate-100 p-3 rounded-2xl bg-slate-50/50">
+                      <div className="space-y-1.5 col-span-2">
+                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider">SMTP Server Host</label>
+                        <input
+                          type="text"
+                          name="smtp_host"
+                          defaultValue={smtpConfig.host}
+                          placeholder="smtp.example.com"
+                          required
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl focus:border-[#005BAC] outline-none transition-all"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider">Cổng (Port)</label>
+                        <input
+                          type="number"
+                          name="smtp_port"
+                          defaultValue={smtpConfig.port}
+                          placeholder="465"
+                          required
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl focus:border-[#005BAC] outline-none transition-all"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider">Bảo mật SSL/TLS</label>
+                        <select
+                          name="smtp_secure"
+                          defaultValue={String(smtpConfig.secure)}
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl focus:border-[#005BAC] outline-none transition-all cursor-pointer"
+                        >
+                          <option value="true">SSL (Port 465)</option>
+                          <option value="false">TLS/STARTTLS (Port 587 hoặc khác)</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Hướng dẫn bảo mật dựa theo nhà cung cấp */}
+                  <div className="bg-blue-50 border border-blue-100 p-3.5 rounded-xl space-y-1 text-blue-800 text-[10px] leading-relaxed">
+                    <p className="font-bold flex items-center gap-1 text-xs">
+                      <Info size={13} /> Hướng dẫn cấu hình gửi email:
+                    </p>
+                    {modalProvider === "gmail" ? (
+                      <>
+                        <p>1. Gmail yêu cầu bạn phải bật **Xác minh 2 bước** trên tài khoản Google, sau đó tạo một **Mật khẩu ứng dụng (App Password)** gồm 16 ký tự để kết nối.</p>
+                        <p>2. Không dùng mật khẩu đăng nhập Gmail thông thường vì Google chặn kết nối ứng dụng trực tiếp từ bên ngoài.</p>
+                      </>
+                    ) : modalProvider === "outlook" ? (
+                      <>
+                        <p>1. Đối với email Outlook doanh nghiệp (ví dụ `@trungnamgroup.com.vn`), hệ thống sử dụng SMTP của Microsoft (`smtp.office365.com` qua cổng `587`).</p>
+                        <p>2. Nếu công ty bạn yêu cầu xác thực MFA (bảo mật 2 lớp), bạn cần tạo **Mật khẩu ứng dụng (App Password)** từ tài khoản Microsoft của mình để kết nối.</p>
+                        <p>3. Nếu công ty không sử dụng bảo mật 2 lớp cho Outlook, bạn có thể điền mật khẩu đăng nhập email thông thường.</p>
+                      </>
+                    ) : (
+                      <p>Vui lòng liên hệ bộ phận IT quản lý hệ thống email của công ty để xin thông tin **SMTP Host**, **Port** và kiểm tra xem có cần mật khẩu ứng dụng riêng hay không.</p>
+                    )}
+                    <p className="pt-1 text-slate-400 border-t border-blue-100/50 mt-1">Thông tin SMTP được lưu cục bộ trên trình duyệt của bạn (localStorage), dùng chung cho trang C&amp;B và nút Duyệt Đăng ký.</p>
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowEmailConfigModal(false)}
+                      className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 font-bold rounded-xl active:scale-95 transition-all cursor-pointer"
+                    >
+                      Hủy bỏ
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-5 py-2 bg-[#005BAC] hover:bg-blue-700 text-white font-bold rounded-xl active:scale-95 transition-all cursor-pointer shadow-premium"
+                    >
+                      Lưu cấu hình
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
           )}
         </main>
       </div>
