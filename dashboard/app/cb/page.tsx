@@ -45,6 +45,7 @@ import {
   Users
 } from "lucide-react";
 import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, Legend, LineChart, Line
@@ -521,7 +522,10 @@ export default function CBPage() {
   // Business Trip (Travel) states
   const [travels, setTravels] = useState<any[]>(MOCK_TRAVELS);
   const [editingTravelId, setEditingTravelId] = useState<string | null>(null);
-  
+  const [canDeleteTravel, setCanDeleteTravel] = useState(false);
+  const [travelFilterFrom, setTravelFilterFrom] = useState("");
+  const [travelFilterTo, setTravelFilterTo] = useState("");
+
   // Explanation Add Form states
   const [showExplanationAddForm, setShowExplanationAddForm] = useState(false);
   const [expFormDate, setExpFormDate] = useState(new Date().toISOString().substring(0, 10));
@@ -562,6 +566,8 @@ export default function CBPage() {
       late: number;
       early: number;
       status: string;
+      workday?: number;
+      isBusinessTrip?: boolean;
     }>;
     emailStatus?: "idle" | "sending" | "success" | "error";
     emailMessage?: string;
@@ -578,6 +584,7 @@ export default function CBPage() {
     secure: true
   });
   const [showEmailConfigModal, setShowEmailConfigModal] = useState(false);
+  const [showTimesheetMatrixModal, setShowTimesheetMatrixModal] = useState(false);
   const [modalProvider, setModalProvider] = useState("gmail");
 
   useEffect(() => {
@@ -826,6 +833,32 @@ export default function CBPage() {
     return h * 60 + m;
   };
 
+  // Chuẩn hóa một mốc ngày (dạng "DD/MM/YYYY" từ Excel hoặc ISO từ Supabase) về "YYYY-MM-DD" để so sánh an toàn
+  const toDateOnlyKey = (val: string): string => {
+    if (!val) return "";
+    const dmy = val.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (dmy) {
+      return `${dmy[3]}-${dmy[2].padStart(2, "0")}-${dmy[1].padStart(2, "0")}`;
+    }
+    const d = new Date(val);
+    if (isNaN(d.getTime())) return "";
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+
+  // Nhân viên có lịch công tác đã được duyệt vào ngày này hay không
+  const findApprovedTripForDay = (employeeName: string, dateVal: string, tripList: any[]) => {
+    const dayKey = toDateOnlyKey(dateVal);
+    if (!dayKey) return null;
+    return tripList.find(t => {
+      if (t.status !== "Đã duyệt") return false;
+      if (normalizeText(t.name || "") !== normalizeText(employeeName)) return false;
+      const fromKey = toDateOnlyKey(t.from);
+      const toKey = toDateOnlyKey(t.to);
+      if (!fromKey || !toKey) return false;
+      return dayKey >= fromKey && dayKey <= toKey;
+    }) || null;
+  };
+
   const handleUploadExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1033,6 +1066,17 @@ export default function CBPage() {
                 }
               }
 
+              // Bù công tác: nếu ngày này khuyết chấm công máy nhưng nằm trong lịch trình công tác đã được duyệt
+              // thì vẫn tính đủ 1.0 ngày công (không tính là vắng mặt)
+              let isBusinessTrip = false;
+              if (workdayVal === 0) {
+                const approvedTrip = findApprovedTripForDay(displayName, dateVal, travels);
+                if (approvedTrip) {
+                  workdayVal = 1.0;
+                  isBusinessTrip = true;
+                }
+              }
+
               totalDays += workdayVal;
               totalLate += lateMins;
               totalEarly += earlyMins;
@@ -1046,7 +1090,9 @@ export default function CBPage() {
                 hours: colIndices.hours !== -1 ? (Number(row[colIndices.hours]) || 0) : 0,
                 late: lateMins,
                 early: earlyMins,
-                status: colIndices.status !== -1 ? String(row[colIndices.status] || "").trim() : ""
+                status: colIndices.status !== -1 ? String(row[colIndices.status] || "").trim() : "",
+                workday: workdayVal,
+                isBusinessTrip
               };
             });
 
@@ -1081,6 +1127,296 @@ export default function CBPage() {
       alert("Lỗi đọc file: " + err.message);
       setIsParsingExcel(false);
     }
+  };
+
+  // ─── BẢNG TỔNG HỢP CHẤM CÔNG THEO THÁNG (ma trận ngày x nhân viên) ───
+  interface TimesheetMatrixRow {
+    name: string;
+    department: string;
+    days: string[]; // tag mỗi ngày trong tháng: "x" | "CT" | "P" | "P/2" | "Ro" | ""
+    vanPhong: number;
+    phepCoLuong: number;
+    congTac: number;
+    nghiKhongLuong: number;
+    tongNgayCong: number;
+  }
+
+  const parseMonthYear = (monthStr: string): { month: number; year: number } => {
+    const parts = (monthStr || "").split("/");
+    const month = parseInt(parts[0], 10) || new Date().getMonth() + 1;
+    const year = parseInt(parts[1], 10) || new Date().getFullYear();
+    return { month, year };
+  };
+
+  const timesheetMatrix = useMemo(() => {
+    if (parsedEmployees.length === 0) return { rows: [] as TimesheetMatrixRow[], daysInMonth: 0, month: 0, year: 0 };
+    const { month, year } = parseMonthYear(timesheetMonth);
+    const daysInMonth = new Date(year, month, 0).getDate();
+
+    const rows: TimesheetMatrixRow[] = parsedEmployees.map(emp => {
+      const isLocMarketing = normalizeText(emp.name).includes("pham thanh loc");
+      const days: string[] = [];
+      let vanPhong = 0, phepCoLuong = 0, congTac = 0, nghiKhongLuong = 0;
+
+      // Nếu không nhận diện được cột "Ngày" trong Excel (không khớp được ngày nào), dùng vị trí dòng
+      // theo đúng thứ tự trong file (dòng 1 = ngày 01, dòng 2 = ngày 02...) làm phương án dự phòng
+      const matchedByDate = emp.details.some(dd => !!toDateOnlyKey(dd.date));
+      const usePositional = !matchedByDate && emp.details.length > 0;
+
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dateObj = new Date(year, month - 1, d);
+        const dayKey = `${year}-${String(month).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+        const isSunday = dateObj.getDay() === 0;
+        const isSaturday = dateObj.getDay() === 6;
+
+        const detail = usePositional ? emp.details[d - 1] : emp.details.find(dd => toDateOnlyKey(dd.date) === dayKey);
+
+        let tag = "";
+        if (detail && (detail.workday || 0) > 0) {
+          if (detail.isBusinessTrip) {
+            tag = "CT";
+            congTac += 1;
+          } else {
+            tag = "x";
+            vanPhong += 1;
+          }
+        } else if (isSaturday && isLocMarketing) {
+          // Phạm Thành Lộc (Tổ trưởng Marketing) được ưu tiên không làm thứ Bảy, vẫn tính đủ công
+          tag = "";
+        } else if (isSunday) {
+          tag = "";
+        } else {
+          // Khuyết chấm công máy: đối chiếu nghỉ phép đã duyệt
+          const approvedLeave = leaves.find(l => {
+            if (l.status !== "Đã duyệt") return false;
+            if (normalizeText(l.name || "") !== normalizeText(emp.name)) return false;
+            const fromKey = toDateOnlyKey(l.from);
+            const toKey = toDateOnlyKey(l.to);
+            if (!fromKey || !toKey) return false;
+            return dayKey >= fromKey && dayKey <= toKey;
+          });
+          if (approvedLeave) {
+            const isUnpaid = normalizeText(approvedLeave.type || "").includes("khong luong");
+            if (isUnpaid) {
+              tag = "Ro";
+              nghiKhongLuong += 1;
+            } else if (approvedLeave.days === 0.5) {
+              tag = "P/2";
+              phepCoLuong += 0.5;
+            } else {
+              tag = "P";
+              phepCoLuong += 1;
+            }
+          }
+        }
+        days.push(tag);
+      }
+
+      return {
+        name: emp.name,
+        department: emp.department || "Chưa xếp phòng",
+        days,
+        vanPhong,
+        phepCoLuong,
+        congTac,
+        nghiKhongLuong,
+        tongNgayCong: vanPhong + congTac + phepCoLuong
+      };
+    });
+
+    return { rows, daysInMonth, month, year };
+  }, [parsedEmployees, leaves, timesheetMonth]);
+
+  const handleExportTimesheetSummary = async () => {
+    if (timesheetMatrix.rows.length === 0) {
+      alert("Chưa có dữ liệu chấm công để xuất bảng tổng hợp!");
+      return;
+    }
+    const { rows, daysInMonth, month, year } = timesheetMatrix;
+    const deptTitle = rows[0]?.department?.toUpperCase().includes("HCNS") || rows[0]?.department?.toUpperCase().includes("HÀNH CHÍNH")
+      ? "PHÒNG HCNS"
+      : `PHÒNG ${(rows[0]?.department || "").toUpperCase()}`;
+
+    // Gom nhóm theo phòng ban, giống cấu trúc "I. PHÒNG..." / "II. TỔ..." trong file mẫu Word
+    const groups: { name: string; rows: typeof rows }[] = [];
+    rows.forEach(row => {
+      const key = row.department || "Chưa xếp phòng";
+      let group = groups.find(g => g.name === key);
+      if (!group) {
+        group = { name: key, rows: [] };
+        groups.push(group);
+      }
+      group.rows.push(row);
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Bảng tổng hợp chấm công");
+
+    const fixedCols = 2; // STT, Họ tên
+    const summaryHeaders = ["Văn phòng", "Phép có hưởng lương", "Công tác", "Nghỉ phép không lương", "Tổng ngày công"];
+    const totalCols = fixedCols + daysInMonth + summaryHeaders.length;
+    const weekdayLabels = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"];
+    const thinBorder = { top: { style: "thin" as const }, bottom: { style: "thin" as const }, left: { style: "thin" as const }, right: { style: "thin" as const } };
+
+    sheet.mergeCells(1, 1, 1, totalCols);
+    sheet.getCell(1, 1).value = "CÔNG TY CP XÂY DỰNG VÀ LẮP MÁY TRUNG NAM";
+    sheet.getCell(1, 1).font = { bold: true, size: 12 };
+    sheet.getCell(1, 1).alignment = { horizontal: "center" };
+
+    sheet.mergeCells(2, 1, 2, totalCols);
+    sheet.getCell(2, 1).value = `BẢNG TỔNG HỢP THÔNG TIN CHẤM CÔNG ${deptTitle}`;
+    sheet.getCell(2, 1).font = { bold: true, size: 14 };
+    sheet.getCell(2, 1).alignment = { horizontal: "center" };
+
+    sheet.mergeCells(3, 1, 3, totalCols);
+    sheet.getCell(3, 1).value = `THÁNG ${month}/${year}`;
+    sheet.getCell(3, 1).font = { bold: true, size: 11, color: { argb: "FFCC0000" } };
+    sheet.getCell(3, 1).alignment = { horizontal: "center" };
+
+    sheet.mergeCells(4, 1, 4, totalCols);
+    const lastDay = new Date(year, month - 1, daysInMonth);
+    sheet.getCell(4, 1).value = `Từ ngày 01/${String(month).padStart(2, "0")}/${year} đến ${String(daysInMonth).padStart(2, "0")}/${String(month).padStart(2, "0")}/${year}`;
+    sheet.getCell(4, 1).font = { italic: true, size: 9, color: { argb: "FFCC0000" } };
+    sheet.getCell(4, 1).alignment = { horizontal: "center" };
+    void lastDay;
+
+    const headerRow = 6;
+    const subHeaderRow = 7;
+    sheet.mergeCells(headerRow, 1, subHeaderRow, 1);
+    sheet.getCell(headerRow, 1).value = "STT";
+    sheet.mergeCells(headerRow, 2, subHeaderRow, 2);
+    sheet.getCell(headerRow, 2).value = "Họ & Tên";
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dow = new Date(year, month - 1, d).getDay();
+      const dCell = sheet.getCell(headerRow, fixedCols + d);
+      dCell.value = String(d).padStart(2, "0");
+      const wCell = sheet.getCell(subHeaderRow, fixedCols + d);
+      wCell.value = weekdayLabels[dow];
+      if (dow === 0) {
+        dCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF9CA3AF" } };
+        wCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF9CA3AF" } };
+      }
+    }
+    summaryHeaders.forEach((h, i) => {
+      sheet.mergeCells(headerRow, fixedCols + daysInMonth + i + 1, subHeaderRow, fixedCols + daysInMonth + i + 1);
+      sheet.getCell(headerRow, fixedCols + daysInMonth + i + 1).value = h;
+    });
+    for (let c = 1; c <= totalCols; c++) {
+      [headerRow, subHeaderRow].forEach(r => {
+        const cell = sheet.getCell(r, c);
+        cell.font = { bold: true, size: 9 };
+        cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+        cell.border = thinBorder;
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF1F5F9" } };
+      });
+    }
+
+    let r = subHeaderRow + 1;
+    let sectionIndex = 0;
+    let grandTotal = 0;
+    groups.forEach(group => {
+      sectionIndex += 1;
+      const groupTotal = group.rows.reduce((sum, row) => sum + row.tongNgayCong, 0);
+      grandTotal += groupTotal;
+
+      sheet.mergeCells(r, 1, r, fixedCols + daysInMonth);
+      const romanNumeral = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII"][sectionIndex - 1] || String(sectionIndex);
+      sheet.getCell(r, 1).value = `${romanNumeral}. ${group.name.toUpperCase()}`;
+      sheet.getCell(r, 1).font = { bold: true, size: 10 };
+      sheet.getCell(r, fixedCols + daysInMonth + summaryHeaders.length).value = groupTotal;
+      sheet.getCell(r, fixedCols + daysInMonth + summaryHeaders.length).font = { bold: true };
+      for (let c = 1; c <= totalCols; c++) {
+        sheet.getCell(r, c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEF08A" } };
+        sheet.getCell(r, c).border = thinBorder;
+      }
+      r += 1;
+
+      group.rows.forEach((row, idx) => {
+        sheet.getCell(r, 1).value = idx + 1;
+        sheet.getCell(r, 2).value = row.name;
+        row.days.forEach((tag, dIdx) => {
+          const cell = sheet.getCell(r, fixedCols + dIdx + 1);
+          cell.value = tag;
+          cell.alignment = { horizontal: "center" };
+          const dow = new Date(year, month - 1, dIdx + 1).getDay();
+          if (dow === 0) {
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFD1D5DB" } };
+          } else if (tag === "CT") {
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFBFDBFE" } };
+          } else if (tag === "P" || tag === "P/2") {
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFBBF7D0" } };
+          } else if (tag === "Ro") {
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEF08A" } };
+          }
+        });
+        sheet.getCell(r, fixedCols + daysInMonth + 1).value = row.vanPhong;
+        sheet.getCell(r, fixedCols + daysInMonth + 2).value = row.phepCoLuong;
+        sheet.getCell(r, fixedCols + daysInMonth + 3).value = row.congTac;
+        sheet.getCell(r, fixedCols + daysInMonth + 4).value = row.nghiKhongLuong;
+        sheet.getCell(r, fixedCols + daysInMonth + 5).value = row.tongNgayCong;
+        for (let c = 1; c <= totalCols; c++) {
+          sheet.getCell(r, c).border = thinBorder;
+          if (c > fixedCols) sheet.getCell(r, c).alignment = { horizontal: "center" };
+        }
+        r += 1;
+      });
+    });
+
+    sheet.mergeCells(r, 1, r, fixedCols + daysInMonth + summaryHeaders.length - 1);
+    sheet.getCell(r, 1).value = "Tổng cộng";
+    sheet.getCell(r, 1).font = { bold: true };
+    sheet.getCell(r, 1).alignment = { horizontal: "center" };
+    sheet.getCell(r, fixedCols + daysInMonth + summaryHeaders.length).value = grandTotal;
+    sheet.getCell(r, fixedCols + daysInMonth + summaryHeaders.length).font = { bold: true };
+    for (let c = 1; c <= totalCols; c++) {
+      sheet.getCell(r, c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFDE68A" } };
+      sheet.getCell(r, c).border = thinBorder;
+    }
+    r += 2;
+
+    sheet.getCell(r, 1).value = "Chú thích:";
+    sheet.getCell(r, 1).font = { bold: true, italic: true };
+    r += 1;
+    const legendItems = [
+      ["x, x/2", "Đi làm"], ["CT", "Công tác (đã duyệt)"], ["P", "Nghỉ phép hưởng lương"],
+      ["P/2", "Phép nửa ngày"], ["Ro", "Nghỉ không lương"], ["(ô xám)", "Chủ nhật / không có dữ liệu chấm công"]
+    ];
+    legendItems.forEach(([code, label], i) => {
+      sheet.getCell(r + i, 1).value = code;
+      sheet.getCell(r + i, 1).font = { bold: true };
+      sheet.getCell(r + i, 2).value = label;
+    });
+    r += legendItems.length + 2;
+
+    sheet.getCell(r, 1).value = `, ngày ..... tháng ..... năm ${year}`;
+    sheet.getCell(r, 1).font = { italic: true };
+    sheet.mergeCells(r, fixedCols + daysInMonth - 6, r, fixedCols + daysInMonth + summaryHeaders.length);
+    sheet.getCell(r, fixedCols + daysInMonth - 6).value = `, ngày ..... tháng ..... năm ${year}`;
+    sheet.getCell(r, fixedCols + daysInMonth - 6).font = { italic: true };
+    sheet.getCell(r, fixedCols + daysInMonth - 6).alignment = { horizontal: "center" };
+    r += 1;
+    const sigCols = [1, Math.round(totalCols / 2) - 3, totalCols - 6];
+    const sigLabels = ["GIÁM ĐỐC", "PHỤ TRÁCH", "NGƯỜI LẬP BIỂU"];
+    sigLabels.forEach((label, i) => {
+      const c = sigCols[i];
+      sheet.getCell(r, c).value = label;
+      sheet.getCell(r, c).font = { bold: true };
+      sheet.getCell(r, c).alignment = { horizontal: "center" };
+    });
+
+    sheet.getColumn(1).width = 6;
+    sheet.getColumn(2).width = 24;
+    for (let d = 1; d <= daysInMonth; d++) sheet.getColumn(fixedCols + d).width = 4;
+    for (let i = 0; i < summaryHeaders.length; i++) sheet.getColumn(fixedCols + daysInMonth + i + 1).width = 12;
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: "application/octet-stream" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `Bang_tong_hop_cham_cong_${month}_${year}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const handleSendEmail = async (emp: ParsedEmployeeAttendance) => {
@@ -2187,7 +2523,13 @@ export default function CBPage() {
 
       const fullAccess = !!(isAdmin || isHRStaff || isTPHCNS || isBoardOrSpecific);
       setHasFullAccess(fullAccess);
-      
+
+      // Xóa lịch trình công tác: chỉ Admin, Phương HCNS (Lại Nguyễn Lan Phương) và Trưởng phòng Đào (Lê Thị Hoa Đào)
+      const isPhuongHCNS = empData?.name === "Lại Nguyễn Lan Phương" ||
+                            session.user.user_metadata?.full_name === "Lại Nguyễn Lan Phương" ||
+                            session.user.user_metadata?.name === "Lại Nguyễn Lan Phương";
+      setCanDeleteTravel(!!(isAdmin || isPhuongHCNS || isTPHCNS));
+
       const userInfo = {
         email,
         name: empData?.name || session.user.user_metadata?.full_name || session.user.user_metadata?.name || "Người dùng",
@@ -2545,6 +2887,28 @@ export default function CBPage() {
     }
   };
 
+  const handleDeleteTravel = async (idOrIndex: any) => {
+    if (!window.confirm("Bạn có chắc chắn muốn xóa lịch trình công tác này không?")) {
+      return;
+    }
+    const isUuid = typeof idOrIndex === "string" && idOrIndex.length > 8;
+    if (isUuid) {
+      try {
+        const { error } = await supabase
+          .from("business_trips")
+          .delete()
+          .eq("id", idOrIndex);
+        if (error) throw error;
+        setTravels(prev => prev.filter(t => t.id !== idOrIndex));
+      } catch (err: any) {
+        console.error("Error deleting business trip:", err);
+        alert("Lỗi khi xóa lịch trình công tác: " + err.message);
+      }
+    } else {
+      setTravels(prev => prev.filter((t, idx) => idx !== idOrIndex));
+    }
+  };
+
   const handleAddExplanation = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!expFormEmployeeName.trim()) {
@@ -2732,8 +3096,11 @@ export default function CBPage() {
   }, [filteredLeaves, leaveSearchQuery]);
 
   const filteredTravels = useMemo(() => {
-    return travels.filter(t => hasFullAccess || t.name === currentUser?.name);
-  }, [travels, hasFullAccess, currentUser]);
+    return travels
+      .filter(t => hasFullAccess || t.name === currentUser?.name)
+      .filter(t => !travelFilterFrom || new Date(t.from) >= new Date(travelFilterFrom))
+      .filter(t => !travelFilterTo || new Date(t.to) <= new Date(travelFilterTo));
+  }, [travels, hasFullAccess, currentUser, travelFilterFrom, travelFilterTo]);
 
   const filteredRegimes = useMemo(() => {
     return MOCK_REGIMES.filter(r => hasFullAccess || r.name === currentUser?.name);
@@ -3000,6 +3367,7 @@ export default function CBPage() {
 
           {/* ─── SUB-TABS NAVIGATOR BASED ON ACTIVE MAIN TAB (NON-PROFILE TABS ONLY) ─── */}
           {activeTab !== "employee_profile" && activeTab !== "employee_contracts" && (
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap gap-1.5 text-xs font-bold bg-[#005BAC]/5 p-1.5 rounded-xl shrink-0 border border-blue-100/20">
               {activeTab === "attendance" && [
                 { id: "machine", label: "Lấy ngày công máy chấm công" },
@@ -3058,6 +3426,38 @@ export default function CBPage() {
                 </button>
               ))}
             </div>
+
+            {activeTab === "attendance" && activeSubTab === "travel" && (
+              <div className="flex flex-wrap items-center gap-1.5 bg-white p-1.5 rounded-xl shrink-0 border border-slate-200/60 shadow-sm">
+                <Calendar size={13} className="text-slate-400 ml-1" />
+                <input
+                  type="date"
+                  value={travelFilterFrom}
+                  onChange={(e) => setTravelFilterFrom(e.target.value)}
+                  title="Từ ngày"
+                  className="px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-semibold focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none"
+                />
+                <span className="text-slate-400 text-[11px] font-bold">-</span>
+                <input
+                  type="date"
+                  value={travelFilterTo}
+                  onChange={(e) => setTravelFilterTo(e.target.value)}
+                  title="Đến ngày"
+                  className="px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-semibold focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none"
+                />
+                {(travelFilterFrom || travelFilterTo) && (
+                  <button
+                    type="button"
+                    onClick={() => { setTravelFilterFrom(""); setTravelFilterTo(""); }}
+                    className="px-2 py-1 text-[10px] font-bold text-slate-400 hover:text-rose-600 cursor-pointer"
+                    title="Xóa bộ lọc"
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
           )}
 
           {/* ─── TAB CONTENT PANELS ─── */}
@@ -3815,6 +4215,15 @@ export default function CBPage() {
                         <p className="text-slate-400 text-[10px] font-semibold mt-1">Tải lên file Excel từ máy chấm công để tự động tổng hợp ngày công và gửi email báo cáo chi tiết cho từng nhân viên.</p>
                       </div>
                       <div className="flex flex-wrap gap-2">
+                        {parsedEmployees.length > 0 && (
+                          <button
+                            onClick={() => setShowTimesheetMatrixModal(true)}
+                            className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl active:scale-95 transition-all text-xs cursor-pointer border border-indigo-100"
+                          >
+                            <FileText size={13} />
+                            Bảng tổng hợp ngày công trong tháng
+                          </button>
+                        )}
                         <button
                           onClick={() => setShowEmailConfigModal(true)}
                           className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl active:scale-95 transition-all text-xs cursor-pointer"
@@ -4132,6 +4541,7 @@ export default function CBPage() {
                       )}
                     </div>
                   </div>
+
                 </div>
               )}
 
@@ -4837,6 +5247,7 @@ export default function CBPage() {
                           <th className="py-3 px-3">Mục đích công tác</th>
                           <th className="py-3 px-3">Tổng chi phí thực tế</th>
                           <th className="py-3 px-3 w-28 text-center">Trạng thái</th>
+                          {canDeleteTravel && <th className="py-3 px-3 w-16 text-center">Thao tác</th>}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
@@ -4889,6 +5300,18 @@ export default function CBPage() {
                             <td className="py-3.5 px-3 text-center">
                               <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-100 text-emerald-800">{t.status}</span>
                             </td>
+                            {canDeleteTravel && (
+                              <td className="py-3.5 px-3 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteTravel(t.id !== undefined ? t.id : idx)}
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg border border-slate-200/60 hover:border-rose-200 transition-all cursor-pointer inline-flex items-center justify-center shadow-sm active:scale-90"
+                                  title="Xóa lịch trình công tác"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </td>
+                            )}
                           </tr>
                         ))}
                       </tbody>
@@ -6731,14 +7154,20 @@ export default function CBPage() {
                         </thead>
                         <tbody className="divide-y divide-slate-100 font-medium text-slate-600">
                           {selectedEmployeeForDetail.details.map((day, idx) => (
-                            <tr key={idx} className="hover:bg-slate-50/50">
+                            <tr key={idx} className={`hover:bg-slate-50/50 ${day.isBusinessTrip ? "bg-blue-50/40" : ""}`}>
                               <td className="py-2.5 px-3 font-semibold text-slate-800">{day.date}</td>
                               <td className="py-2.5 px-3 text-slate-400 font-bold">{day.dayOfWeek}</td>
                               <td className="py-2.5 px-3 text-center font-mono font-bold text-emerald-600">{day.checkin || "--:--"}</td>
                               <td className="py-2.5 px-3 text-center font-mono font-bold text-[#005BAC]">{day.checkout || "--:--"}</td>
                               <td className="py-2.5 px-3 text-center text-amber-600 font-bold">{day.late > 0 ? day.late : "-"}</td>
                               <td className="py-2.5 px-3 text-center text-orange-500 font-bold">{day.early > 0 ? day.early : "-"}</td>
-                              <td className="py-2.5 px-3 text-[10px] text-slate-400 font-bold uppercase">{day.status || "-"}</td>
+                              <td className="py-2.5 px-3 text-[10px] font-bold uppercase">
+                                {day.isBusinessTrip ? (
+                                  <span className="px-1.5 py-0.5 rounded-md bg-blue-100 text-blue-700">Công tác (bù công)</span>
+                                ) : (
+                                  <span className="text-slate-400">{day.status || "-"}</span>
+                                )}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -6764,6 +7193,78 @@ export default function CBPage() {
                   >
                     <Send size={12} /> Gửi email báo cáo
                   </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ─── MODAL BẢNG TỔNG HỢP NGÀY CÔNG TRONG THÁNG ─── */}
+          {showTimesheetMatrixModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fade-in">
+              <div className="bg-white w-full max-w-6xl rounded-2xl shadow-premium border border-slate-100 overflow-hidden transform transition-all animate-scale-up max-h-[88vh] flex flex-col">
+                <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100 bg-[#005BAC] text-white shrink-0">
+                  <div>
+                    <h3 className="font-heading font-black text-sm">Bảng tổng hợp ngày công trong tháng {timesheetMonth}</h3>
+                    <p className="text-white/80 text-[10px] font-bold mt-0.5">x = Đi làm · CT = Công tác · P = Phép · P/2 = Phép nửa ngày · Ro = Nghỉ không lương</p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={handleExportTimesheetSummary}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-white/95 hover:bg-white text-[#005BAC] font-bold rounded-lg cursor-pointer text-[11px] transition-all shadow active:scale-95"
+                    >
+                      <Download size={12} /> Tải về
+                    </button>
+                    <button
+                      onClick={() => setShowTimesheetMatrixModal(false)}
+                      className="text-white/80 hover:text-white transition-all cursor-pointer p-1 rounded-lg hover:bg-white/10"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="p-4 overflow-auto flex-1">
+                  <table className="text-[9px] text-center border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 font-extrabold uppercase tracking-wider">
+                        <th className="py-1.5 px-2 sticky left-0 bg-slate-50 text-left z-10">Họ và Tên</th>
+                        {Array.from({ length: timesheetMatrix.daysInMonth }, (_, i) => i + 1).map(d => {
+                          const dow = new Date(timesheetMatrix.year, timesheetMatrix.month - 1, d).getDay();
+                          return (
+                            <th key={d} className={`py-1.5 px-1 w-5 ${dow === 0 ? "bg-slate-200" : ""}`}>{String(d).padStart(2, "0")}</th>
+                          );
+                        })}
+                        <th className="py-1.5 px-1.5 w-12">VP</th>
+                        <th className="py-1.5 px-1.5 w-12">Phép</th>
+                        <th className="py-1.5 px-1.5 w-12">CT</th>
+                        <th className="py-1.5 px-1.5 w-12">Ro</th>
+                        <th className="py-1.5 px-1.5 w-12 bg-amber-50">Tổng</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-bold text-slate-700">
+                      {timesheetMatrix.rows.map((row, idx) => (
+                        <tr key={idx} className="hover:bg-slate-50/50">
+                          <td className="py-1.5 px-2 text-left sticky left-0 bg-white whitespace-nowrap">{row.name}</td>
+                          {row.days.map((tag, dIdx) => {
+                            const dow = new Date(timesheetMatrix.year, timesheetMatrix.month - 1, dIdx + 1).getDay();
+                            return (
+                              <td key={dIdx} className={`py-1.5 px-1 ${
+                                dow === 0 ? "bg-slate-100 text-slate-400" :
+                                tag === "CT" ? "bg-blue-50 text-blue-700" :
+                                tag === "P" || tag === "P/2" ? "bg-emerald-50 text-emerald-700" :
+                                tag === "Ro" ? "bg-amber-50 text-amber-700" : ""
+                              }`}>{tag}</td>
+                            );
+                          })}
+                          <td className="py-1.5 px-1.5 text-emerald-600">{row.vanPhong}</td>
+                          <td className="py-1.5 px-1.5 text-emerald-600">{row.phepCoLuong}</td>
+                          <td className="py-1.5 px-1.5 text-blue-600">{row.congTac}</td>
+                          <td className="py-1.5 px-1.5 text-amber-600">{row.nghiKhongLuong}</td>
+                          <td className="py-1.5 px-1.5 bg-amber-50/60 text-slate-900">{row.tongNgayCong}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>
