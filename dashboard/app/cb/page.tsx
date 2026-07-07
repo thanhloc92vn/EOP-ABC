@@ -1196,26 +1196,38 @@ export default function CBPage() {
         } else if (isSunday) {
           tag = "";
         } else {
-          // Khuyết chấm công máy: đối chiếu nghỉ phép đã duyệt
-          const approvedLeave = leaves.find(l => {
-            if (l.status !== "Đã duyệt") return false;
-            if (normalizeText(l.name || "") !== normalizeText(emp.name)) return false;
-            const fromKey = toDateOnlyKey(l.from);
-            const toKey = toDateOnlyKey(l.to);
-            if (!fromKey || !toKey) return false;
-            return dayKey >= fromKey && dayKey <= toKey;
+          // Khuyết chấm công máy (VD: quên quét vân tay lúc về) nhưng có giải trình đã được duyệt => vẫn tính đủ công
+          const approvedExplanation = explanations.find(e => {
+            if (e.status !== "Đã duyệt") return false;
+            if (normalizeText(e.name || "") !== normalizeText(emp.name)) return false;
+            return toDateOnlyKey(e.date) === dayKey;
           });
-          if (approvedLeave) {
-            const isUnpaid = normalizeText(approvedLeave.type || "").includes("khong luong");
-            if (isUnpaid) {
-              tag = "Ro";
-              nghiKhongLuong += 1;
-            } else if (approvedLeave.days === 0.5) {
-              tag = "P/2";
-              phepCoLuong += 0.5;
-            } else {
-              tag = "P";
-              phepCoLuong += 1;
+
+          if (approvedExplanation) {
+            tag = "GT";
+            vanPhong += 1;
+          } else {
+            // Khuyết chấm công máy: đối chiếu nghỉ phép đã duyệt
+            const approvedLeave = leaves.find(l => {
+              if (l.status !== "Đã duyệt") return false;
+              if (normalizeText(l.name || "") !== normalizeText(emp.name)) return false;
+              const fromKey = toDateOnlyKey(l.from);
+              const toKey = toDateOnlyKey(l.to);
+              if (!fromKey || !toKey) return false;
+              return dayKey >= fromKey && dayKey <= toKey;
+            });
+            if (approvedLeave) {
+              const isUnpaid = normalizeText(approvedLeave.type || "").includes("khong luong");
+              if (isUnpaid) {
+                tag = "Ro";
+                nghiKhongLuong += 1;
+              } else if (approvedLeave.days === 0.5) {
+                tag = "P/2";
+                phepCoLuong += 0.5;
+              } else {
+                tag = "P";
+                phepCoLuong += 1;
+              }
             }
           }
         }
@@ -1235,7 +1247,7 @@ export default function CBPage() {
     });
 
     return { rows, daysInMonth, month, year };
-  }, [parsedEmployees, leaves, timesheetMonth]);
+  }, [parsedEmployees, leaves, explanations, timesheetMonth]);
 
   const handleExportTimesheetSummary = async () => {
     if (timesheetMatrix.rows.length === 0) {
@@ -1353,6 +1365,8 @@ export default function CBPage() {
             cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFD1D5DB" } };
           } else if (tag === "CT") {
             cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFBFDBFE" } };
+          } else if (tag === "GT") {
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFDBA74" } };
           } else if (tag === "P" || tag === "P/2") {
             cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFBBF7D0" } };
           } else if (tag === "Ro") {
@@ -1387,14 +1401,22 @@ export default function CBPage() {
     sheet.getCell(r, 1).value = "Chú thích:";
     sheet.getCell(r, 1).font = { bold: true, italic: true };
     r += 1;
-    const legendItems = [
-      ["x, x/2", "Đi làm"], ["CT", "Công tác (đã duyệt)"], ["P", "Nghỉ phép hưởng lương"],
-      ["P/2", "Phép nửa ngày"], ["Ro", "Nghỉ không lương"], ["(ô xám)", "Chủ nhật / không có dữ liệu chấm công"]
+    const legendItems: [string, string, string?][] = [
+      ["x, x/2", "Đi làm", undefined],
+      ["CT", "Công tác (đã duyệt)", "FFBFDBFE"],
+      ["GT", "Giải trình chấm công (đã duyệt)", "FFFDBA74"],
+      ["P", "Nghỉ phép hưởng lương", "FFBBF7D0"],
+      ["P/2", "Phép nửa ngày", "FFBBF7D0"],
+      ["Ro", "Nghỉ không lương", "FFFEF08A"],
+      ["(ô xám)", "Chủ nhật / không có dữ liệu chấm công", "FFD1D5DB"]
     ];
-    legendItems.forEach(([code, label], i) => {
+    legendItems.forEach(([code, label, color], i) => {
       sheet.getCell(r + i, 1).value = code;
       sheet.getCell(r + i, 1).font = { bold: true };
       sheet.getCell(r + i, 2).value = label;
+      if (color) {
+        sheet.getCell(r + i, 1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: color } };
+      }
     });
     r += legendItems.length + 2;
 
@@ -7217,7 +7239,7 @@ export default function CBPage() {
                 <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100 bg-[#005BAC] text-white shrink-0">
                   <div>
                     <h3 className="font-heading font-black text-sm">Bảng tổng hợp ngày công trong tháng {timesheetMonth}</h3>
-                    <p className="text-white/80 text-[10px] font-bold mt-0.5">x = Đi làm · CT = Công tác · P = Phép · P/2 = Phép nửa ngày · Ro = Nghỉ không lương</p>
+                    <p className="text-white/80 text-[10px] font-bold mt-0.5">x = Đi làm · CT = Công tác · GT = Giải trình chấm công (đã duyệt) · P = Phép · P/2 = Phép nửa ngày · Ro = Nghỉ không lương</p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <button
@@ -7263,6 +7285,7 @@ export default function CBPage() {
                               <td key={dIdx} className={`py-1.5 px-1 ${
                                 dow === 0 ? "bg-slate-100 text-slate-400" :
                                 tag === "CT" ? "bg-blue-50 text-blue-700" :
+                                tag === "GT" ? "bg-orange-100 text-orange-700" :
                                 tag === "P" || tag === "P/2" ? "bg-emerald-50 text-emerald-700" :
                                 tag === "Ro" ? "bg-amber-50 text-amber-700" : ""
                               }`}>{tag}</td>
