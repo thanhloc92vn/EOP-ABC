@@ -523,6 +523,7 @@ export default function CBPage() {
   const [travels, setTravels] = useState<any[]>(MOCK_TRAVELS);
   const [editingTravelId, setEditingTravelId] = useState<string | null>(null);
   const [canDeleteTravel, setCanDeleteTravel] = useState(false);
+  const [canViewTimesheetSummary, setCanViewTimesheetSummary] = useState(false);
   const [travelFilterFrom, setTravelFilterFrom] = useState("");
   const [travelFilterTo, setTravelFilterTo] = useState("");
 
@@ -2524,11 +2525,13 @@ export default function CBPage() {
       const fullAccess = !!(isAdmin || isHRStaff || isTPHCNS || isBoardOrSpecific);
       setHasFullAccess(fullAccess);
 
-      // Xóa lịch trình công tác: chỉ Admin, Phương HCNS (Lại Nguyễn Lan Phương) và Trưởng phòng Đào (Lê Thị Hoa Đào)
+      // Xóa lịch trình công tác & xem bảng tổng hợp ngày công: chỉ Admin, Phương HCNS (Lại Nguyễn Lan Phương) và Trưởng phòng Đào (Lê Thị Hoa Đào)
       const isPhuongHCNS = empData?.name === "Lại Nguyễn Lan Phương" ||
                             session.user.user_metadata?.full_name === "Lại Nguyễn Lan Phương" ||
                             session.user.user_metadata?.name === "Lại Nguyễn Lan Phương";
-      setCanDeleteTravel(!!(isAdmin || isPhuongHCNS || isTPHCNS));
+      const hrLeadAccess = !!(isAdmin || isPhuongHCNS || isTPHCNS);
+      setCanDeleteTravel(hrLeadAccess);
+      setCanViewTimesheetSummary(hrLeadAccess);
 
       const userInfo = {
         email,
@@ -4215,7 +4218,7 @@ export default function CBPage() {
                         <p className="text-slate-400 text-[10px] font-semibold mt-1">Tải lên file Excel từ máy chấm công để tự động tổng hợp ngày công và gửi email báo cáo chi tiết cho từng nhân viên.</p>
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        {parsedEmployees.length > 0 && (
+                        {parsedEmployees.length > 0 && canViewTimesheetSummary && (
                           <button
                             onClick={() => setShowTimesheetMatrixModal(true)}
                             className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl active:scale-95 transition-all text-xs cursor-pointer border border-indigo-100"
@@ -7199,7 +7202,7 @@ export default function CBPage() {
           )}
 
           {/* ─── MODAL BẢNG TỔNG HỢP NGÀY CÔNG TRONG THÁNG ─── */}
-          {showTimesheetMatrixModal && (
+          {showTimesheetMatrixModal && canViewTimesheetSummary && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fade-in">
               <div className="bg-white w-full max-w-6xl rounded-2xl shadow-premium border border-slate-100 overflow-hidden transform transition-all animate-scale-up max-h-[88vh] flex flex-col">
                 <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100 bg-[#005BAC] text-white shrink-0">
