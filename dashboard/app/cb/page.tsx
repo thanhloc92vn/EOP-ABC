@@ -837,9 +837,14 @@ export default function CBPage() {
   // Chuẩn hóa một mốc ngày (dạng "DD/MM/YYYY" từ Excel hoặc ISO từ Supabase) về "YYYY-MM-DD" để so sánh an toàn
   const toDateOnlyKey = (val: string): string => {
     if (!val) return "";
-    const dmy = val.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    // Chấp nhận cả "DD/MM/YYYY" và "DD-MM-YYYY" (không dùng Date() để tránh nhầm MM/DD kiểu Mỹ)
+    const dmy = val.trim().match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
     if (dmy) {
       return `${dmy[3]}-${dmy[2].padStart(2, "0")}-${dmy[1].padStart(2, "0")}`;
+    }
+    const ymd = val.trim().match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
+    if (ymd) {
+      return `${ymd[1]}-${ymd[2].padStart(2, "0")}-${ymd[3].padStart(2, "0")}`;
     }
     const d = new Date(val);
     if (isNaN(d.getTime())) return "";
@@ -1159,10 +1164,14 @@ export default function CBPage() {
       const days: string[] = [];
       let vanPhong = 0, phepCoLuong = 0, congTac = 0, nghiKhongLuong = 0;
 
-      // Nếu không nhận diện được cột "Ngày" trong Excel (không khớp được ngày nào), dùng vị trí dòng
+      // Nếu không nhận diện được cột "Ngày" trong Excel (không khớp được ngày nào trong tháng), dùng vị trí dòng
       // theo đúng thứ tự trong file (dòng 1 = ngày 01, dòng 2 = ngày 02...) làm phương án dự phòng
-      const matchedByDate = emp.details.some(dd => !!toDateOnlyKey(dd.date));
-      const usePositional = !matchedByDate && emp.details.length > 0;
+      let matchedDaysCount = 0;
+      for (let dd = 1; dd <= daysInMonth; dd++) {
+        const key = `${year}-${String(month).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+        if (emp.details.some(d => toDateOnlyKey(d.date) === key)) matchedDaysCount += 1;
+      }
+      const usePositional = matchedDaysCount === 0 && emp.details.length > 0;
 
       for (let d = 1; d <= daysInMonth; d++) {
         const dateObj = new Date(year, month - 1, d);
