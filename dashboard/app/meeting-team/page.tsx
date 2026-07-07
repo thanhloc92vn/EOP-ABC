@@ -292,6 +292,38 @@ export default function MeetingTeamPage() {
       if (!transcribeRes.ok) throw new Error(transcribeData.error || "Gặp lỗi khi Whisper gỡ băng âm thanh.");
 
       const rawTranscript = transcribeData.text;
+
+      // CHECK: Detect Whisper hallucination (repetitive garbage output)
+      if (transcribeData.is_hallucination) {
+        setProcessingLog(prev => [
+          ...prev,
+          "⚠️ [LỖI NGHIÊM TRỌNG] Phát hiện lỗi ảo giác (hallucination) từ AI gỡ băng!",
+          `Chi tiết: ${transcribeData.hallucination_warning}`,
+          "❌ Đã dừng xử lý. Vui lòng kiểm tra lại file ghi âm.",
+        ]);
+        setProcessingStep("done");
+
+        // Clean up: delete the broken draft meeting
+        await supabase.from("meetings").delete().eq("id", draftMeeting.id);
+
+        alert(
+          `⚠️ LỖI: AI GỠ BĂNG KHÔNG NHẬN DIỆN ĐƯỢC NỘI DUNG!\n\n` +
+          `${transcribeData.hallucination_warning}\n\n` +
+          `CÁCH KHẮC PHỤC:\n` +
+          `1. Kiểm tra lại file ghi âm gốc - mở nghe thử xem giọng nói có rõ không.\n` +
+          `2. Nếu file đã bị nén quá mức (bitrate < 32kbps), hãy nén lại với chất lượng cao hơn (48-64kbps).\n` +
+          `3. Nếu file gốc dài hơn 1 tiếng, hãy cắt thành 2-3 phần (mỗi phần 30-40 phút) và tải lên từng phần.\n` +
+          `4. Đảm bảo file ghi âm có giọng nói rõ ràng, không bị nhiễu hoặc im lặng kéo dài.`
+        );
+
+        // Reset upload state
+        setAudioFile(null);
+        setIsUploading(false);
+        setUploadProgress(0);
+        setProcessingStep(null);
+        return;
+      }
+
       setProcessingLog(prev => [...prev, `[4/5] Gỡ băng thành công. Trích xuất được ${rawTranscript.length} ký tự văn bản thô.`, "Bắt đầu chạy AI phân tích nội dung cuộc họp..."]);
       setProcessingStep("ai");
 

@@ -5,6 +5,83 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 
+/**
+ * Detects Whisper hallucination: repetitive garbage output that indicates
+ * the model couldn't understand the audio (poor quality, over-compressed, silence).
+ * 
+ * Common hallucination patterns:
+ * - "Tạm biệt, hẹn gặp lại các bạn..." repeated 100+ times
+ * - "Cảm ơn các bạn đã theo dõi..." repeated
+ * - Very few unique sentences compared to total sentence count
+ */
+function detectHallucination(text: string): { isHallucination: boolean; warning: string } {
+  if (!text || text.length < 50) {
+    return { isHallucination: true, warning: "Bản gỡ băng quá ngắn hoặc rỗng. File âm thanh có thể bị hỏng hoặc không có giọng nói." };
+  }
+
+  // Split into sentences by common Vietnamese punctuation
+  const sentences = text.split(/[.!?。]+/).map(s => s.trim()).filter(s => s.length > 5);
+  
+  if (sentences.length < 3) {
+    return { isHallucination: false, warning: "" };
+  }
+
+  // Count unique sentences
+  const uniqueSentences = new Set(sentences);
+  const uniqueRatio = uniqueSentences.size / sentences.length;
+
+  // If less than 20% of sentences are unique, it's highly likely hallucination
+  if (uniqueRatio < 0.2 && sentences.length > 10) {
+    const mostRepeated = findMostRepeatedSentence(sentences);
+    return {
+      isHallucination: true,
+      warning: `Phát hiện lỗi ảo giác (hallucination) của AI gỡ băng! Chỉ có ${uniqueSentences.size} câu độc nhất trong tổng số ${sentences.length} câu (${(uniqueRatio * 100).toFixed(0)}% độc nhất). Câu lặp lại nhiều nhất: "${mostRepeated.substring(0, 80)}...". Nguyên nhân: File âm thanh bị nén quá mức, chất lượng quá thấp hoặc nhiều đoạn im lặng. Vui lòng kiểm tra lại file ghi âm gốc và tải lên bản chất lượng tốt hơn (bitrate >= 48kbps).`
+    };
+  }
+
+  // Check for known hallucination phrases
+  const hallucinationPhrases = [
+    "tạm biệt",
+    "hẹn gặp lại",
+    "cảm ơn các bạn đã theo dõi",
+    "đừng quên like",
+    "đăng ký kênh",
+    "subscribe",
+    "video tiếp theo",
+    "thank you for watching",
+  ];
+  
+  const lowerText = text.toLowerCase();
+  for (const phrase of hallucinationPhrases) {
+    const regex = new RegExp(phrase, "gi");
+    const matches = lowerText.match(regex);
+    if (matches && matches.length > 5) {
+      return {
+        isHallucination: true,
+        warning: `Phát hiện lỗi ảo giác (hallucination)! Cụm từ "${phrase}" xuất hiện ${matches.length} lần trong bản gỡ băng. Đây là dấu hiệu Whisper không nghe được nội dung thực tế. Vui lòng kiểm tra lại file ghi âm gốc: đảm bảo giọng nói rõ ràng, bitrate >= 48kbps, và file không bị hỏng.`
+      };
+    }
+  }
+
+  return { isHallucination: false, warning: "" };
+}
+
+function findMostRepeatedSentence(sentences: string[]): string {
+  const counts: Record<string, number> = {};
+  for (const s of sentences) {
+    counts[s] = (counts[s] || 0) + 1;
+  }
+  let maxSentence = "";
+  let maxCount = 0;
+  for (const [sentence, count] of Object.entries(counts)) {
+    if (count > maxCount) {
+      maxCount = count;
+      maxSentence = sentence;
+    }
+  }
+  return maxSentence;
+}
+
 export async function POST(req: NextRequest) {
   let tempFilePath = "";
   try {
@@ -51,15 +128,20 @@ export async function POST(req: NextRequest) {
     const openai = new OpenAI({ apiKey });
     const fileStream = fs.createReadStream(tempFilePath);
     
+    // Use a Vietnamese business-meeting prompt hint to guide Whisper
     const transcription = await openai.audio.transcriptions.create({
       file: fileStream,
       model: "whisper-1",
-      language: "vi", // Hint Vietnamese for better accuracy
+      language: "vi",
+      prompt: "Cuộc họp giao ban tại Tập đoàn Trung Nam E&C. Các thành viên tham dự thảo luận về tiến độ dự án, phân công công việc, và báo cáo kết quả.",
     });
 
     const rawText = transcription.text || "";
 
-    // 4. Update meeting raw transcript in DB
+    // 4. Detect Whisper hallucination (repetitive garbage output)
+    const hallucinationCheck = detectHallucination(rawText);
+
+    // 5. Update meeting raw transcript in DB
     const { error: dbError } = await supabase
       .from("meetings")
       .update({ transcript_raw: rawText })
@@ -69,7 +151,12 @@ export async function POST(req: NextRequest) {
       throw new Error(`Lỗi cập nhật CSDL: ${dbError.message}`);
     }
 
-    return NextResponse.json({ success: true, text: rawText });
+    return NextResponse.json({ 
+      success: true, 
+      text: rawText,
+      is_hallucination: hallucinationCheck.isHallucination,
+      hallucination_warning: hallucinationCheck.warning,
+    });
   } catch (err: any) {
     console.error("Transcription API Error:", err);
     return NextResponse.json({ error: err.message || "Lỗi xử lý file âm thanh" }, { status: 500 });
