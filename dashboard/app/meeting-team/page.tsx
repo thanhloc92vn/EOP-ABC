@@ -88,7 +88,7 @@ export default function MeetingTeamPage() {
 
   // AI Center Intake Fields
   const [chairperson, setChairperson] = useState("");
-  const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [audioFiles, setAudioFiles] = useState<File[]>([]);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
   const [processingStep, setProcessingStep] = useState<"idle" | "stt" | "ai" | "done">("idle");
@@ -198,20 +198,28 @@ export default function MeetingTeamPage() {
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      setAudioFile(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const newFiles = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith("audio/"));
+      if (newFiles.length === 0) {
+        alert("Vui lòng chọn file âm thanh (MP3, WAV, M4A).");
+        return;
+      }
+      setAudioFiles(prev => [...prev, ...newFiles]);
     }
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setAudioFile(e.target.files[0]);
+    if (e.target.files && e.target.files.length > 0) {
+      const newFiles = Array.from(e.target.files);
+      setAudioFiles(prev => [...prev, ...newFiles]);
+      // Reset input so user can re-select same files if needed
+      e.target.value = "";
     }
   };
 
   // Simplified Intake: Only Chairperson + Audio Upload
   const handleIntakeAndProcess = async () => {
-    if (!audioFile) {
+    if (audioFiles.length === 0) {
       alert("Vui lòng kéo thả hoặc chọn file ghi âm cuộc họp!");
       return;
     }
@@ -224,37 +232,51 @@ export default function MeetingTeamPage() {
       return;
     }
 
-    if (audioFile.size > 25 * 1024 * 1024) {
+    const oversizedFiles = audioFiles.filter(f => f.size > 25 * 1024 * 1024);
+    if (oversizedFiles.length > 0) {
+      const fileList = oversizedFiles.map(f => `- ${f.name} (${(f.size / (1024 * 1024)).toFixed(2)} MB)`).join("\n");
       const confirmUpload = window.confirm(
-        `Cảnh báo: File ghi âm của bạn có dung lượng ${(audioFile.size / (1024 * 1024)).toFixed(2)} MB, vượt quá giới hạn 25MB của dịch vụ gỡ băng OpenAI Whisper API. Quá trình xử lý tự động có thể gặp lỗi.\n\nBạn có muốn tiếp tục tải lên không? (Khuyến nghị: Bạn nên nén nhỏ file hoặc chuyển định dạng MP3 chất lượng thấp hơn trước).`
+        `Cảnh báo: ${oversizedFiles.length} file vượt quá giới hạn 25MB của Whisper API:\n${fileList}\n\nQuá trình gỡ băng có thể gặp lỗi. Bạn có muốn tiếp tục không?`
       );
       if (!confirmUpload) return;
     }
 
+    const totalSize = audioFiles.reduce((sum, f) => sum + f.size, 0);
+
     setIsUploading(true);
     setUploadProgress(10);
     setProcessingStep("stt");
-    setProcessingLog(["[1/5] Bắt đầu tải file ghi âm lên private storage...", `File: ${audioFile.name} (${(audioFile.size / (1024 * 1024)).toFixed(2)} MB)`]);
+    setProcessingLog([
+      `[1/6] Bắt đầu tải ${audioFiles.length} file ghi âm lên storage...`,
+      `Tổng dung lượng: ${(totalSize / (1024 * 1024)).toFixed(2)} MB`
+    ]);
 
     try {
-      // 1. Upload audio to Storage
-      const cleanName = audioFile.name.replace(/[^a-zA-Z0-9.]/g, "_");
-      const filePath = `recordings/${Date.now()}_${cleanName}`;
-      
-      const { error: uploadError } = await supabase.storage
-        .from("meetings")
-        .upload(filePath, audioFile, {
-          cacheControl: "3600",
-          upsert: true
-        });
+      // 1. Upload all audio files to Storage
+      const uploadedPaths: string[] = [];
+      for (let i = 0; i < audioFiles.length; i++) {
+        const file = audioFiles[i];
+        const cleanName = file.name.replace(/[^a-zA-Z0-9.]/g, "_");
+        const filePath = `recordings/${Date.now()}_${i}_${cleanName}`;
+        
+        setProcessingLog(prev => [...prev, `  📁 Đang tải file ${i + 1}/${audioFiles.length}: ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB)...`]);
 
-      if (uploadError) throw new Error(`Lỗi upload file âm thanh: ${uploadError.message}`);
-      
-      setUploadProgress(100);
-      setProcessingLog(prev => [...prev, "[2/5] Upload file ghi âm thành công!", "Khởi tạo biên bản nháp trong cơ sở dữ liệu..."]);
+        const { error: uploadError } = await supabase.storage
+          .from("meetings")
+          .upload(filePath, file, {
+            cacheControl: "3600",
+            upsert: true
+          });
 
-      // Get public URL
-      const { data: { publicUrl } } = supabase.storage.from("meetings").getPublicUrl(filePath);
+        if (uploadError) throw new Error(`Lỗi upload file ${file.name}: ${uploadError.message}`);
+        uploadedPaths.push(filePath);
+        setUploadProgress(Math.round(((i + 1) / audioFiles.length) * 100));
+      }
+      
+      setProcessingLog(prev => [...prev, `[2/6] Upload ${audioFiles.length} file thành công!`, "Khởi tạo biên bản nháp trong cơ sở dữ liệu..."]);
+
+      // Get public URL of first file
+      const { data: { publicUrl } } = supabase.storage.from("meetings").getPublicUrl(uploadedPaths[0]);
 
       // Create draft meeting
       const today = new Date().toISOString().split("T")[0];
@@ -273,58 +295,82 @@ export default function MeetingTeamPage() {
 
       if (dbError) throw dbError;
       
-      setProcessingLog(prev => [...prev, `[3/5] Khởi tạo biên bản nháp thành công (ID: ${draftMeeting.id}).`, "Bắt đầu gỡ băng tự động bằng Whisper API..."]);
+      setProcessingLog(prev => [...prev, `[3/6] Khởi tạo biên bản nháp thành công (ID: ${draftMeeting.id}).`, `Bắt đầu gỡ băng ${audioFiles.length} file bằng Whisper API...`]);
 
-      // 2. Call Whisper transcribe API
-      const transcribeRes = await fetch("/api/meeting/transcribe", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${openaiKey}`
-        },
-        body: JSON.stringify({
-          meetingId: draftMeeting.id,
-          audioPath: filePath
-        })
-      });
+      // 2. Transcribe each file sequentially and merge transcripts
+      const allTranscripts: string[] = [];
+      let hasHallucination = false;
+      let hallucinationWarning = "";
 
-      const transcribeData = await transcribeRes.json();
-      if (!transcribeRes.ok) throw new Error(transcribeData.error || "Gặp lỗi khi Whisper gỡ băng âm thanh.");
+      for (let i = 0; i < uploadedPaths.length; i++) {
+        setProcessingLog(prev => [...prev, `  🎙️ Đang gỡ băng file ${i + 1}/${uploadedPaths.length}...`]);
 
-      const rawTranscript = transcribeData.text;
+        const transcribeRes = await fetch("/api/meeting/transcribe", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${openaiKey}`
+          },
+          body: JSON.stringify({
+            meetingId: draftMeeting.id,
+            audioPath: uploadedPaths[i]
+          })
+        });
 
-      // CHECK: Detect Whisper hallucination (repetitive garbage output)
-      if (transcribeData.is_hallucination) {
+        const transcribeData = await transcribeRes.json();
+        if (!transcribeRes.ok) throw new Error(transcribeData.error || `Lỗi gỡ băng file ${i + 1}.`);
+
+        // Check hallucination for this segment
+        if (transcribeData.is_hallucination) {
+          hasHallucination = true;
+          hallucinationWarning = transcribeData.hallucination_warning;
+          setProcessingLog(prev => [...prev, `  ⚠️ File ${i + 1} bị lỗi ảo giác (hallucination)!`]);
+        } else {
+          allTranscripts.push(transcribeData.text);
+          setProcessingLog(prev => [...prev, `  ✅ File ${i + 1}: ${transcribeData.text.length} ký tự`]);
+        }
+      }
+
+      // Merge all valid transcripts
+      const rawTranscript = allTranscripts.join("\n\n");
+
+      // CHECK: If ALL files had hallucination or no valid transcript
+      if (rawTranscript.trim().length === 0 || (hasHallucination && allTranscripts.length === 0)) {
         setProcessingLog(prev => [
           ...prev,
-          "⚠️ [LỖI NGHIÊM TRỌNG] Phát hiện lỗi ảo giác (hallucination) từ AI gỡ băng!",
-          `Chi tiết: ${transcribeData.hallucination_warning}`,
+          "⚠️ [LỖI NGHIÊM TRỌNG] Không có file nào gỡ băng thành công!",
+          `Chi tiết: ${hallucinationWarning}`,
           "❌ Đã dừng xử lý. Vui lòng kiểm tra lại file ghi âm.",
         ]);
         setProcessingStep("done");
 
-        // Clean up: delete the broken draft meeting
         await supabase.from("meetings").delete().eq("id", draftMeeting.id);
 
         alert(
           `⚠️ LỖI: AI GỠ BĂNG KHÔNG NHẬN DIỆN ĐƯỢC NỘI DUNG!\n\n` +
-          `${transcribeData.hallucination_warning}\n\n` +
+          `${hallucinationWarning}\n\n` +
           `CÁCH KHẮC PHỤC:\n` +
           `1. Kiểm tra lại file ghi âm gốc - mở nghe thử xem giọng nói có rõ không.\n` +
           `2. Nếu file đã bị nén quá mức (bitrate < 32kbps), hãy nén lại với chất lượng cao hơn (48-64kbps).\n` +
-          `3. Nếu file gốc dài hơn 1 tiếng, hãy cắt thành 2-3 phần (mỗi phần 30-40 phút) và tải lên từng phần.\n` +
-          `4. Đảm bảo file ghi âm có giọng nói rõ ràng, không bị nhiễu hoặc im lặng kéo dài.`
+          `3. Đảm bảo file ghi âm có giọng nói rõ ràng, không bị nhiễu hoặc im lặng kéo dài.`
         );
 
-        // Reset upload state
-        setAudioFile(null);
+        setAudioFiles([]);
         setIsUploading(false);
         setUploadProgress(0);
         setProcessingStep("idle");
         return;
       }
 
-      setProcessingLog(prev => [...prev, `[4/5] Gỡ băng thành công. Trích xuất được ${rawTranscript.length} ký tự văn bản thô.`, "Bắt đầu chạy AI phân tích nội dung cuộc họp..."]);
+      // Warn if some (but not all) files had hallucination
+      if (hasHallucination && allTranscripts.length > 0) {
+        setProcessingLog(prev => [...prev, `⚠️ Cảnh báo: Một số file bị lỗi ảo giác, chỉ xử lý ${allTranscripts.length} file hợp lệ.`]);
+      }
+
+      // Update merged transcript in DB
+      await supabase.from("meetings").update({ transcript_raw: rawTranscript }).eq("id", draftMeeting.id);
+
+      setProcessingLog(prev => [...prev, `[4/6] Gỡ băng hoàn tất. Tổng cộng ${rawTranscript.length} ký tự từ ${allTranscripts.length} file.`, "Bắt đầu chạy AI phân tích nội dung cuộc họp..."]);
       setProcessingStep("ai");
 
       // 3. Call AI process API
@@ -343,7 +389,7 @@ export default function MeetingTeamPage() {
       const processData = await processRes.json();
       if (!processRes.ok) throw new Error(processData.error || "Gặp lỗi khi GPT phân tích biên bản.");
 
-      setProcessingLog(prev => [...prev, "[5/5] Xử lý AI hoàn thành thành công!", "Tự động điền metadata, bản tóm tắt và phân công công việc...", "Đang điều hướng sang màn hình Review biên bản..."]);
+      setProcessingLog(prev => [...prev, "[5/6] Xử lý AI hoàn thành thành công!", "Tự động điền metadata, bản tóm tắt và phân công công việc...", "[6/6] Đang điều hướng sang màn hình Review biên bản..."]);
       setProcessingStep("done");
 
       // Fetch the fully updated meeting
@@ -358,7 +404,7 @@ export default function MeetingTeamPage() {
       if (finalMeeting) {
         setTimeout(() => {
           handleViewDetail(finalMeeting);
-          setAudioFile(null);
+          setAudioFiles([]);
           setChairperson("");
           setProcessingStep("idle");
           setProcessingLog([]);
@@ -955,22 +1001,39 @@ export default function MeetingTeamPage() {
                             ref={fileInputRef}
                             onChange={handleFileSelect}
                             accept="audio/*"
+                            multiple
                             disabled={isUploading || processingStep !== "idle"}
                             className="hidden"
                           />
                           <UploadCloud className="text-slate-400 group-hover:text-[#005BAC] group-hover:scale-110 transition-all duration-300" size={44} />
                           
-                          {audioFile ? (
-                            <div className="space-y-1">
-                              <span className="text-[#005BAC] text-xs font-bold flex items-center justify-center gap-1.5">
-                                <FileAudio size={16} /> {audioFile.name}
-                              </span>
-                              <p className="text-[11px] text-slate-500">{(audioFile.size / (1024 * 1024)).toFixed(2)} MB - Click để chọn file khác</p>
+                          {audioFiles.length > 0 ? (
+                            <div className="space-y-2 w-full">
+                              <p className="text-[#005BAC] text-xs font-bold text-center">{audioFiles.length} file đã chọn ({(audioFiles.reduce((s, f) => s + f.size, 0) / (1024 * 1024)).toFixed(2)} MB)</p>
+                              <div className="space-y-1 max-h-32 overflow-y-auto">
+                                {audioFiles.map((file, idx) => (
+                                  <div key={`file_${idx}`} className="flex items-center justify-between bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-[11px]">
+                                    <span className="flex items-center gap-1.5 text-slate-700 truncate">
+                                      <FileAudio size={13} className="text-[#005BAC] flex-shrink-0" />
+                                      <span className="truncate">{file.name}</span>
+                                      <span className="text-slate-400 flex-shrink-0">({(file.size / (1024 * 1024)).toFixed(2)} MB)</span>
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => { e.stopPropagation(); setAudioFiles(prev => prev.filter((_, i) => i !== idx)); }}
+                                      className="text-slate-400 hover:text-rose-500 ml-2 flex-shrink-0"
+                                    >
+                                      ✕
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                              <p className="text-[10px] text-slate-400 text-center">Click để thêm file • Kéo thả nhiều file cùng lúc</p>
                             </div>
                           ) : (
                             <div className="space-y-1">
                               <p className="text-slate-700 text-xs font-bold">Thả file âm thanh họp vào đây, hoặc nhấp để tải file</p>
-                              <p className="text-[11px] text-slate-400">Hỗ trợ MP3, WAV, M4A dưới 100MB.</p>
+                              <p className="text-[11px] text-slate-400">Hỗ trợ MP3, WAV, M4A — Chọn nhiều file cùng lúc</p>
                             </div>
                           )}
                         </div>
@@ -996,7 +1059,7 @@ export default function MeetingTeamPage() {
                           <button
                             type="button"
                             onClick={() => {
-                              setAudioFile(null);
+                              setAudioFiles([]);
                               setChairperson("");
                             }}
                             className="px-4 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-600 rounded-xl text-xs font-bold transition-all"
@@ -1006,7 +1069,7 @@ export default function MeetingTeamPage() {
                           <button
                             type="button"
                             onClick={handleIntakeAndProcess}
-                            disabled={!audioFile || !chairperson}
+                            disabled={audioFiles.length === 0 || !chairperson}
                             className="px-6 py-2.5 bg-gradient-to-r from-[#005BAC] to-[#00AEEF] hover:from-blue-700 hover:to-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-md shadow-blue-500/15"
                           >
                             <Sparkles size={14} /> Gửi & Bắt đầu AI Phân tích tự động
