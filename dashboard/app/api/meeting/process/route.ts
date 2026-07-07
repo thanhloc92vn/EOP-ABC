@@ -24,15 +24,17 @@ Nhiệm vụ của bạn là nhận văn bản gỡ băng thô (transcript_raw) 
    - Hãy biên tập lại bản gỡ băng thành các đoạn thoại ngắn gọn, lịch sự, chuẩn mực ngôn ngữ doanh nghiệp.
    - Gán đúng tên người phát biểu (Ví dụ: "Ông Huỳnh Giáp Nhân:", "Bà Đoàn Thị Minh Thương:").
    - Chỉ giữ lại các ý kiến đóng góp mang tính chuyên môn, báo cáo số liệu thực tế và các câu chỉ đạo quan trọng của Chủ trì.
-4. TÓM TẮT TRỌNG TÂM ("summary"):
-   - Viết bản tóm tắt từ 1 đến 3 đoạn văn ngắn gọn nêu rõ: Mục đích cuộc họp, các chủ trương chỉ đạo cốt lõi của Chủ trì và các mốc thời gian quan trọng.
+4. TÓM TẮT TRỌNG TÂM & DIỄN BIẾN CUỘC HỌP ("summary"):
+    - Trình bày chi tiết, chuyên nghiệp và chia làm 2 phần rõ rệt bằng tiếng Việt:
+      * "PHẦN 1: TÓM TẮT DIỄN BIẾN CUỘC HỌP" (Nêu rõ bối cảnh, lý do họp, các báo cáo chính và các ý kiến đóng góp/thảo luận quan trọng của các bộ phận).
+      * "PHẦN 2: TIẾN TRÌNH & TIMELINE CHI TIẾT" (Phác thảo lại diễn biến cuộc họp theo trình tự thời gian hoặc trình tự phát biểu của các thành viên. Ví dụ: "09:00 - 09:15: ...", "09:15 - 09:40: ...", hoặc "1. Báo cáo tiến độ dự án Tây Ninh (Mr Vinh/BĐH)...", "2. Ý kiến phản hồi của Phòng KHĐT...", "3. Kết luận và chỉ đạo của Giám đốc (Mr Nhân)..."). Phần này cần chi tiết, có số liệu thực tế được nhắc đến trong file ghi âm để người đọc nắm được dòng sự kiện chính.
 5. BÓC TÁCH ĐẦU VIỆC ("action_items"):
-   - Trích xuất mảng JSON chứa các nhiệm vụ cụ thể được giao. Mỗi đầu việc phải rõ ràng, không trùng lặp:
-     * "stt": Số thứ tự (1, 2, 3...)
-     * "content": Nội dung công việc cụ thể, gắn liền với mục tiêu xử lý
-     * "assignee": Bộ phận hoặc Cá nhân chịu trách nhiệm chính (Ví dụ: "BĐH", "P. KHĐT", "P. QLDA", "P. VTTB", "Mr Hưng"). Cố gắng chuẩn hóa tên phòng ban/nhân sự.
-     * "coop": Bộ phận phối hợp thực hiện (nếu có).
-     * "deadline": Hạn hoàn thành cụ thể (Ví dụ: "25/05/2026", "Trước 30/05/2026", "Nắm chủ trương thực hiện").
+    - Trích xuất mảng JSON chứa các nhiệm vụ cụ thể được giao. Mỗi đầu việc phải rõ ràng, không trùng lặp:
+      * "stt": Số thứ tự (1, 2, 3...)
+      * "content": Nội dung công việc cụ thể, gắn liền với mục tiêu xử lý
+      * "assignee": Bộ phận hoặc Cá nhân chịu trách nhiệm chính (Ví dụ: "BĐH", "P. KHĐT", "P. QLDA", "P. VTTB", "Mr Hưng"). Cố gắng chuẩn hóa tên phòng ban/nhân sự.
+      * "coop": Bộ phận phối hợp thực hiện (nếu có).
+      * "deadline": Hạn hoàn thành cụ thể (Ví dụ: "25/05/2026", "Trước 30/05/2026", "Nắm chủ trương thực hiện").
 
 ━━━ ĐỊNH DẠNG ĐẦU RA (JSON CHUẨN) ━━━
 {

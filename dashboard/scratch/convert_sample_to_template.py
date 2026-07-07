@@ -30,6 +30,9 @@ def main():
     # Paragraph 16 is Nơi nhận values
     doc.paragraphs[16].text = "{distribution}"
     
+    # Paragraph 9 is Discussion / Summary
+    doc.paragraphs[9].text = "{meeting_summary}\n\nSau khi thảo luận, Chủ trì cuộc họp kết luận và chỉ đạo thực hiện các đầu việc chi tiết như sau:"
+    
     # 2. Modify Table 0 (Participants)
     t0 = doc.tables[0]
     t0.rows[0].cells[1].text = "{chair_name}"

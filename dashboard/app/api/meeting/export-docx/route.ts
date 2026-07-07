@@ -92,6 +92,7 @@ export async function POST(req: NextRequest) {
       end_time: meeting.end_time || "10:30",
       distribution: meeting.distribution || "P. KHĐT, P. QLDA, P. VTTB; Lưu: HCNS.",
       tasks: tasksList,
+      meeting_summary: meeting.summary || "Không có tóm tắt.",
     });
 
     // 6. Compile document
