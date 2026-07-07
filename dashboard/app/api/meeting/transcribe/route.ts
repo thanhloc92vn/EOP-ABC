@@ -3,6 +3,7 @@ import { supabase } from "@/lib/supabase";
 import OpenAI from "openai";
 import fs from "fs";
 import path from "path";
+import os from "os";
 
 export async function POST(req: NextRequest) {
   let tempFilePath = "";
@@ -37,15 +38,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Write to a temporary file in the workspace scratch directory
+    // 2. Write to a temporary file in the OS temp directory
     const buffer = Buffer.from(await fileData.arrayBuffer());
     const ext = audioPath.split(".").pop() || "mp3";
-    const tempDir = path.join(process.cwd(), "scratch");
-    
-    // Ensure scratch directory exists
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir, { recursive: true });
-    }
+    const tempDir = os.tmpdir();
 
     const tempFileName = `temp_transcribe_${meetingId}_${Date.now()}.${ext}`;
     tempFilePath = path.join(tempDir, tempFileName);

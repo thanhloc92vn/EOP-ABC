@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import { exec } from "child_process";
 import { promisify } from "util";
+import os from "os";
 
 const execAsync = promisify(exec);
 
@@ -26,21 +27,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create temp files inside scratch directory
-    const scratchDir = path.join(process.cwd(), "scratch");
-    if (!fs.existsSync(scratchDir)) {
-      fs.mkdirSync(scratchDir);
-    }
-
+    // Use OS temp directory for writing temporary files
+    const tempDir = os.tmpdir();
     const timestamp = Date.now();
-    const tempJsonPath = path.join(scratchDir, `vpp_data_${timestamp}.json`);
-    const tempDocxPath = path.join(scratchDir, `vpp_output_${timestamp}.docx`);
+    const tempJsonPath = path.join(tempDir, `vpp_data_${timestamp}.json`);
+    const tempDocxPath = path.join(tempDir, `vpp_output_${timestamp}.docx`);
 
     // Write JSON data to temp file
     fs.writeFileSync(tempJsonPath, JSON.stringify(data, null, 2), "utf-8");
 
-    // 2. Execute Python script to fill the docx template
-    const scriptPath = path.join(scratchDir, "fill_docx.py");
+    // 2. Execute Python script to fill the docx template (script is read-only from project folder)
+    const scriptPath = path.join(process.cwd(), "scratch", "fill_docx.py");
     const pythonCmd = `python "${scriptPath}" "${tempJsonPath}" "${tempDocxPath}"`;
     
     await execAsync(pythonCmd);

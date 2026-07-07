@@ -48,7 +48,7 @@ VALUES (
   'meetings', 
   'meetings', 
   true, 
-  104857600, -- Limit 100MB per file for audio recordings
+  524288000, -- Limit 500MB per file for audio recordings
   ARRAY[
     'audio/mpeg', 
     'audio/mp3', 
@@ -63,7 +63,7 @@ VALUES (
 )
 ON CONFLICT (id) DO UPDATE SET 
   public = true,
-  file_size_limit = 104857600,
+  file_size_limit = 524288000,
   allowed_mime_types = ARRAY[
     'audio/mpeg', 
     'audio/mp3', 

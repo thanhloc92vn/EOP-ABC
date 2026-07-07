@@ -223,6 +223,13 @@ export default function MeetingTeamPage() {
       return;
     }
 
+    if (audioFile.size > 25 * 1024 * 1024) {
+      const confirmUpload = window.confirm(
+        `Cảnh báo: File ghi âm của bạn có dung lượng ${(audioFile.size / (1024 * 1024)).toFixed(2)} MB, vượt quá giới hạn 25MB của dịch vụ gỡ băng OpenAI Whisper API. Quá trình xử lý tự động có thể gặp lỗi.\n\nBạn có muốn tiếp tục tải lên không? (Khuyến nghị: Bạn nên nén nhỏ file hoặc chuyển định dạng MP3 chất lượng thấp hơn trước).`
+      );
+      if (!confirmUpload) return;
+    }
+
     setIsUploading(true);
     setUploadProgress(10);
     setProcessingStep("stt");
