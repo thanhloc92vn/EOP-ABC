@@ -3170,6 +3170,12 @@ export default function CBPage() {
     return MOCK_BHXH_LOGS.filter(b => hasFullAccess || b.name === currentUser?.name);
   }, [hasFullAccess, currentUser]);
 
+  // Nhân viên thường chỉ được xem hợp đồng của chính mình, không thấy người khác
+  const myVisibleContracts = useMemo(() => {
+    if (hasFullAccess) return tempContracts;
+    return tempContracts.filter(c => normalizeText(c.employee_name || c.employees?.name || "") === normalizeText(currentUser?.name || ""));
+  }, [tempContracts, hasFullAccess, currentUser]);
+
   const parseBirthdate = (dateStr: string) => {
     if (!dateStr) return null;
     
@@ -6299,6 +6305,8 @@ export default function CBPage() {
                   </div>
                   
                   <div className="flex flex-wrap items-center gap-2">
+                  {hasFullAccess && (
+                    <>
                   <input
                     type="file"
                     accept=".xlsx,.xls,.pdf,.docx,.doc,.png,.jpg,.jpeg,.txt"
@@ -6342,9 +6350,11 @@ export default function CBPage() {
                     disabled={savingContracts}
                     className="flex items-center gap-1.5 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-premium disabled:opacity-50 active:scale-95"
                   >
-                    {savingContracts ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} 
+                    {savingContracts ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
                     Lưu tất cả thay đổi
                   </button>
+                    </>
+                  )}
 
                   <button
                     onClick={() => fetchContracts()}
@@ -6361,7 +6371,7 @@ export default function CBPage() {
               {/* Data Grid Table */}
               <div className="glass bg-white rounded-2xl border border-slate-200/50 shadow-premium overflow-hidden">
                 <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between bg-slate-50/50 gap-2">
-                  <h3 className="font-heading font-black text-slate-800 text-xs uppercase tracking-wider">Danh sách theo dõi ký HĐTV, HĐLĐ ({tempContracts.length} bản ghi)</h3>
+                  <h3 className="font-heading font-black text-slate-800 text-xs uppercase tracking-wider">Danh sách theo dõi ký HĐTV, HĐLĐ ({myVisibleContracts.length} bản ghi)</h3>
                   <span className="text-[9px] text-amber-600 font-extrabold bg-amber-50 px-2.5 py-1 rounded-full uppercase tracking-wider border border-amber-100">
                     Nhập liệu trực tiếp vào các ô trống. Bấm nút Lưu từng dòng hoặc Lưu tất cả thay đổi.
                   </span>
@@ -6395,7 +6405,7 @@ export default function CBPage() {
                             <span>Đang tải danh sách hợp đồng lao động...</span>
                           </td>
                         </tr>
-                      ) : tempContracts.length === 0 ? (
+                      ) : myVisibleContracts.length === 0 ? (
                         <tr>
                           <td colSpan={14} className="py-12 text-center text-slate-400">
                             Không tìm thấy dữ liệu hợp đồng nào. Hãy tải lên Excel hoặc thêm dòng hợp đồng mới!
@@ -6404,7 +6414,7 @@ export default function CBPage() {
                       ) : (
                         (() => {
                           const query = contractsSearchQuery.trim().toLowerCase();
-                          const filtered = tempContracts.filter(c => {
+                          const filtered = myVisibleContracts.filter(c => {
                             const name = (c.employee_name || "").toLowerCase();
                             const code = (c.employee_code || "").toLowerCase();
                             const num = (c.contract_number || "").toLowerCase();
