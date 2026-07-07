@@ -128,12 +128,12 @@ export async function POST(req: NextRequest) {
     const openai = new OpenAI({ apiKey });
     const fileStream = fs.createReadStream(tempFilePath);
     
-    // Use a Vietnamese business-meeting prompt hint to guide Whisper
+    // Use a Vietnamese business-meeting prompt hint to guide Whisper (vocabulary only, no sentences to prevent hallucination loops)
     const transcription = await openai.audio.transcriptions.create({
       file: fileStream,
       model: "whisper-1",
       language: "vi",
-      prompt: "Cuộc họp giao ban tại Tập đoàn Trung Nam E&C. Các thành viên tham dự thảo luận về tiến độ dự án, phân công công việc, và báo cáo kết quả.",
+      prompt: "Trung Nam E&C, họp giao ban, dự án, báo cáo",
     });
 
     const rawText = transcription.text || "";
