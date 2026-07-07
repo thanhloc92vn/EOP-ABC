@@ -320,7 +320,7 @@ export default function MeetingTeamPage() {
         setAudioFile(null);
         setIsUploading(false);
         setUploadProgress(0);
-        setProcessingStep(null);
+        setProcessingStep("idle");
         return;
       }
 
