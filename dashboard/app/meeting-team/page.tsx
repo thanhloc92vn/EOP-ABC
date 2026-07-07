@@ -60,11 +60,12 @@ interface Meeting {
 }
 
 interface ActionItem {
-  stt: number;
+  stt: number | string;
   content: string;
   assignee: string;
   coop: string;
   deadline: string;
+  is_header?: boolean;
 }
 
 export default function MeetingTeamPage() {
@@ -508,11 +509,13 @@ export default function MeetingTeamPage() {
 
       // 3. Create database tasks
       if (editableActionItems.length > 0) {
-        const tasksToInsert = editableActionItems.map(item => {
-          const parsedDueDate = parseVietnameseDate(item.deadline);
-          
-          return {
-            title: `[Họp] ${item.content}`,
+        const tasksToInsert = editableActionItems
+          .filter(item => !item.is_header && item.assignee && item.assignee.trim() !== "")
+          .map(item => {
+            const parsedDueDate = parseVietnameseDate(item.deadline);
+            
+            return {
+              title: `[Họp] ${item.content}`,
             assignee: item.assignee || "Nhân viên",
             priority: "Trung bình",
             due_date: parsedDueDate,
@@ -605,9 +608,10 @@ export default function MeetingTeamPage() {
 
   // Action Items Edit Logic
   const handleAddActionItem = () => {
-    const nextStt = editableActionItems.length > 0 
-      ? Math.max(...editableActionItems.map(item => item.stt)) + 1 
-      : 1;
+    const numericStts = editableActionItems
+      .map(item => Number(item.stt))
+      .filter(num => !isNaN(num));
+    const nextStt = numericStts.length > 0 ? Math.max(...numericStts) + 1 : 1;
     
     setEditableActionItems([
       ...editableActionItems,
@@ -1292,79 +1296,86 @@ export default function MeetingTeamPage() {
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-slate-100">
-                                {editableActionItems.map((item, index) => (
-                                  <tr key={`item_${index}`} className="hover:bg-slate-50/50">
-                                    <td className="px-3 py-2.5 text-center font-bold text-slate-500">{item.stt}</td>
-                                    <td className="px-4 py-2.5">
-                                      {selectedMeeting.status === "draft" ? (
-                                        <input
-                                          type="text"
-                                          value={item.content}
-                                          onChange={(e) => handleUpdateActionItemField(index, "content", e.target.value)}
-                                          className="w-full bg-transparent border-b border-slate-200 focus:border-blue-500 focus:outline-none text-slate-800"
-                                        />
-                                      ) : (
-                                        <span className="text-slate-800 block">{item.content}</span>
-                                      )}
-                                    </td>
-                                    <td className="px-4 py-2.5">
-                                      {selectedMeeting.status === "draft" ? (
-                                        <select
-                                          value={item.assignee}
-                                          onChange={(e) => handleUpdateActionItemField(index, "assignee", e.target.value)}
-                                          className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1 px-2 focus:outline-none text-slate-800 text-xs"
-                                        >
-                                          <option value="">Chọn nhân sự...</option>
-                                          {employees.map(emp => (
-                                            <option key={`review_emp_${index}_${emp.name}`} value={emp.name}>{emp.name}</option>
-                                          ))}
-                                          <option value="BĐH">BĐH (Ban Điều Hành)</option>
-                                          <option value="P. QLDA">P. QLDA</option>
-                                          <option value="P. KHĐT">P. KHĐT</option>
-                                          <option value="P. VTTB">P. VTTB</option>
-                                          <option value="Tất cả">Tất cả</option>
-                                        </select>
-                                      ) : (
-                                        <span className="font-bold text-[#005BAC]">{item.assignee}</span>
-                                      )}
-                                    </td>
-                                    <td className="px-4 py-2.5">
-                                      {selectedMeeting.status === "draft" ? (
-                                        <input
-                                          type="text"
-                                          value={item.coop}
-                                          onChange={(e) => handleUpdateActionItemField(index, "coop", e.target.value)}
-                                          className="w-full bg-transparent border-b border-slate-200 focus:border-blue-500 focus:outline-none text-slate-800"
-                                        />
-                                      ) : (
-                                        <span className="text-slate-500">{item.coop || "-"}</span>
-                                      )}
-                                    </td>
-                                    <td className="px-4 py-2.5">
-                                      {selectedMeeting.status === "draft" ? (
-                                        <input
-                                          type="text"
-                                          value={item.deadline}
-                                          onChange={(e) => handleUpdateActionItemField(index, "deadline", e.target.value)}
-                                          className="w-full bg-transparent border-b border-slate-200 focus:border-blue-500 focus:outline-none text-slate-800 font-mono text-[11px]"
-                                        />
-                                      ) : (
-                                        <span className="text-amber-700 font-bold font-mono">{item.deadline}</span>
-                                      )}
-                                    </td>
-                                    {selectedMeeting.status === "draft" && (
-                                      <td className="px-3 py-2.5 text-center">
-                                        <button
-                                          type="button"
-                                          onClick={() => handleDeleteActionItem(index)}
-                                          className="p-1 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded transition-colors"
-                                        >
-                                          <Trash2 size={13} />
-                                        </button>
+                                {editableActionItems.map((item, index) => {
+                                  const isHeader = item.is_header || (typeof item.stt === "string" && isNaN(Number(item.stt)));
+                                  return (
+                                    <tr key={`item_${index}`} className={isHeader ? "bg-slate-100/80 font-bold border-t border-slate-200" : "hover:bg-slate-50/50"}>
+                                      <td className="px-3 py-2.5 text-center font-bold text-slate-700">{item.stt}</td>
+                                      <td className="px-4 py-2.5 text-xs text-slate-800" colSpan={isHeader ? 4 : 1}>
+                                        {selectedMeeting.status === "draft" ? (
+                                          <input
+                                            type="text"
+                                            value={item.content}
+                                            onChange={(e) => handleUpdateActionItemField(index, "content", e.target.value)}
+                                            className={`w-full bg-transparent border-b border-slate-200 focus:border-blue-500 focus:outline-none text-slate-800 ${isHeader ? "font-extrabold text-[#005BAC]" : ""}`}
+                                          />
+                                        ) : (
+                                          <span className={`block ${isHeader ? "font-extrabold text-[#005BAC]" : "text-slate-800"}`}>{item.content}</span>
+                                        )}
                                       </td>
-                                    )}
-                                  </tr>
-                                ))}
+                                      {!isHeader && (
+                                        <>
+                                          <td className="px-4 py-2.5">
+                                            {selectedMeeting.status === "draft" ? (
+                                              <select
+                                                value={item.assignee}
+                                                onChange={(e) => handleUpdateActionItemField(index, "assignee", e.target.value)}
+                                                className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1 px-2 focus:outline-none text-slate-800 text-xs"
+                                              >
+                                                <option value="">Chọn nhân sự...</option>
+                                                {employees.map(emp => (
+                                                  <option key={`review_emp_${index}_${emp.name}`} value={emp.name}>{emp.name}</option>
+                                                ))}
+                                                <option value="BĐH">BĐH (Ban Điều Hành)</option>
+                                                <option value="P. QLDA">P. QLDA</option>
+                                                <option value="P. KHĐT">P. KHĐT</option>
+                                                <option value="P. VTTB">P. VTTB</option>
+                                                <option value="Tất cả">Tất cả</option>
+                                              </select>
+                                            ) : (
+                                              <span className="font-bold text-[#005BAC]">{item.assignee}</span>
+                                            )}
+                                          </td>
+                                          <td className="px-4 py-2.5">
+                                            {selectedMeeting.status === "draft" ? (
+                                              <input
+                                                type="text"
+                                                value={item.coop}
+                                                onChange={(e) => handleUpdateActionItemField(index, "coop", e.target.value)}
+                                                className="w-full bg-transparent border-b border-slate-200 focus:border-blue-500 focus:outline-none text-slate-800"
+                                              />
+                                            ) : (
+                                              <span className="text-slate-500">{item.coop || "-"}</span>
+                                            )}
+                                          </td>
+                                          <td className="px-4 py-2.5">
+                                            {selectedMeeting.status === "draft" ? (
+                                              <input
+                                                type="text"
+                                                value={item.deadline}
+                                                onChange={(e) => handleUpdateActionItemField(index, "deadline", e.target.value)}
+                                                className="w-full bg-transparent border-b border-slate-200 focus:border-blue-500 focus:outline-none text-slate-800 font-mono text-[11px]"
+                                              />
+                                            ) : (
+                                              <span className="text-amber-700 font-bold font-mono">{item.deadline}</span>
+                                            )}
+                                          </td>
+                                        </>
+                                      )}
+                                      {selectedMeeting.status === "draft" && (
+                                        <td className="px-3 py-2.5 text-center">
+                                          <button
+                                            type="button"
+                                            onClick={() => handleDeleteActionItem(index)}
+                                            className="p-1 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded transition-colors"
+                                          >
+                                            <Trash2 size={13} />
+                                          </button>
+                                        </td>
+                                      )}
+                                    </tr>
+                                  );
+                                })}
                               </tbody>
                             </table>
                           </div>

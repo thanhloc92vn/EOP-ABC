@@ -28,13 +28,29 @@ Nhiệm vụ của bạn là nhận văn bản gỡ băng thô (transcript_raw) 
     - Trình bày chi tiết, chuyên nghiệp và chia làm 2 phần rõ rệt bằng tiếng Việt:
       * "PHẦN 1: TÓM TẮT DIỄN BIẾN CUỘC HỌP" (Nêu rõ bối cảnh, lý do họp, các báo cáo chính và các ý kiến đóng góp/thảo luận quan trọng của các bộ phận).
       * "PHẦN 2: TIẾN TRÌNH & TIMELINE CHI TIẾT" (Phác thảo lại diễn biến cuộc họp theo trình tự thời gian hoặc trình tự phát biểu của các thành viên. Ví dụ: "09:00 - 09:15: ...", "09:15 - 09:40: ...", hoặc "1. Báo cáo tiến độ dự án Tây Ninh (Mr Vinh/BĐH)...", "2. Ý kiến phản hồi của Phòng KHĐT...", "3. Kết luận và chỉ đạo của Giám đốc (Mr Nhân)..."). Phần này cần chi tiết, có số liệu thực tế được nhắc đến trong file ghi âm để người đọc nắm được dòng sự kiện chính.
-5. BÓC TÁCH ĐẦU VIỆC ("action_items"):
-    - Trích xuất mảng JSON chứa các nhiệm vụ cụ thể được giao. Mỗi đầu việc phải rõ ràng, không trùng lặp:
-      * "stt": Số thứ tự (1, 2, 3...)
-      * "content": Nội dung công việc cụ thể, gắn liền với mục tiêu xử lý
-      * "assignee": Bộ phận hoặc Cá nhân chịu trách nhiệm chính (Ví dụ: "BĐH", "P. KHĐT", "P. QLDA", "P. VTTB", "Mr Hưng"). Cố gắng chuẩn hóa tên phòng ban/nhân sự.
-      * "coop": Bộ phận phối hợp thực hiện (nếu có).
-      * "deadline": Hạn hoàn thành cụ thể (Ví dụ: "25/05/2026", "Trước 30/05/2026", "Nắm chủ trương thực hiện").
+5. BÓC TÁCH NỘI DUNG CUỘC HỌP & ĐẦU VIỆC ("action_items"):
+    - Trích xuất mảng JSON chứa toàn bộ nội dung diễn biến cuộc họp và các đầu việc được giao, phân tách theo các mục chính (như mẫu Biên bản họp Tập đoàn Trung Nam).
+    - Các phần chính bắt buộc phải xuất hiện (tương ứng với các dòng Tiêu đề phần trong mảng action_items):
+      * Mục A: "A. MỤC ĐÍCH CUỘC HỌP"
+      * Mục B: "B. SỰ CẦN THIẾT TRIỂN KHAI" hoặc "BỐI CẢNH/HIỆN TRẠNG"
+      * Mục C: "C. TỔNG QUAN LỘ TRÌNH TRIỂN KHAI" hoặc "DIỄN BIẾN THẢO LUẬN"
+      * Mục D: "D. PHÂN CÔNG NHIỆM VỤ CHI TIẾT" (hoặc mục tiêu cụ thể khác được bàn bạc).
+    
+    - Đối với mỗi dòng Tiêu đề mục (Ví dụ: "A. MỤC ĐÍCH CUỘC HỌP"), bạn thiết lập các thuộc tính như sau:
+      * "stt": Chữ cái mục (Ví dụ: "A", "B", "C", "D")
+      * "content": Tên của mục viết hoa (Ví dụ: "MỤC ĐÍCH CUỘC HỌP", "SỰ CẦN THIẾT TRIỂN KHAI", "TỔNG QUAN LỘ TRÌNH TRIỂN KHAI", "PHÂN CÔNG NHIỆM VỤ")
+      * "assignee": ""
+      * "coop": ""
+      * "deadline": ""
+      * "is_header": true
+
+    - Đối với các dòng nội dung chi tiết hoặc công việc cụ thể nằm dưới từng mục:
+      * "stt": Số thứ tự dạng số (1, 2, 3...)
+      * "content": Mô tả đầy đủ, chi tiết, chuyên nghiệp nội dung phát biểu, báo cáo của bộ phận, các chỉ đạo/góp ý cốt lõi của sếp (Huỳnh Giáp Nhân hoặc người chủ trì). Viết đầy đủ nghiệp vụ dài từ 2-4 câu, KHÔNG tóm tắt sơ sài chung chung.
+      * "assignee": Bộ phận hoặc Cá nhân chịu trách nhiệm chính (Ví dụ: "Tất cả", "Mr Lộc", "P. HCNS", "P. MKT", "P. QLDA", "BĐH", "Mr Hưng"). Cố gắng chuẩn hoá tên.
+      * "coop": Bộ phận phối hợp (nếu có, ví dụ: "Tất cả", "P. Nhân sự", "Mr Lộc"). Nếu không có thì để "".
+      * "deadline": Hạn hoàn thành cụ thể (Ví dụ: "Trước 11/07/2026", "Nắm chủ trương thực hiện", "Đang vận hành").
+      * "is_header": false
 
 ━━━ ĐỊNH DẠNG ĐẦU RA (JSON CHUẨN) ━━━
 {
@@ -51,11 +67,20 @@ Nhiệm vụ của bạn là nhận văn bản gỡ băng thô (transcript_raw) 
   "summary": "...",
   "action_items": [
     {
+      "stt": "A",
+      "content": "MỤC ĐÍCH CUỘC HỌP",
+      "assignee": "",
+      "coop": "",
+      "deadline": "",
+      "is_header": true
+    },
+    {
       "stt": 1,
       "content": "...",
       "assignee": "...",
       "coop": "...",
-      "deadline": "..."
+      "deadline": "...",
+      "is_header": false
     }
   ]
 }
