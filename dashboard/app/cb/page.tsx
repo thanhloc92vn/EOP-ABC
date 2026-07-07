@@ -527,6 +527,16 @@ export default function CBPage() {
   const [travelFilterFrom, setTravelFilterFrom] = useState("");
   const [travelFilterTo, setTravelFilterTo] = useState("");
 
+  // Bộ lọc ngày tháng năm cho các tab chấm công còn lại
+  const [machineFilterFrom, setMachineFilterFrom] = useState("");
+  const [machineFilterTo, setMachineFilterTo] = useState("");
+  const [explanationFilterFrom, setExplanationFilterFrom] = useState("");
+  const [explanationFilterTo, setExplanationFilterTo] = useState("");
+  const [leaveFilterFrom, setLeaveFilterFrom] = useState("");
+  const [leaveFilterTo, setLeaveFilterTo] = useState("");
+  const [regimeFilterFrom, setRegimeFilterFrom] = useState("");
+  const [regimeFilterTo, setRegimeFilterTo] = useState("");
+
   // Explanation Add Form states
   const [showExplanationAddForm, setShowExplanationAddForm] = useState(false);
   const [expFormDate, setExpFormDate] = useState(new Date().toISOString().substring(0, 10));
@@ -2752,8 +2762,11 @@ export default function CBPage() {
   }, [employees, searchQuery]);
 
   const filteredAttendanceLogs = useMemo(() => {
-    return MOCK_ATTENDANCE_LOGS.filter(log => hasFullAccess || log.name === currentUser?.name);
-  }, [hasFullAccess, currentUser]);
+    return MOCK_ATTENDANCE_LOGS
+      .filter(log => hasFullAccess || log.name === currentUser?.name)
+      .filter(log => !machineFilterFrom || new Date(log.date) >= new Date(machineFilterFrom))
+      .filter(log => !machineFilterTo || new Date(log.date) <= new Date(machineFilterTo));
+  }, [hasFullAccess, currentUser, machineFilterFrom, machineFilterTo]);
 
   // Helper to determine if a role represents a manager/department head
   const isManagerRole = (role: string): boolean => {
@@ -3058,12 +3071,18 @@ export default function CBPage() {
   };
 
   const filteredExplanations = useMemo(() => {
-    return explanations.filter(e => hasFullAccess || e.name === currentUser?.name || e.approver === currentUser?.name);
-  }, [explanations, hasFullAccess, currentUser]);
+    return explanations
+      .filter(e => hasFullAccess || e.name === currentUser?.name || e.approver === currentUser?.name)
+      .filter(e => !explanationFilterFrom || new Date(e.date) >= new Date(explanationFilterFrom))
+      .filter(e => !explanationFilterTo || new Date(e.date) <= new Date(explanationFilterTo));
+  }, [explanations, hasFullAccess, currentUser, explanationFilterFrom, explanationFilterTo]);
 
   const filteredLeaves = useMemo(() => {
-    return leaves.filter(l => hasFullAccess || l.name === currentUser?.name);
-  }, [leaves, hasFullAccess, currentUser]);
+    return leaves
+      .filter(l => hasFullAccess || l.name === currentUser?.name)
+      .filter(l => !leaveFilterFrom || new Date(l.from) >= new Date(leaveFilterFrom))
+      .filter(l => !leaveFilterTo || new Date(l.to) <= new Date(leaveFilterTo));
+  }, [leaves, hasFullAccess, currentUser, leaveFilterFrom, leaveFilterTo]);
 
   const isConcurrentOrSupport = (emp: any): boolean => {
     if (!emp) return false;
@@ -3137,8 +3156,11 @@ export default function CBPage() {
   }, [travels, hasFullAccess, currentUser, travelFilterFrom, travelFilterTo]);
 
   const filteredRegimes = useMemo(() => {
-    return MOCK_REGIMES.filter(r => hasFullAccess || r.name === currentUser?.name);
-  }, [hasFullAccess, currentUser]);
+    return MOCK_REGIMES
+      .filter(r => hasFullAccess || r.name === currentUser?.name)
+      .filter(r => !regimeFilterFrom || new Date(r.from) >= new Date(regimeFilterFrom))
+      .filter(r => !regimeFilterTo || new Date(r.to) <= new Date(regimeFilterTo));
+  }, [hasFullAccess, currentUser, regimeFilterFrom, regimeFilterTo]);
 
   const filteredSalaryInfo = useMemo(() => {
     return MOCK_SALARY_INFO.filter(s => hasFullAccess || s.name === currentUser?.name);
@@ -3461,36 +3483,48 @@ export default function CBPage() {
               ))}
             </div>
 
-            {activeTab === "attendance" && activeSubTab === "travel" && (
-              <div className="flex flex-wrap items-center gap-1.5 bg-white p-1.5 rounded-xl shrink-0 border border-slate-200/60 shadow-sm">
-                <Calendar size={13} className="text-slate-400 ml-1" />
-                <input
-                  type="date"
-                  value={travelFilterFrom}
-                  onChange={(e) => setTravelFilterFrom(e.target.value)}
-                  title="Từ ngày"
-                  className="px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-semibold focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none"
-                />
-                <span className="text-slate-400 text-[11px] font-bold">-</span>
-                <input
-                  type="date"
-                  value={travelFilterTo}
-                  onChange={(e) => setTravelFilterTo(e.target.value)}
-                  title="Đến ngày"
-                  className="px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-semibold focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none"
-                />
-                {(travelFilterFrom || travelFilterTo) && (
-                  <button
-                    type="button"
-                    onClick={() => { setTravelFilterFrom(""); setTravelFilterTo(""); }}
-                    className="px-2 py-1 text-[10px] font-bold text-slate-400 hover:text-rose-600 cursor-pointer"
-                    title="Xóa bộ lọc"
-                  >
-                    <X size={12} />
-                  </button>
-                )}
-              </div>
-            )}
+            {activeTab === "attendance" && (() => {
+              const dateFilterMap: Record<string, [string, (v: string) => void, string, (v: string) => void]> = {
+                machine: [machineFilterFrom, setMachineFilterFrom, machineFilterTo, setMachineFilterTo],
+                explanation: [explanationFilterFrom, setExplanationFilterFrom, explanationFilterTo, setExplanationFilterTo],
+                leave: [leaveFilterFrom, setLeaveFilterFrom, leaveFilterTo, setLeaveFilterTo],
+                travel: [travelFilterFrom, setTravelFilterFrom, travelFilterTo, setTravelFilterTo],
+                regime: [regimeFilterFrom, setRegimeFilterFrom, regimeFilterTo, setRegimeFilterTo]
+              };
+              const entry = dateFilterMap[activeSubTab];
+              if (!entry) return null;
+              const [fromVal, setFromVal, toVal, setToVal] = entry;
+              return (
+                <div className="flex flex-wrap items-center gap-1.5 bg-white p-1.5 rounded-xl shrink-0 border border-slate-200/60 shadow-sm">
+                  <Calendar size={13} className="text-slate-400 ml-1" />
+                  <input
+                    type="date"
+                    value={fromVal}
+                    onChange={(e) => setFromVal(e.target.value)}
+                    title="Từ ngày"
+                    className="px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-semibold focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none"
+                  />
+                  <span className="text-slate-400 text-[11px] font-bold">-</span>
+                  <input
+                    type="date"
+                    value={toVal}
+                    onChange={(e) => setToVal(e.target.value)}
+                    title="Đến ngày"
+                    className="px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-semibold focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none"
+                  />
+                  {(fromVal || toVal) && (
+                    <button
+                      type="button"
+                      onClick={() => { setFromVal(""); setToVal(""); }}
+                      className="px-2 py-1 text-[10px] font-bold text-slate-400 hover:text-rose-600 cursor-pointer"
+                      title="Xóa bộ lọc"
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
           </div>
           )}
 
