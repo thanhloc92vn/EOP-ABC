@@ -19,27 +19,34 @@ function detectHallucination(text: string): { isHallucination: boolean; warning:
     return { isHallucination: true, warning: "Bản gỡ băng quá ngắn hoặc rỗng. File âm thanh có thể bị hỏng hoặc không có giọng nói." };
   }
 
-  // Split into sentences by common Vietnamese punctuation
-  const sentences = text.split(/[.!?。]+/).map(s => s.trim()).filter(s => s.length > 5);
-  
-  if (sentences.length < 3) {
+  // Chỉ xét các câu đủ dài (>15 ký tự) để bỏ qua các câu đệm ngắn tự nhiên trong hội thoại
+  // (VD: "Vâng ạ.", "Dạ đúng rồi.", "Cảm ơn anh.") - những câu này lặp lại nhiều lần là bình thường,
+  // không phải dấu hiệu Whisper bị lặp vòng (hallucination).
+  const sentences = text.split(/[.!?。]+/).map(s => s.trim()).filter(s => s.length > 15);
+
+  // Cần đủ số lượng câu dài mới xét, tránh báo nhầm với các bản ghi ngắn/ít câu
+  if (sentences.length < 15) {
     return { isHallucination: false, warning: "" };
   }
 
-  // Count unique sentences
+  // Đếm số lần lặp của câu dài xuất hiện nhiều nhất
+  const counts: Record<string, number> = {};
+  for (const s of sentences) counts[s] = (counts[s] || 0) + 1;
   const uniqueSentences = new Set(sentences);
   const uniqueRatio = uniqueSentences.size / sentences.length;
+  const mostRepeated = findMostRepeatedSentence(sentences);
+  const mostRepeatedCount = counts[mostRepeated] || 0;
 
-  // If less than 20% of sentences are unique, it's highly likely hallucination
-  if (uniqueRatio < 0.2 && sentences.length > 10) {
-    const mostRepeated = findMostRepeatedSentence(sentences);
+  // Chỉ báo lỗi khi vừa có tỉ lệ trùng lặp cao (< 15% câu độc nhất) VỪA có 1 câu dài lặp lại
+  // rất nhiều lần (>= 8 lần) - kết hợp 2 điều kiện để giảm báo sai với các cuộc họp dài, tự nhiên.
+  if (uniqueRatio < 0.15 && mostRepeatedCount >= 8) {
     return {
       isHallucination: true,
-      warning: `Phát hiện lỗi ảo giác (hallucination) của AI gỡ băng! Chỉ có ${uniqueSentences.size} câu độc nhất trong tổng số ${sentences.length} câu (${(uniqueRatio * 100).toFixed(0)}% độc nhất). Câu lặp lại nhiều nhất: "${mostRepeated.substring(0, 80)}...". Nguyên nhân: File âm thanh bị nén quá mức, chất lượng quá thấp hoặc nhiều đoạn im lặng. Vui lòng kiểm tra lại file ghi âm gốc và tải lên bản chất lượng tốt hơn (bitrate >= 48kbps).`
+      warning: `Phát hiện lỗi ảo giác (hallucination) của AI gỡ băng! Chỉ có ${uniqueSentences.size} câu độc nhất trong tổng số ${sentences.length} câu (${(uniqueRatio * 100).toFixed(0)}% độc nhất), trong đó câu "${mostRepeated.substring(0, 80)}..." lặp lại ${mostRepeatedCount} lần. Nguyên nhân: File âm thanh bị nén quá mức, chất lượng quá thấp hoặc nhiều đoạn im lặng. Vui lòng kiểm tra lại file ghi âm gốc và tải lên bản chất lượng tốt hơn (bitrate >= 48kbps).`
     };
   }
 
-  // Check for known hallucination phrases
+  // Check for known hallucination phrases (thường gặp ở nội dung ngoài ngữ cảnh họp, kiểu YouTube outro)
   const hallucinationPhrases = [
     "tạm biệt",
     "hẹn gặp lại",
@@ -50,12 +57,12 @@ function detectHallucination(text: string): { isHallucination: boolean; warning:
     "video tiếp theo",
     "thank you for watching",
   ];
-  
+
   const lowerText = text.toLowerCase();
   for (const phrase of hallucinationPhrases) {
     const regex = new RegExp(phrase, "gi");
     const matches = lowerText.match(regex);
-    if (matches && matches.length > 5) {
+    if (matches && matches.length > 8) {
       return {
         isHallucination: true,
         warning: `Phát hiện lỗi ảo giác (hallucination)! Cụm từ "${phrase}" xuất hiện ${matches.length} lần trong bản gỡ băng. Đây là dấu hiệu Whisper không nghe được nội dung thực tế. Vui lòng kiểm tra lại file ghi âm gốc: đảm bảo giọng nói rõ ràng, bitrate >= 48kbps, và file không bị hỏng.`
