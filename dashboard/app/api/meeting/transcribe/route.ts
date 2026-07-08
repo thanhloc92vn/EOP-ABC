@@ -5,6 +5,10 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 
+// Whisper trên file ~20MB mất vài phút; mặc định Vercel cắt function sớm hơn
+// khiến client nhận trang lỗi HTML/text ("A server error...") thay vì JSON.
+export const maxDuration = 300;
+
 /**
  * Detects Whisper hallucination: repetitive garbage output that indicates
  * the model couldn't understand the audio (poor quality, over-compressed, silence).

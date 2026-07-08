@@ -36,6 +36,21 @@ import {
   Sparkles
 } from "lucide-react";
 
+// Đọc response an toàn: khi server bị timeout/quá tải (Vercel trả text
+// "A server error has occurred..." thay vì JSON), báo lỗi tiếng Việt dễ hiểu
+// thay vì crash "Unexpected token 'A' ... is not valid JSON".
+async function readJsonSafe(res: Response, context: string): Promise<any> {
+  const raw = await res.text();
+  try {
+    return JSON.parse(raw);
+  } catch {
+    if (res.status === 504 || res.status === 502 || raw.toLowerCase().includes("timeout") || raw.startsWith("A server error")) {
+      throw new Error(`${context}: Máy chủ xử lý quá thời gian cho phép (timeout). File ghi âm có thể quá dài/quá nặng — hãy thử chia nhỏ file (< 15 phút hoặc < 15MB mỗi file) rồi tải lên lại.`);
+    }
+    throw new Error(`${context}: Máy chủ trả về phản hồi không hợp lệ (HTTP ${res.status}). Vui lòng thử lại sau ít phút.`);
+  }
+}
+
 interface Meeting {
   id: string;
   created_at: string;
@@ -317,7 +332,7 @@ export default function MeetingTeamPage() {
           })
         });
 
-        const transcribeData = await transcribeRes.json();
+        const transcribeData = await readJsonSafe(transcribeRes, `Lỗi gỡ băng file ${i + 1}`);
         if (!transcribeRes.ok) throw new Error(transcribeData.error || `Lỗi gỡ băng file ${i + 1}.`);
 
         // Check hallucination for this segment
@@ -386,7 +401,7 @@ export default function MeetingTeamPage() {
         })
       });
 
-      const processData = await processRes.json();
+      const processData = await readJsonSafe(processRes, "Lỗi AI phân tích biên bản");
       if (!processRes.ok) throw new Error(processData.error || "Gặp lỗi khi GPT phân tích biên bản.");
 
       setProcessingLog(prev => [...prev, "[5/6] Xử lý AI hoàn thành thành công!", "Tự động điền metadata, bản tóm tắt và phân công công việc...", "[6/6] Đang điều hướng sang màn hình Review biên bản..."]);
@@ -508,7 +523,7 @@ export default function MeetingTeamPage() {
         body: JSON.stringify({ meetingId: selectedMeeting.id })
       });
       
-      const docxData = await docxRes.json();
+      const docxData = await readJsonSafe(docxRes, "Lỗi xuất file Word");
       if (!docxRes.ok) throw new Error(docxData.error || "Không thể biên dịch file Word.");
 
       const documentUrl = docxData.documentUrl;
@@ -580,7 +595,7 @@ export default function MeetingTeamPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ meetingId: selectedMeeting.id })
       });
-      const docxData = await docxRes.json();
+      const docxData = await readJsonSafe(docxRes, "Lỗi xuất file Word");
       if (!docxRes.ok) throw new Error(docxData.error || "Không thể biên dịch file Word.");
 
       const documentUrl = docxData.documentUrl;

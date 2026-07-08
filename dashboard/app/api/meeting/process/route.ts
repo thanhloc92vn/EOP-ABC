@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import OpenAI from "openai";
 
+// GPT phân tích transcript dài có thể mất vài phút; tránh Vercel timeout trả về non-JSON.
+export const maxDuration = 300;
+
 const SYSTEM_PROMPT = `
 Bạn là Trợ lý Thư ký Trưởng cấp cao của Ban Giám Đốc Tập đoàn Trung Nam E&C. 
 Nhiệm vụ của bạn là nhận văn bản gỡ băng thô (transcript_raw) từ cuộc họp, LỌC BỎ HOÀN TOÀN các đoạn nói chuyện phiếm, thảo luận lan man ngoài lề, ý kiến trùng lặp hoặc từ ngữ rườm rà. Hãy tập trung 100% VÀO CÁC Ý CHÍNH TRỌNG TÂM, KẾT LUẬN CỦA CHỦ TRÌ VÀ CÁC ĐẦU VIỆC ĐƯỢC GIAO.
