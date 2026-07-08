@@ -15,7 +15,10 @@ import {
   User,
   ArrowUpDown,
   X,
-  Loader2
+  Loader2,
+  ChevronDown,
+  ChevronRight,
+  Users
 } from "lucide-react";
 
 interface Task {
@@ -134,6 +137,18 @@ export default function TaskManagementPage() {
 
   // Drag State
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
+
+  // Grouped columns: collapse tasks that share the same assignee (name or department)
+  const GROUPED_COLUMNS = new Set(["planning", "completed"]);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const toggleGroup = (key: string) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   // Fetch Tasks from Supabase
   const fetchTasks = async () => {
@@ -660,6 +675,25 @@ export default function TaskManagementPage() {
             <div className="flex overflow-x-auto pb-4 gap-4 items-start md:grid md:grid-cols-2 lg:grid-cols-5 md:overflow-x-visible">
               {COLUMNS.map((col) => {
                 const colTasks = filteredTasks.filter(t => t.status === col.id);
+
+                // Group tasks by assignee when the column benefits from it (planning/completed).
+                // Groups of size 1 render as a normal card; only groups with 2+ tasks collapse.
+                const groups: { key: string; assignee: string; tasks: Task[] }[] = [];
+                if (GROUPED_COLUMNS.has(col.id)) {
+                  const order: string[] = [];
+                  const map = new Map<string, Task[]>();
+                  colTasks.forEach(t => {
+                    if (!map.has(t.assignee)) {
+                      map.set(t.assignee, []);
+                      order.push(t.assignee);
+                    }
+                    map.get(t.assignee)!.push(t);
+                  });
+                  order.forEach(assignee => {
+                    groups.push({ key: `${col.id}:${assignee}`, assignee, tasks: map.get(assignee)! });
+                  });
+                }
+
                 return (
                   <div 
                     key={col.id} 
@@ -690,65 +724,101 @@ export default function TaskManagementPage() {
 
                     {/* Task Cards */}
                     <div className="space-y-3 flex-1">
-                      {colTasks.map((task) => {
-                        const cardStyle = getCardStyles(task.status);
-                        return (
-                          <div
-                            key={task.id}
-                            draggable
-                            onDragStart={(e) => handleDragStart(e, task.id)}
-                            onClick={(e) => {
-                              if ((e.target as HTMLElement).closest('button')) {
-                                return;
-                              }
-                              handleOpenEditModal(task);
-                            }}
-                            className={`rounded-xl p-4 transition-all duration-300 hover:scale-[1.015] hover:-translate-y-0.5 border flex flex-col justify-between h-36 cursor-pointer active:cursor-grabbing relative group ${cardStyle.bg} ${cardStyle.shadow}`}
-                          >
-                            <div className="space-y-1.5">
-                              <div className="flex items-center justify-between">
-                                <span className={`text-[8px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full ${
-                                  task.priority === "Cao" ? "bg-rose-600 text-white shadow-sm shadow-rose-500/20" :
-                                  task.priority === "Trung bình" ? "bg-amber-500 text-white shadow-sm shadow-amber-500/20" : 
-                                  "bg-blue-500 text-white shadow-sm shadow-blue-500/20"
-                                }`}>
-                                  {task.priority}
-                                </span>
-                                {(canManageTasks || (currentUser && (task.assignee.toLowerCase().includes(currentUser.name.toLowerCase()) || currentUser.name.toLowerCase().includes(task.assignee.toLowerCase())))) && (
-                                  <button 
-                                    onClick={() => handleDeleteTask(task.id)}
-                                    className="text-slate-400 hover:text-rose-600 opacity-0 group-hover:opacity-100 transition-opacity bg-white/60 p-0.5 rounded-full shadow-sm hover:scale-105 active:scale-95 transition-all"
-                                  >
-                                    <X size={12} />
-                                  </button>
-                                )}
-                              </div>
-                              <p className={`font-heading font-bold text-xs leading-snug line-clamp-2 ${cardStyle.title}`}>{task.title}</p>
-                            </div>
-
-                            <div className="space-y-2 pt-2 border-t border-slate-200/40">
-                              {/* Assignee & Progress */}
-                              <div className="flex items-center justify-between text-[9px]">
-                                <span className="flex items-center gap-1 font-extrabold text-slate-700">
-                                  <User size={10} className="opacity-70" /> {task.assignee}
-                                </span>
-                                <span className="font-extrabold text-slate-800">{task.progress}%</span>
+                      {(() => {
+                        const renderCard = (task: Task) => {
+                          const cardStyle = getCardStyles(task.status);
+                          return (
+                            <div
+                              key={task.id}
+                              draggable
+                              onDragStart={(e) => handleDragStart(e, task.id)}
+                              onClick={(e) => {
+                                if ((e.target as HTMLElement).closest('button')) {
+                                  return;
+                                }
+                                handleOpenEditModal(task);
+                              }}
+                              className={`rounded-xl p-4 transition-all duration-300 hover:scale-[1.015] hover:-translate-y-0.5 border flex flex-col justify-between h-36 cursor-pointer active:cursor-grabbing relative group ${cardStyle.bg} ${cardStyle.shadow}`}
+                            >
+                              <div className="space-y-1.5">
+                                <div className="flex items-center justify-between">
+                                  <span className={`text-[8px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                                    task.priority === "Cao" ? "bg-rose-600 text-white shadow-sm shadow-rose-500/20" :
+                                    task.priority === "Trung bình" ? "bg-amber-500 text-white shadow-sm shadow-amber-500/20" :
+                                    "bg-blue-500 text-white shadow-sm shadow-blue-500/20"
+                                  }`}>
+                                    {task.priority}
+                                  </span>
+                                  {(canManageTasks || (currentUser && (task.assignee.toLowerCase().includes(currentUser.name.toLowerCase()) || currentUser.name.toLowerCase().includes(task.assignee.toLowerCase())))) && (
+                                    <button
+                                      onClick={() => handleDeleteTask(task.id)}
+                                      className="text-slate-400 hover:text-rose-600 opacity-0 group-hover:opacity-100 transition-opacity bg-white/60 p-0.5 rounded-full shadow-sm hover:scale-105 active:scale-95 transition-all"
+                                    >
+                                      <X size={12} />
+                                    </button>
+                                  )}
+                                </div>
+                                <p className={`font-heading font-bold text-xs leading-snug line-clamp-2 ${cardStyle.title}`}>{task.title}</p>
                               </div>
 
-                              {/* Footer Info */}
-                              <div className="flex items-center justify-between text-[9px] text-slate-500 font-bold">
-                                <span className="flex items-center gap-0.5">
-                                  <Calendar size={10} className="opacity-75" /> {task.due_date ? new Date(task.due_date).toLocaleDateString("vi-VN", { day: '2-digit', month: '2-digit' }) : "Không hạn"}
-                                </span>
-                                <div className="flex items-center gap-1.5">
-                                  {task.attachments > 0 && <span className="flex items-center gap-0.5"><Paperclip size={10} /> {task.attachments}</span>}
-                                  {task.comments > 0 && <span className="flex items-center gap-0.5"><MessageSquare size={10} /> {task.comments}</span>}
+                              <div className="space-y-2 pt-2 border-t border-slate-200/40">
+                                {/* Assignee & Progress */}
+                                <div className="flex items-center justify-between text-[9px]">
+                                  <span className="flex items-center gap-1 font-extrabold text-slate-700">
+                                    <User size={10} className="opacity-70" /> {task.assignee}
+                                  </span>
+                                  <span className="font-extrabold text-slate-800">{task.progress}%</span>
+                                </div>
+
+                                {/* Footer Info */}
+                                <div className="flex items-center justify-between text-[9px] text-slate-500 font-bold">
+                                  <span className="flex items-center gap-0.5">
+                                    <Calendar size={10} className="opacity-75" /> {task.due_date ? new Date(task.due_date).toLocaleDateString("vi-VN", { day: '2-digit', month: '2-digit' }) : "Không hạn"}
+                                  </span>
+                                  <div className="flex items-center gap-1.5">
+                                    {task.attachments > 0 && <span className="flex items-center gap-0.5"><Paperclip size={10} /> {task.attachments}</span>}
+                                    {task.comments > 0 && <span className="flex items-center gap-0.5"><MessageSquare size={10} /> {task.comments}</span>}
+                                  </div>
                                 </div>
                               </div>
                             </div>
-                          </div>
-                        );
-                      })}
+                          );
+                        };
+
+                        if (GROUPED_COLUMNS.has(col.id)) {
+                          return groups.map((group) => {
+                            if (group.tasks.length === 1) {
+                              return renderCard(group.tasks[0]);
+                            }
+                            const isExpanded = expandedGroups.has(group.key);
+                            return (
+                              <div key={group.key} className="space-y-2">
+                                <button
+                                  type="button"
+                                  onClick={() => toggleGroup(group.key)}
+                                  className="w-full flex items-center justify-between gap-2 bg-white/70 hover:bg-white border border-slate-200/60 rounded-xl px-3 py-2 shadow-sm transition-colors cursor-pointer"
+                                >
+                                  <span className="flex items-center gap-1.5 text-[10px] font-extrabold text-slate-700 truncate">
+                                    <Users size={11} className="opacity-70 shrink-0" />
+                                    <span className="truncate">{group.assignee}</span>
+                                  </span>
+                                  <span className="flex items-center gap-1 shrink-0">
+                                    <span className="text-[9px] font-extrabold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full">{group.tasks.length}</span>
+                                    {isExpanded ? <ChevronDown size={12} className="text-slate-400" /> : <ChevronRight size={12} className="text-slate-400" />}
+                                  </span>
+                                </button>
+                                {isExpanded && (
+                                  <div className="space-y-3 pl-1">
+                                    {group.tasks.map(renderCard)}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          });
+                        }
+
+                        return colTasks.map(renderCard);
+                      })()}
                       {colTasks.length === 0 && (
                         <div className="h-32 border-2 border-dashed border-slate-200/50 rounded-xl flex items-center justify-center text-slate-300 text-xs italic">
                           Kéo thả vào đây
