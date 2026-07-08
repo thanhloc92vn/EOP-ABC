@@ -4298,13 +4298,15 @@ export default function CBPage() {
                             Bảng tổng hợp ngày công trong tháng
                           </button>
                         )}
-                        <button
-                          onClick={() => setShowEmailConfigModal(true)}
-                          className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl active:scale-95 transition-all text-xs cursor-pointer"
-                        >
-                          <Settings size={13} />
-                          {smtpConfig.user ? `SMTP: ${smtpConfig.user}` : "Cấu hình gửi email"}
-                        </button>
+                        {canViewTimesheetSummary && (
+                          <button
+                            onClick={() => setShowEmailConfigModal(true)}
+                            className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl active:scale-95 transition-all text-xs cursor-pointer"
+                          >
+                            <Settings size={13} />
+                            {smtpConfig.user ? `SMTP: ${smtpConfig.user}` : "Cấu hình gửi email"}
+                          </button>
+                        )}
                         {parsedEmployees.length > 0 && (
                           <>
                             <button
@@ -4525,6 +4527,7 @@ export default function CBPage() {
                     )}
 
                     {/* FOLDER DIRECTORY TREE */}
+                    {canViewTimesheetSummary && (
                     <div className="space-y-3 pt-5 border-t border-slate-100">
                       <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Thư mục lưu trữ bảng công trên phần mềm</h4>
                       {importedTimesheets.length === 0 ? (
@@ -4614,6 +4617,7 @@ export default function CBPage() {
                         </div>
                       )}
                     </div>
+                    )}
                   </div>
 
                 </div>
