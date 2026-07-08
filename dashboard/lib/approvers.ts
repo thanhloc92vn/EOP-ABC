@@ -15,6 +15,10 @@ export type ApprovalPermissions = {
   canManageEmployees: boolean; // Sửa/xoá/khoá hồ sơ nhân sự (Danh sách nhân viên)
   canViewSalary: boolean; // Xem lương/HĐLĐ qua AI search + bảng contracts
   canViewAttendanceImports: boolean; // Xem thư mục lưu trữ bảng công máy chấm công (trang C&B)
+  canViewAllTasks: boolean; // Thấy toàn bộ Kanban công việc (trang Quản lý công việc)
+  // Quan hệ giám sát: tên hiển thị (khớp cột `assignee` dạng text) của người mà chủ
+  // dòng này được thấy task, ngoài task của chính họ. VD: Như Quỳnh -> "Thanh Hằng".
+  supervisesName: string | null;
 };
 
 export const NO_APPROVAL_PERMISSIONS: ApprovalPermissions = {
@@ -26,6 +30,8 @@ export const NO_APPROVAL_PERMISSIONS: ApprovalPermissions = {
   canManageEmployees: false,
   canViewSalary: false,
   canViewAttendanceImports: false,
+  canViewAllTasks: false,
+  supervisesName: null,
 };
 
 export function hasAnyApprovalPermission(perms: ApprovalPermissions): boolean {
@@ -154,6 +160,8 @@ export async function fetchApprovalPermissions(email?: string | null): Promise<A
       canManageEmployees: !!row.can_manage_employees,
       canViewSalary: !!row.can_view_salary,
       canViewAttendanceImports: !!row.can_view_attendance_imports,
+      canViewAllTasks: !!row.can_view_all_tasks,
+      supervisesName: row.supervises_name || null,
     };
   } catch {
     return NO_APPROVAL_PERMISSIONS;

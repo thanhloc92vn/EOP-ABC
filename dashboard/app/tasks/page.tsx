@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
+import { fetchApprovalPermissions, NO_APPROVAL_PERMISSIONS, type ApprovalPermissions } from "@/lib/approvers";
 import {
   Calendar,
   Paperclip,
@@ -94,6 +95,7 @@ export default function TaskManagementPage() {
     isAdmin: boolean;
   } | null>(null);
   const [userDeptEmployees, setUserDeptEmployees] = useState<string[]>([]);
+  const [perms, setPerms] = useState<ApprovalPermissions>(NO_APPROVAL_PERMISSIONS);
   
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -231,6 +233,7 @@ export default function TaskManagementPage() {
       };
       
       setCurrentUser(userInfo);
+      setPerms(await fetchApprovalPermissions(email));
 
       const isUserDeputy = userInfo.role.toLowerCase().includes("phó phòng") || 
                            userInfo.role.toLowerCase().includes("pho phong") ||
@@ -508,28 +511,23 @@ export default function TaskManagementPage() {
     const userEmail = currentUser.email.toLowerCase().trim();
     const userName = currentUser.name;
 
-    // 1. Hoa Đào & Hoành Anh thấy toàn bộ nhân viên (cùng với Admin / Trưởng phòng / Tổ trưởng)
-    const isUserAdmin = currentUser.isAdmin || 
+    // 1. Trưởng phòng/Tổ trưởng/Giám đốc thấy toàn bộ theo vai trò (tự chuyển giao được).
+    // Đặc cách cá nhân (Hoa Đào, Hoành Anh, Huỳnh Giáp Nhân, Nguyễn Duy Hưng...) giờ đọc
+    // từ approval_permissions.can_view_all_tasks — khi bàn giao tài khoản, quyền tự động
+    // chuyển sang người tiếp nhận thay vì bị khóa cứng vào tên người cũ.
+    const isUserAdmin = currentUser.isAdmin ||
                         currentUser.role.toLowerCase() === "admin" ||
-                        currentUser.role.toLowerCase().includes("trưởng phòng") || 
+                        currentUser.role.toLowerCase().includes("trưởng phòng") ||
                         currentUser.role.toLowerCase().includes("truong phong") ||
-                        currentUser.role.toLowerCase().includes("tổ trưởng") || 
-                        currentUser.role.toLowerCase().includes("to truong") || 
-                        currentUser.role.toLowerCase().includes("giám đốc") || 
-                        currentUser.role.toLowerCase().includes("giam doc") || 
+                        currentUser.role.toLowerCase().includes("tổ trưởng") ||
+                        currentUser.role.toLowerCase().includes("to truong") ||
+                        currentUser.role.toLowerCase().includes("giám đốc") ||
+                        currentUser.role.toLowerCase().includes("giam doc") ||
                         (currentUser.department && (
-                          currentUser.department.toLowerCase().includes("giám đốc") || 
+                          currentUser.department.toLowerCase().includes("giám đốc") ||
                           currentUser.department.toLowerCase().includes("giam doc")
                         )) ||
-                        currentUser.name === "Huỳnh Giáp Nhân" ||
-                        currentUser.name === "Nguyễn Duy Hưng" ||
-                        userEmail === "lehoadao2706@gmail.com" ||
-                        userEmail === "duongnhathoanhanh@gmail.com" ||
-                        userEmail === "anhdnh@trungnamgroup.com.vn" ||
-                        userName.includes("Hoa Đào") ||
-                        userName.includes("Hoành Anh") ||
-                        userName.includes("Huỳnh Giáp Nhân") ||
-                        userName.includes("Nguyễn Duy Hưng");
+                        perms.canViewAllTasks;
 
     if (isUserAdmin) return true;
 
@@ -574,25 +572,16 @@ export default function TaskManagementPage() {
       return false;
     }
 
-    // 2. Như Quỳnh thấy task Thanh Hằng và của chính mình
-    if (userEmail === "nhuquynh.nguyenbich@gmail.com" || userName.includes("Như Quỳnh")) {
+    // 2. Quan hệ giám sát (approval_permissions.supervises_name): người này thấy task
+    // của người họ giám sát + của chính mình. Trước đây so cứng "Như Quỳnh thấy Thanh
+    // Hằng" / "Hoành Anh thấy Thùy Quyên" — giờ là dữ liệu, tự chuyển giao khi đổi người.
+    if (perms.supervisesName) {
+      const supervisedLower = perms.supervisesName.toLowerCase();
       const targetAssignee = t.assignee.toLowerCase();
-      return targetAssignee.includes("như quỳnh") || 
-             targetAssignee.includes("quỳnh") ||
-             targetAssignee.includes("thanh hằng") ||
-             targetAssignee.includes("hằng") ||
+      const cleanUserName = userName.toLowerCase();
+      return targetAssignee.includes(supervisedLower) || supervisedLower.includes(targetAssignee) ||
              targetAssignee === userEmail ||
-             targetAssignee === "thanhhangg25697@gmail.com";
-    }
-
-    // 3. Hoành Anh thấy task của Thùy Quyên và chính mình
-    if (userEmail === "duongnhathoanhanh@gmail.com" || userName.includes("Hoành Anh")) {
-      const targetAssignee = t.assignee.toLowerCase();
-      return targetAssignee.includes("hoành anh") || 
-             targetAssignee.includes("thùy quyên") ||
-             targetAssignee.includes("quyên") ||
-             targetAssignee === userEmail ||
-             targetAssignee === "quyen.0408@gmail.com";
+             targetAssignee.includes(cleanUserName) || cleanUserName.includes(targetAssignee);
     }
 
     // 4. Các nhân viên, chuyên viên khác thì tự thấy task của chính họ
