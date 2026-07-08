@@ -5,6 +5,7 @@ import { useState, useEffect, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
+import { fetchApprovalPermissions, NO_APPROVAL_PERMISSIONS, type ApprovalPermissions } from "@/lib/approvers";
 import {
   Search,
   Plus,
@@ -207,6 +208,7 @@ export default function EmployeeManagementPage() {
     department: string;
     isAdmin: boolean;
   } | null>(null);
+  const [perms, setPerms] = useState<ApprovalPermissions>(NO_APPROVAL_PERMISSIONS);
 
   const fetchCurrentUser = async () => {
     try {
@@ -239,6 +241,8 @@ export default function EmployeeManagementPage() {
         department: empData?.department || "Chưa xếp phòng",
         isAdmin
       });
+
+      setPerms(await fetchApprovalPermissions(email));
     } catch (err) {
       console.error("Error fetching current user info:", err);
     }
@@ -681,30 +685,28 @@ export default function EmployeeManagementPage() {
     }
   };
 
+  // "Lại Nguyễn Lan Phương" / "Dương Nhật Hoành Anh" / "Lê Thị Hoa Đào" từng được so
+  // khớp cứng theo tên/email ở đây — đã chuyển sang cờ perms.canManageEmployees
+  // (bảng approval_permissions) để khi bàn giao & khóa tài khoản, quyền tự động
+  // chuyển sang người tiếp nhận thay vì bị khóa cứng vào tên cũ.
   const canEdit = !!(currentUser && (
-    currentUser.isAdmin || 
+    currentUser.isAdmin ||
     currentUser.role.toLowerCase() === "admin" ||
-    currentUser.role.toLowerCase().includes("trưởng phòng") || 
+    currentUser.role.toLowerCase().includes("trưởng phòng") ||
     currentUser.role.toLowerCase().includes("truong phong") ||
-    currentUser.name === "Lại Nguyễn Lan Phương" ||
-    currentUser.name === "Dương Nhật Hoành Anh" ||
-    currentUser.name === "Lê Thị Hoa Đào" ||
-    currentUser.email.toLowerCase().trim() === "lehoadao2706@gmail.com" ||
+    perms.canManageEmployees ||
     currentUser.role === "CV Nhân sự" ||
     currentUser.role === "Tổ trưởng Nhân sự" ||
-    (currentUser.role.toLowerCase().includes("nhân sự") && 
+    (currentUser.role.toLowerCase().includes("nhân sự") &&
      (currentUser.department.toLowerCase().includes("hành chính") || currentUser.department.toLowerCase().includes("hcns"))) ||
-    (currentUser.role.toLowerCase().includes("tổ trưởng") && 
+    (currentUser.role.toLowerCase().includes("tổ trưởng") &&
      (currentUser.department.toLowerCase().includes("hành chính") || currentUser.department.toLowerCase().includes("hcns")))
   ));
 
   const canDelete = !!(currentUser && (
-    currentUser.isAdmin || 
+    currentUser.isAdmin ||
     currentUser.role.toLowerCase() === "admin" ||
-    currentUser.name === "Lại Nguyễn Lan Phương" ||
-    currentUser.name === "Dương Nhật Hoành Anh" ||
-    currentUser.name === "Lê Thị Hoa Đào" ||
-    currentUser.email.toLowerCase().trim() === "lehoadao2706@gmail.com" ||
+    perms.canManageEmployees ||
     (
       (currentUser.role.toLowerCase().includes("trưởng phòng") || currentUser.role.toLowerCase().includes("truong phong")) &&
       (
@@ -719,11 +721,9 @@ export default function EmployeeManagementPage() {
   const canDeleteAll = canDelete;
 
   const isOnlyAdmin = !!(currentUser && (
-    currentUser.isAdmin || 
+    currentUser.isAdmin ||
     currentUser.role.toLowerCase() === "admin" ||
-    currentUser.name === "Lại Nguyễn Lan Phương" ||
-    currentUser.name === "Dương Nhật Hoành Anh" ||
-    currentUser.email.toLowerCase().trim() === "lehoadao2706@gmail.com"
+    perms.canManageEmployees
   ));
 
   const handleRestoreAccess = async (emp: Employee) => {
@@ -784,23 +784,31 @@ export default function EmployeeManagementPage() {
           .maybeSingle();
 
         if (permData) {
-          const { id, created_at, email, ...permsToCopy } = permData;
+          const { id, created_at, email, name, ...permsToCopy } = permData;
 
           const { data: targetPerm } = await supabase
             .from("approval_permissions")
-            .select("id")
+            .select("*")
             .ilike("email", newEmail)
             .maybeSingle();
 
           if (targetPerm) {
+            // Cộng dồn (OR) từng cờ quyền thay vì ghi đè toàn bộ dòng — nếu người
+            // tiếp nhận đã có sẵn quyền riêng không trùng với người bàn giao, ghi
+            // đè thẳng sẽ xoá mất quyền đó. Giữ nguyên tên của người tiếp nhận,
+            // không ghi đè bằng tên người bàn giao.
+            const merged: Record<string, any> = {};
+            for (const [key, value] of Object.entries(permsToCopy)) {
+              merged[key] = typeof value === "boolean" ? (value || !!(targetPerm as any)[key]) : value;
+            }
             await supabase
               .from("approval_permissions")
-              .update(permsToCopy)
+              .update(merged)
               .eq("id", targetPerm.id);
           } else {
             await supabase
               .from("approval_permissions")
-              .insert([{ email: newEmail, ...permsToCopy }]);
+              .insert([{ email: newEmail, name: newName || name, ...permsToCopy }]);
           }
 
           await supabase

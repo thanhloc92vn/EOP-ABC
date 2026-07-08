@@ -8,6 +8,13 @@ export type ApprovalPermissions = {
   // Xem/quản lý Góp ý & Kiến nghị — không phải quyền "duyệt", tách riêng khỏi
   // hasAnyApprovalPermission() để không ảnh hưởng hiển thị menu "Duyệt yêu cầu".
   canViewSuggestions: boolean;
+  // Các cờ dưới đây thay thế các check cứng theo tên/email từng nằm rải rác trong
+  // code (employees/page.tsx, cb/page.tsx, api/ai-search/route.ts) — mục đích để
+  // khi bàn giao & khóa tài khoản (employees/page.tsx handleExecuteHandover), quyền
+  // tự động chuyển sang người mới vì đây là dòng dữ liệu, không phải tên hardcode.
+  canManageEmployees: boolean; // Sửa/xoá/khoá hồ sơ nhân sự (Danh sách nhân viên)
+  canViewSalary: boolean; // Xem lương/HĐLĐ qua AI search + bảng contracts
+  canViewAttendanceImports: boolean; // Xem thư mục lưu trữ bảng công máy chấm công (trang C&B)
 };
 
 export const NO_APPROVAL_PERMISSIONS: ApprovalPermissions = {
@@ -16,6 +23,9 @@ export const NO_APPROVAL_PERMISSIONS: ApprovalPermissions = {
   canApproveJustification: false,
   canApproveBooking: false,
   canViewSuggestions: false,
+  canManageEmployees: false,
+  canViewSalary: false,
+  canViewAttendanceImports: false,
 };
 
 export function hasAnyApprovalPermission(perms: ApprovalPermissions): boolean {
@@ -141,6 +151,9 @@ export async function fetchApprovalPermissions(email?: string | null): Promise<A
       canApproveJustification: !!row.can_approve_justification,
       canApproveBooking: !!row.can_approve_booking,
       canViewSuggestions: !!row.can_view_suggestions,
+      canManageEmployees: !!row.can_manage_employees,
+      canViewSalary: !!row.can_view_salary,
+      canViewAttendanceImports: !!row.can_view_attendance_imports,
     };
   } catch {
     return NO_APPROVAL_PERMISSIONS;

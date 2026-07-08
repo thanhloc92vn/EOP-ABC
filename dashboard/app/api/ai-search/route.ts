@@ -75,9 +75,10 @@ export async function POST(req: NextRequest) {
     }
 
     // Tra cứu vai trò/phòng ban THẬT từ DB theo email đã xác minh.
-    const [{ data: allowedData }, { data: empData }] = await Promise.all([
+    const [{ data: allowedData }, { data: empData }, { data: permData }] = await Promise.all([
       dbClient.from("allowed_users").select("role").ilike("email", verifiedEmail).maybeSingle(),
-      dbClient.from("employees").select("name, role, department").ilike("email", `%${verifiedEmail}%`).maybeSingle()
+      dbClient.from("employees").select("name, role, department").ilike("email", `%${verifiedEmail}%`).maybeSingle(),
+      dbClient.from("approval_permissions").select("can_view_salary").ilike("email", `%${verifiedEmail}%`).maybeSingle()
     ]);
 
     const isAdmin = allowedData?.role === "Admin";
@@ -94,12 +95,10 @@ export async function POST(req: NextRequest) {
                         (deptLc.includes("hành chính") || deptLc.includes("hcns"));
     const hasPiiAccess = isAdmin || isHRManager;
 
-    const hasSalaryAccess = !!(
-      isAdmin ||
-      verifiedName === "Huỳnh Giáp Nhân" ||
-      verifiedName === "Lê Thị Hoa Đào" ||
-      verifiedEmail === "lehoadao2706@gmail.com"
-    );
+    // Trước đây so khớp cứng theo tên/email — nay đọc từ approval_permissions.can_view_salary
+    // để khi bàn giao & khóa tài khoản (employees/page.tsx), quyền tự động chuyển sang
+    // người tiếp nhận thay vì bị khóa cứng vào tên người cũ.
+    const hasSalaryAccess = !!(isAdmin || permData?.can_view_salary);
 
     const lowercaseQuery = query.toLowerCase();
     const isSalaryQuery = SALARY_KEYWORDS.some(kw => lowercaseQuery.includes(kw));

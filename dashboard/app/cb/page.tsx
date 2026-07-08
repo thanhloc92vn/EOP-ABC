@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
+import { fetchApprovalPermissions } from "@/lib/approvers";
 import {
   User,
   Clock,
@@ -2566,11 +2567,16 @@ export default function CBPage() {
       const fullAccess = !!(isAdmin || isHRStaff || isTPHCNS || isBoardOrSpecific);
       setHasFullAccess(fullAccess);
 
-      // Xóa lịch trình công tác & xem bảng tổng hợp ngày công: chỉ Admin, Phương HCNS (Lại Nguyễn Lan Phương) và Trưởng phòng Đào (Lê Thị Hoa Đào)
+      // Xóa lịch trình công tác & xem bảng tổng hợp ngày công/thư mục lưu trữ chấm công:
+      // chỉ Admin, Phương HCNS (Lại Nguyễn Lan Phương) và Trưởng phòng Đào (Lê Thị Hoa Đào).
+      // perms.canViewAttendanceImports (bảng approval_permissions) là nguồn CHÍNH — cờ này
+      // tự động chuyển sang người tiếp nhận khi bàn giao & khóa tài khoản. isPhuongHCNS/tên
+      // cứng trong isTPHCNS giữ lại làm fallback, không còn là đường duy nhất cấp quyền.
       const isPhuongHCNS = empData?.name === "Lại Nguyễn Lan Phương" ||
                             session.user.user_metadata?.full_name === "Lại Nguyễn Lan Phương" ||
                             session.user.user_metadata?.name === "Lại Nguyễn Lan Phương";
-      const hrLeadAccess = !!(isAdmin || isPhuongHCNS || isTPHCNS);
+      const perms = await fetchApprovalPermissions(email);
+      const hrLeadAccess = !!(isAdmin || isPhuongHCNS || isTPHCNS || perms.canViewAttendanceImports);
       setCanDeleteTravel(hrLeadAccess);
       setCanViewTimesheetSummary(hrLeadAccess);
 
