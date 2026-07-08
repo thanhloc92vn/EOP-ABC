@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import OpenAI from "openai";
 import fs from "fs";
@@ -113,8 +114,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Thiếu meetingId hoặc audioPath." }, { status: 400 });
     }
 
+    // RLS on meetings/storage blocks the shared anon client — use the caller's
+    // session token (same pattern as /api/export-template).
+    const supabaseToken = req.headers.get("x-supabase-auth");
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+    const dbClient = (supabaseToken && supabaseUrl && supabaseAnonKey)
+      ? createClient(supabaseUrl, supabaseAnonKey, {
+          global: { headers: { Authorization: `Bearer ${supabaseToken}` } }
+        })
+      : supabase;
+
     // 1. Download file from Supabase Storage
-    const { data: fileData, error: downloadError } = await supabase.storage
+    const { data: fileData, error: downloadError } = await dbClient.storage
       .from("meetings")
       .download(audioPath);
 
@@ -153,7 +165,7 @@ export async function POST(req: NextRequest) {
     const hallucinationCheck = detectHallucination(rawText);
 
     // 5. Update meeting raw transcript in DB
-    const { error: dbError } = await supabase
+    const { error: dbError } = await dbClient
       .from("meetings")
       .update({ transcript_raw: rawText })
       .eq("id", meetingId);

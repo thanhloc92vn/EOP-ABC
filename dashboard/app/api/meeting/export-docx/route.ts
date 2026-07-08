@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import fs from "fs";
 import path from "path";
@@ -14,8 +15,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Thiếu meetingId." }, { status: 400 });
     }
 
+    // RLS on meetings only allows authenticated reads — query with the caller's
+    // session token (same pattern as /api/export-template), else the shared anon
+    // client returns no rows and the export fails with "Cannot coerce...".
+    const supabaseToken = req.headers.get("x-supabase-auth");
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+    const dbClient = (supabaseToken && supabaseUrl && supabaseAnonKey)
+      ? createClient(supabaseUrl, supabaseAnonKey, {
+          global: { headers: { Authorization: `Bearer ${supabaseToken}` } }
+        })
+      : supabase;
+
     // 1. Fetch meeting details from Supabase
-    const { data: meeting, error: fetchError } = await supabase
+    const { data: meeting, error: fetchError } = await dbClient
       .from("meetings")
       .select("*")
       .eq("id", meetingId)
@@ -105,7 +118,7 @@ export async function POST(req: NextRequest) {
 
     // 7. Upload generated document to Supabase Storage
     const storageFileName = `documents/bien_ban_hop_${meetingId}.docx`;
-    const { error: uploadError } = await supabase.storage
+    const { error: uploadError } = await dbClient.storage
       .from("meetings")
       .upload(storageFileName, generatedBuffer, {
         contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -118,11 +131,11 @@ export async function POST(req: NextRequest) {
     }
 
     // 8. Get public URL and save it to the DB
-    const { data: { publicUrl } } = supabase.storage
+    const { data: { publicUrl } } = dbClient.storage
       .from("meetings")
       .getPublicUrl(storageFileName);
 
-    const { error: dbUpdateError } = await supabase
+    const { error: dbUpdateError } = await dbClient
       .from("meetings")
       .update({ document_url: publicUrl })
       .eq("id", meetingId);

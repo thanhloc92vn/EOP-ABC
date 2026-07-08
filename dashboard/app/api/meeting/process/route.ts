@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import OpenAI from "openai";
 
@@ -108,6 +109,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Thiếu meetingId hoặc transcriptRaw." }, { status: 400 });
     }
 
+    // RLS on meetings blocks the shared anon client: the UPDATE below would
+    // silently match 0 rows and the AI result would never be saved. Use the
+    // caller's session token (same pattern as /api/export-template).
+    const supabaseToken = req.headers.get("x-supabase-auth");
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+    const dbClient = (supabaseToken && supabaseUrl && supabaseAnonKey)
+      ? createClient(supabaseUrl, supabaseAnonKey, {
+          global: { headers: { Authorization: `Bearer ${supabaseToken}` } }
+        })
+      : supabase;
+
     // 1. Call OpenAI
     const openai = new OpenAI({ apiKey });
     const model = req.headers.get("x-openai-model") || process.env.OPENAI_MODEL || "gpt-4o-mini";
@@ -130,7 +143,7 @@ export async function POST(req: NextRequest) {
     const meetingDate = ext.meeting_date || today;
 
     // 2. Update meetings table with extracted AI details & metadata
-    const { error: dbError } = await supabase
+    const { data: updatedRows, error: dbError } = await dbClient
       .from("meetings")
       .update({
         title: ext.title || "Cuộc họp giao ban không tên",
@@ -146,10 +159,17 @@ export async function POST(req: NextRequest) {
         summary: ext.summary || "",
         action_items: ext.action_items || []
       })
-      .eq("id", meetingId);
+      .eq("id", meetingId)
+      .select("id");
 
     if (dbError) {
       throw new Error(`Lỗi cập nhật CSDL: ${dbError.message}`);
+    }
+
+    // RLS chặn sẽ trả về 0 dòng mà không báo lỗi — phải bắt tường minh,
+    // nếu không client tưởng thành công nhưng biên bản vẫn trống metadata.
+    if (!updatedRows || updatedRows.length === 0) {
+      throw new Error("Không lưu được kết quả phân tích vào biên bản (bị chặn bởi quyền truy cập CSDL). Vui lòng đăng nhập lại và thử lần nữa.");
     }
 
     return NextResponse.json({

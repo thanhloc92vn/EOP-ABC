@@ -320,11 +320,13 @@ export default function MeetingTeamPage() {
       for (let i = 0; i < uploadedPaths.length; i++) {
         setProcessingLog(prev => [...prev, `  🎙️ Đang gỡ băng file ${i + 1}/${uploadedPaths.length}...`]);
 
+        const { data: { session: transcribeSession } } = await supabase.auth.getSession();
         const transcribeRes = await fetch("/api/meeting/transcribe", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${openaiKey}`
+            "Authorization": `Bearer ${openaiKey}`,
+            "x-supabase-auth": transcribeSession?.access_token || ""
           },
           body: JSON.stringify({
             meetingId: draftMeeting.id,
@@ -389,11 +391,13 @@ export default function MeetingTeamPage() {
       setProcessingStep("ai");
 
       // 3. Call AI process API
+      const { data: { session: processSession } } = await supabase.auth.getSession();
       const processRes = await fetch("/api/meeting/process", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${openaiKey}`
+          "Authorization": `Bearer ${openaiKey}`,
+          "x-supabase-auth": processSession?.access_token || ""
         },
         body: JSON.stringify({
           meetingId: draftMeeting.id,
@@ -457,6 +461,58 @@ export default function MeetingTeamPage() {
     setCurrentView("detail");
   };
 
+  // Chạy lại bước GPT phân tích từ transcript đã gỡ băng sẵn (không tốn Whisper
+  // lần nữa) — cứu các biên bản nháp bị lỗi lưu metadata trước đây.
+  const [isReprocessing, setIsReprocessing] = useState(false);
+  const handleReAnalyze = async () => {
+    if (!selectedMeeting) return;
+    const transcript = selectedMeeting.transcript_raw || editableTranscript;
+    if (!transcript || transcript.trim().length === 0) {
+      alert("Biên bản này chưa có bản gỡ băng (transcript). Vui lòng tải file ghi âm và xử lý lại từ đầu.");
+      return;
+    }
+    if (!openaiKey) {
+      alert("Vui lòng nhập OpenAI API Key trước khi phân tích!");
+      return;
+    }
+    if (!window.confirm("Chạy lại AI phân tích từ bản gỡ băng hiện có? Metadata, tóm tắt và bảng phân công sẽ được điền lại tự động.")) return;
+
+    setIsReprocessing(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const processRes = await fetch("/api/meeting/process", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${openaiKey}`,
+          "x-supabase-auth": session?.access_token || ""
+        },
+        body: JSON.stringify({
+          meetingId: selectedMeeting.id,
+          transcriptRaw: transcript
+        })
+      });
+
+      const processData = await readJsonSafe(processRes, "Lỗi AI phân tích biên bản");
+      if (!processRes.ok) throw new Error(processData.error || "Gặp lỗi khi GPT phân tích biên bản.");
+
+      const { data: refreshed } = await supabase
+        .from("meetings")
+        .select("*")
+        .eq("id", selectedMeeting.id)
+        .single();
+
+      fetchMeetings();
+      if (refreshed) handleViewDetail(refreshed);
+      alert("AI đã phân tích lại và điền nội dung biên bản thành công!");
+    } catch (err: any) {
+      console.error("Re-analyze error:", err);
+      alert("Lỗi phân tích lại: " + err.message);
+    } finally {
+      setIsReprocessing(false);
+    }
+  };
+
   const handleSaveDraftEdits = async () => {
     if (!selectedMeeting) return;
 
@@ -517,9 +573,13 @@ export default function MeetingTeamPage() {
         .eq("id", selectedMeeting.id);
 
       // Call backend to generate DOCX
+      const { data: { session: docxSession } } = await supabase.auth.getSession();
       const docxRes = await fetch("/api/meeting/export-docx", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-supabase-auth": docxSession?.access_token || ""
+        },
         body: JSON.stringify({ meetingId: selectedMeeting.id })
       });
       
@@ -590,9 +650,13 @@ export default function MeetingTeamPage() {
       if (saveError) throw saveError;
 
       // 2. Export Word document
+      const { data: { session: docxSession } } = await supabase.auth.getSession();
       const docxRes = await fetch("/api/meeting/export-docx", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-supabase-auth": docxSession?.access_token || ""
+        },
         body: JSON.stringify({ meetingId: selectedMeeting.id })
       });
       const docxData = await readJsonSafe(docxRes, "Lỗi xuất file Word");
@@ -1136,6 +1200,21 @@ export default function MeetingTeamPage() {
 
                   {selectedMeeting.status === "draft" && (
                     <>
+                      <button
+                        onClick={handleReAnalyze}
+                        disabled={isReprocessing}
+                        className="px-4 py-2 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 active:scale-[0.97] disabled:opacity-50"
+                      >
+                        {isReprocessing ? (
+                          <>
+                            <Loader2 className="animate-spin" size={14} /> Đang phân tích...
+                          </>
+                        ) : (
+                          <>
+                            <Brain size={14} /> Phân tích lại bằng AI
+                          </>
+                        )}
+                      </button>
                       <button
                         onClick={handleSaveDraftEdits}
                         className="px-4 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all shadow-sm"
