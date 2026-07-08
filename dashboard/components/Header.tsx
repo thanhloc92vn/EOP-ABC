@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bell, Search, Globe, ChevronDown, Menu, X, Sparkles, Loader2, Send, Copy, Trash2 } from "lucide-react";
+import { Bell, Search, Globe, ChevronDown, Menu, X, Sparkles, Loader2, Send, Copy, Trash2, LogOut } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
   fetchApprovalPermissions,
@@ -36,6 +36,7 @@ export default function Header({ title, subtitle }: Props) {
 
   const [notifications, setNotifications] = useState<any[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
+  const [showProfileDropdown, setShowProfileDropdown] = useState(false);
 
   // AI Search states
   const [showSearchModal, setShowSearchModal] = useState(false);
@@ -494,6 +495,11 @@ export default function Header({ title, subtitle }: Props) {
     }
   };
 
+  const handleLogout = async () => {
+    setShowProfileDropdown(false);
+    await supabase.auth.signOut();
+  };
+
   useEffect(() => {
     fetchUserProfile();
 
@@ -656,19 +662,44 @@ export default function Header({ title, subtitle }: Props) {
         </div>
 
         {/* User Info (Material 3 Profile Button) */}
-        <div className="flex items-center gap-1.5 sm:gap-2.5 pl-2 sm:pl-4 border-l border-slate-200/80">
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-400 flex items-center justify-center font-bold text-white text-xs shadow-sm uppercase shrink-0">
-            {profile.avatar}
-          </div>
-          <div className="hidden md:flex flex-col text-left max-w-[150px]">
-            <span className="text-xs font-bold text-slate-800 leading-none truncate" title={profile.name}>
-              {profile.name}
-            </span>
-            <span className="text-[10px] text-slate-400 font-semibold mt-0.5 truncate" title={profile.role}>
-              {profile.role}
-            </span>
-          </div>
-          <ChevronDown size={12} className="text-slate-400 shrink-0" />
+        <div className="relative">
+          <button
+            onClick={() => setShowProfileDropdown(!showProfileDropdown)}
+            className="flex items-center gap-1.5 sm:gap-2.5 pl-2 sm:pl-4 border-l border-slate-200/80 cursor-pointer hover:bg-slate-100/60 rounded-xl py-1 pr-1.5 transition-all"
+          >
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-400 flex items-center justify-center font-bold text-white text-xs shadow-sm uppercase shrink-0">
+              {profile.avatar}
+            </div>
+            <div className="hidden md:flex flex-col text-left max-w-[150px]">
+              <span className="text-xs font-bold text-slate-800 leading-none truncate" title={profile.name}>
+                {profile.name}
+              </span>
+              <span className="text-[10px] text-slate-400 font-semibold mt-0.5 truncate" title={profile.role}>
+                {profile.role}
+              </span>
+            </div>
+            <ChevronDown size={12} className={`text-slate-400 shrink-0 transition-transform ${showProfileDropdown ? "rotate-180" : ""}`} />
+          </button>
+
+          {/* Profile Dropdown */}
+          {showProfileDropdown && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setShowProfileDropdown(false)} />
+              <div className="absolute right-0 top-12 w-56 bg-white rounded-2xl border border-slate-200/60 shadow-premium z-50 overflow-hidden text-xs text-slate-700 animate-in fade-in-50 slide-in-from-top-1 duration-150">
+                <div className="px-4 py-3 bg-slate-50 border-b border-slate-150/60">
+                  <p className="font-heading font-extrabold text-slate-800 truncate" title={profile.name}>{profile.name}</p>
+                  <p className="text-[10px] text-slate-400 font-semibold truncate" title={currentUser?.email}>{currentUser?.email}</p>
+                </div>
+                <button
+                  onClick={handleLogout}
+                  className="w-full flex items-center gap-2 px-4 py-3 text-rose-600 hover:bg-rose-50 font-bold transition-colors cursor-pointer bg-transparent border-none text-left"
+                >
+                  <LogOut size={14} />
+                  Đăng xuất
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
