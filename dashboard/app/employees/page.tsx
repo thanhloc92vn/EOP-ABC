@@ -726,6 +726,11 @@ export default function EmployeeManagementPage() {
     currentUser.email.toLowerCase().trim() === "lehoadao2706@gmail.com"
   ));
 
+  const handleRestoreAccess = async (emp: Employee) => {
+    if (!confirm(`Mở lại quyền truy cập hệ thống cho "${emp.name}"?\n\nTrạng thái sẽ được đổi từ "NV Nghỉ việc" về "Chính thức", tài khoản Google của họ sẽ đăng nhập được ngay lập tức.`)) return;
+    await handleUpdateEmployeeField(emp.id, "status", "Chính thức");
+  };
+
   const handleOpenHandoverModal = (emp: Employee) => {
     setSelectedEmployeeToHandover(emp);
     const availableTargets = employees.filter(
@@ -1195,10 +1200,19 @@ export default function EmployeeManagementPage() {
                         {/* Thao tác */}
                         <td className="px-4 py-3 text-center">
                           <div className="flex items-center justify-center gap-1.5">
-                            {isOnlyAdmin && (
-                              <button 
-                                onClick={() => handleOpenHandoverModal(emp)} 
-                                className="p-1.5 bg-amber-50 hover:bg-amber-100 border border-amber-200/80 rounded-lg text-amber-600 transition-all shadow-sm active:scale-95" 
+                            {isOnlyAdmin && emp.status.toLowerCase().includes("nghỉ việc") && (
+                              <button
+                                onClick={() => handleRestoreAccess(emp)}
+                                className="p-1.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/80 rounded-lg text-emerald-600 transition-all shadow-sm active:scale-95"
+                                title="Mở lại quyền truy cập (Chỉ Admin)"
+                              >
+                                <UserCheck size={13} />
+                              </button>
+                            )}
+                            {isOnlyAdmin && !emp.status.toLowerCase().includes("nghỉ việc") && (
+                              <button
+                                onClick={() => handleOpenHandoverModal(emp)}
+                                className="p-1.5 bg-amber-50 hover:bg-amber-100 border border-amber-200/80 rounded-lg text-amber-600 transition-all shadow-sm active:scale-95"
                                 title="Bàn giao công việc & Khóa tài khoản (Chỉ Admin)"
                               >
                                 <UserX size={13} />
