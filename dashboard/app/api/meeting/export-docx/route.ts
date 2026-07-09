@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
     }));
 
     // 3. Load template
-    const templateFileName = "bien_ban_hop_template.docx";
+    const templateFileName = "bien_ban_hop_template_1.docx";
     const templatePath = path.join(process.cwd(), "public", "templates", templateFileName);
 
     if (!fs.existsSync(templatePath)) {
