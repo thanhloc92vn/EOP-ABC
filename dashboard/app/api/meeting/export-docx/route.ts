@@ -130,10 +130,13 @@ export async function POST(req: NextRequest) {
       throw new Error(`Lỗi upload file lên storage: ${uploadError.message}`);
     }
 
-    // 8. Get public URL and save it to the DB
-    const { data: { publicUrl } } = dbClient.storage
+    // 8. Get public URL and save it to the DB.
+    // Upsert reuses the same storage path, but Supabase CDN caches public
+    // objects (~1h) — version the URL so re-exports don't serve a stale file.
+    const { data: { publicUrl: rawPublicUrl } } = dbClient.storage
       .from("meetings")
       .getPublicUrl(storageFileName);
+    const publicUrl = `${rawPublicUrl}?v=${Date.now()}`;
 
     const { error: dbUpdateError } = await dbClient
       .from("meetings")

@@ -732,13 +732,14 @@ export default function MeetingTeamPage() {
       const meetingToDelete = meetings.find(m => m.id === id);
       
       if (meetingToDelete?.audio_url) {
-        const audioUrl = meetingToDelete.audio_url;
+        const audioUrl = meetingToDelete.audio_url.split("?")[0];
         const audioPath = audioUrl.substring(audioUrl.indexOf("/meetings/") + "/meetings/".length);
         await supabase.storage.from("meetings").remove([audioPath]);
       }
 
       if (meetingToDelete?.document_url) {
-        const docUrl = meetingToDelete.document_url;
+        // document_url carries a ?v= cache-buster — strip it to get the storage path
+        const docUrl = meetingToDelete.document_url.split("?")[0];
         const docPath = docUrl.substring(docUrl.indexOf("/meetings/") + "/meetings/".length);
         await supabase.storage.from("meetings").remove([docPath]);
       }
