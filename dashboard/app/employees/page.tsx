@@ -640,6 +640,7 @@ export default function EmployeeManagementPage() {
                         currentUser.name === "Huỳnh Giáp Nhân" ||
                         currentUser.name === "Nguyễn Duy Hưng" ||
                         currentUser.email.toLowerCase().trim() === "lehoadao2706@gmail.com" ||
+                        perms.canManageEmployees ||
                         currentUser.role === "CV Nhân sự" ||
                         currentUser.role === "Tổ trưởng Nhân sự" ||
                         (currentUser.role.toLowerCase().includes("nhân sự") && 
