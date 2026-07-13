@@ -1,35 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getDepartmentListsServer, type ServerDepartmentLists } from "@/lib/departmentsServer";
 import OpenAI from "openai";
 import * as XLSX from "xlsx";
 
-const DEPARTMENTS = [
-  "Phòng Hành Chính Nhân Sự",
-  "Phòng Tài Chính Kế Toán",
-  "Phòng Vật Tư Thiết Bị",
-  "Phòng Thị Trường",
-  "Phòng Kế Hoạch Đấu Thầu",
-  "Phòng Kỹ Thuật",
-  "Phòng An Toàn Lao Động",
-  "Phòng Quản Lý Dự Án",
-  "Phòng Thư Ký, Trợ Lý",
-  "Giám đốc",
-  "Phó Giám đốc"
-];
-
-const PROJECTS = [
-  "BĐH Vàm Lẽo",
-  "BĐH Rạch Xuyên Tâm",
-  "BĐH Thường Phước",
-  "BĐH XLNT Tây Ninh",
-  "BĐH KCN Cà Ná",
-  "BĐH Chống Hạn Ninh Thuận",
-  "BĐH Tỉnh Lộ 8",
-  "BĐH Cầu Mã Đà",
-  "BĐH ĐMT Trà Vinh 2",
-  "BĐH Hương Lộ 11"
-];
-
-const SYSTEM_PROMPT = `
+const buildSystemPrompt = (lists: ServerDepartmentLists) => `
 Bạn là AI chuyên phân tích phiếu/file yêu cầu văn phòng phẩm (VPP) của công ty Trung Nam E&C.
 Nhiệm vụ của bạn là phân tích văn bản hoặc tệp (Excel, Word, PDF, hình ảnh) được tải lên và trích xuất các thông tin dưới định dạng JSON.
 
@@ -46,8 +20,8 @@ Nếu tài liệu Excel có nhiều sheet, bạn phải đối chiếu chéo đ�
    - "duan": Nếu đối tượng là một Ban điều hành Dự án công trường.
 
 2. "targetName": Tên phòng ban hoặc dự án yêu cầu thực tế. Bắt buộc phải khớp hoặc ánh xạ gần nhất với danh sách chính thức:
-   - Phòng ban: "Phòng Hành Chính Nhân Sự", "Phòng Tài Chính Kế Toán", "Phòng Vật Tư Thiết Bị", "Phòng Thị Trường", "Phòng Kế Hoạch Đấu Thầu", "Phòng Kỹ Thuật", "Phòng An Toàn Lao Động", "Phòng Quản Lý Dự Án", "Phòng Thư Ký, Trợ Lý", "Giám đốc", "Phó Giám đốc".
-   - Dự án: "BĐH Vàm Lẽo", "BĐH Rạch Xuyên Tâm", "BĐH Thường Phước", "BĐH XLNT Tây Ninh", "BĐH KCN Cà Ná", "BĐH Chống Hạn Ninh Thuận", "BĐH Tỉnh Lộ 8", "BĐH Cầu Mã Đà", "BĐH ĐMT Trà Vinh 2", "BĐH Hương Lộ 11".
+   - Phòng ban: ${[...lists.phongBan, ...lists.banGiamDoc].map(n => `"${n}"`).join(", ")}.
+   - Dự án: ${lists.bdh.map(n => `"${n}"`).join(", ")}.
 
 3. "requesterName": Tên người yêu cầu/đề xuất thực tế ghi trên sheet (ví dụ: từ ô "Người yêu cầu: Nguyễn Văn A" -> trích xuất "Nguyễn Văn A"). Nếu không tìm thấy hoặc chỉ có tên ví dụ mẫu tĩnh, để là "".
 
@@ -75,6 +49,8 @@ Nếu tài liệu Excel có nhiều sheet, bạn phải đối chiếu chéo đ�
 
 export async function POST(req: NextRequest) {
   try {
+    const deptLists = await getDepartmentListsServer();
+    const SYSTEM_PROMPT = buildSystemPrompt(deptLists);
     const authHeader = req.headers.get("Authorization");
     const apiKey = (authHeader && authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : null) || process.env.OPENAI_API_KEY;
 

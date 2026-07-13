@@ -13,6 +13,7 @@ import {
   isLeaveTripCap2Approver,
 } from "@/lib/approvers";
 import { useSidebar } from "./SidebarContext";
+import { useTenantConfig } from "@/lib/tenantConfig";
 
 interface Props {
   title: string;
@@ -20,6 +21,7 @@ interface Props {
 }
 
 export default function Header({ title, subtitle }: Props) {
+  const tenant = useTenantConfig();
   const [profile, setProfile] = useState<{ name: string; role: string; avatar: string }>({
     name: "Đang tải...",
     role: "...",
@@ -714,7 +716,7 @@ export default function Header({ title, subtitle }: Props) {
               </div>
               <div className="flex-1 min-w-0">
                 <h4 className="font-heading font-extrabold text-slate-800 text-xs leading-tight truncate">Trợ lý Tìm kiếm AI</h4>
-                <p className="text-[10px] text-slate-400 font-semibold truncate">Tra cứu thông minh dữ liệu nội bộ Trung Nam E&C</p>
+                <p className="text-[10px] text-slate-400 font-semibold truncate">Tra cứu thông minh dữ liệu nội bộ {tenant.company_name}</p>
               </div>
               <div className="text-[10px] text-slate-400 bg-white border border-slate-200 px-2 py-0.5 rounded-lg shadow-sm font-mono select-none hidden sm:block">
                 ESC
@@ -759,7 +761,7 @@ export default function Header({ title, subtitle }: Props) {
                   <div className="pt-2 space-y-1.5">
                     <div className="text-[10px] text-slate-400 font-semibold italic flex items-center gap-1.5">
                       <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></div>
-                      Dữ liệu được truy vấn real-time theo đúng quyền hạn tài khoản, chỉ lưu hành nội bộ Trung Nam E&C.
+                      Dữ liệu được truy vấn real-time theo đúng quyền hạn tài khoản, chỉ lưu hành nội bộ {tenant.company_name}.
                     </div>
                     <div className="text-[10px] text-rose-500/90 font-bold flex items-center gap-1.5">
                       🔒 Lương CBNV &amp; Hợp đồng lao động được bảo mật tuyệt đối — AI không truy xuất các thông tin này.

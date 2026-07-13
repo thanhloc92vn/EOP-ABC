@@ -36,6 +36,7 @@ import {
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { docSoVietNam, exportDeNghiChuyenTien, downloadDocFile } from "@/lib/wordExporter";
 import { supabase } from "@/lib/supabase";
+import { useDepartments } from "@/lib/departments";
 import * as XLSX from "xlsx";
 
 // ─── TYPES & INTERFACES ──────────────────────────────────────────────────────
@@ -138,32 +139,9 @@ const INITIAL_SUPPLIES: SupplyItem[] = [
 
 const INITIAL_DEPT_REQUESTS: DeptRequest[] = [];
 
-const DEPARTMENTS = [
-  "Phòng Hành Chính Nhân Sự",
-  "Phòng Tài Chính Kế Toán",
-  "Phòng Vật Tư Thiết Bị",
-  "Phòng Thị Trường",
-  "Phòng Kế Hoạch Đấu Thầu",
-  "Phòng Kỹ Thuật",
-  "Phòng An Toàn Lao Động",
-  "Phòng Quản Lý Dự Án",
-  "Phòng Thư Ký, Trợ Lý",
-  "Giám đốc",
-  "Phó Giám đốc"
-];
-
-const PROJECTS = [
-  "BĐH Vàm Lẽo",
-  "BĐH Rạch Xuyên Tâm",
-  "BĐH Thường Phước",
-  "BĐH XLNT Tây Ninh",
-  "BĐH KCN Cà Ná",
-  "BĐH Chống Hạn Ninh Thuận",
-  "BĐH Tỉnh Lộ 8",
-  "BĐH Cầu Mã Đà",
-  "BĐH ĐMT Trà Vinh 2",
-  "BĐH Hương Lộ 11"
-];
+// Danh sách BĐH dự án (PROJECTS) giờ đọc từ bảng `departments` qua
+// useDepartments() trong component. Hằng DEPARTMENTS cũ đã xoá (dead code —
+// không nơi nào trong trang này dùng).
 
 const normalizeDeptName = (name: string): string => {
   if (!name) return "";
@@ -356,6 +334,9 @@ const DEFAULT_REPORT_ROWS: Array<{ stt: string; content: string; category_type: 
 
 // ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
 export default function AdministrationPage() {
+  // Danh sách phòng ban / BĐH đọc từ bảng departments
+  const deptLists = useDepartments();
+  const PROJECTS = deptLists.bdh; // giữ nguyên tên để các chỗ dùng bên dưới không đổi
   const [activeTab, setActiveTab] = useState<"checklist" | "invoice" | "recurring" | "report" | "vpp">("checklist");
   const [recurringSubTab, setRecurringSubTab] = useState<"suppliers" | "payments">("suppliers");
 
@@ -519,6 +500,37 @@ export default function AdministrationPage() {
   // State for Allocation Targets Directory (Danh mục cấp phát)
   const [allocationTargets, setAllocationTargets] = useState<AllocationTarget[]>(INITIAL_ALLOCATION_TARGETS);
   const [showAllocationDirectory, setShowAllocationDirectory] = useState(false);
+
+  // Đồng bộ danh mục cấp phát với bảng `departments`: phòng ban / BĐH mới thêm
+  // trong DB tự xuất hiện trong các dropdown VPP (danh mục lưu localStorage nên
+  // seed cũ không tự có mục mới). Merge trên BẢN ĐÃ LƯU trong localStorage để
+  // không bao giờ ghi đè mất các mục user đã thêm tay, bất kể thứ tự effect.
+  useEffect(() => {
+    let base: AllocationTarget[];
+    try {
+      const saved = localStorage.getItem("tnec_allocation_targets");
+      base = saved ? JSON.parse(saved) : [...INITIAL_ALLOCATION_TARGETS];
+      if (!Array.isArray(base) || base.length === 0) base = [...INITIAL_ALLOCATION_TARGETS];
+    } catch {
+      base = [...INITIAL_ALLOCATION_TARGETS];
+    }
+
+    let changed = false;
+    const ensure = (name: string, type: "phongban" | "duan", receiver: string, notes: string) => {
+      if (!base.some(t => t.type === type && (t.name || "").toLowerCase() === name.toLowerCase())) {
+        base.push({ id: `CP-AUTO-${name}`, type, name, receiver, notes });
+        changed = true;
+      }
+    };
+    deptLists.phongBan.forEach(n => ensure(n, "phongban", "", "Văn phòng công ty"));
+    deptLists.banGiamDoc.forEach(n => ensure(n, "phongban", "", "Ban Giám đốc"));
+    deptLists.bdh.forEach(n => ensure(n, "duan", "Chỉ huy trưởng", `Dự án ${n.replace(/^BĐH\s*/i, "")}`));
+
+    if (changed) {
+      localStorage.setItem("tnec_allocation_targets", JSON.stringify(base));
+      setAllocationTargets(base);
+    }
+  }, [deptLists]);
   const [newTargetType, setNewTargetType] = useState<"phongban" | "duan">("phongban");
   const [newTargetName, setNewTargetName] = useState("");
   const [newTargetReceiver, setNewTargetReceiver] = useState("");

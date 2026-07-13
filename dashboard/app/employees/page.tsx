@@ -6,6 +6,7 @@ import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
 import { fetchApprovalPermissions, NO_APPROVAL_PERMISSIONS, type ApprovalPermissions } from "@/lib/approvers";
+import { useDepartments } from "@/lib/departments";
 import {
   Search,
   Plus,
@@ -28,30 +29,9 @@ import {
   ChevronDown
 } from "lucide-react";
 
-const DEPARTMENTS = [
-  "Phòng Hành Chính Nhân Sự",
-  "Phòng Tài Chính Kế Toán",
-  "Phòng Vật Tư Thiết Bị",
-  "Phòng Thị Trường",
-  "Phòng Kế Hoạch Đấu Thầu",
-  "Phòng Kỹ Thuật",
-  "Phòng An Toàn Lao Động",
-  "Phòng Quản Lý Dự Án",
-  "Phòng Thư Ký, Trợ Lý"
-];
-
-const BDH_OPTIONS = [
-  "BĐH Vàm Lẽo",
-  "BĐH Rạch Xuyên Tâm",
-  "BĐH Thường Phước",
-  "BĐH XLNT Tây Ninh",
-  "BĐH KCN Cà Ná",
-  "BĐH Chống Hạn Ninh Thuận",
-  "BĐH Tỉnh Lộ 8",
-  "BĐH Cầu Mã Đà",
-  "BĐH ĐMT Trà Vinh 2",
-  "BĐH Hương Lộ 11"
-];
+// Danh sách phòng ban / BĐH giờ đọc từ bảng `departments` (Supabase) qua
+// useDepartments() trong component — thêm/bớt phòng ban chỉ cần sửa bảng,
+// không sửa code. Fallback về danh sách cũ nếu DB lỗi (xem lib/departments.ts).
 
 interface Employee {
   id: string;
@@ -79,6 +59,8 @@ interface Employee {
 }
 
 export default function EmployeeManagementPage() {
+  // Giữ nguyên tên DEPARTMENTS / BDH_OPTIONS để mọi chỗ dùng bên dưới không đổi
+  const { phongBan: DEPARTMENTS, bdh: BDH_OPTIONS } = useDepartments();
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");

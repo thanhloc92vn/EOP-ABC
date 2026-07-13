@@ -26,6 +26,7 @@ import { useSidebar } from "./SidebarContext";
 import ThemeToggle from "./ThemeToggle";
 import { supabase } from "@/lib/supabase";
 import { fetchApprovalPermissions, hasAnyApprovalPermission, isMarketingTeamLeader } from "@/lib/approvers";
+import { useTenantConfig } from "@/lib/tenantConfig";
 
 function SidebarLinks({ isApprover, pathname, setSidebarOpen }: { isApprover: boolean; pathname: string; setSidebarOpen: (o: boolean) => void }) {
   const searchParams = useSearchParams();
@@ -154,6 +155,7 @@ export default function Sidebar() {
   const pathname = usePathname();
   const { sidebarOpen, setSidebarOpen } = useSidebar();
   const [isApprover, setIsApprover] = useState(false);
+  const tenant = useTenantConfig();
 
   useEffect(() => {
     const fetchUserRole = async () => {
@@ -222,11 +224,11 @@ export default function Sidebar() {
         <div className="px-6 py-6 border-b border-slate-200/60 relative">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-600 to-cyan-500 flex items-center justify-center font-heading font-extrabold text-white text-xs shadow-md shadow-blue-500/25">
-              TN
+              {tenant.logo_text}
             </div>
             <div className="min-w-0">
-              <h1 className="text-[#1D1D1F] font-heading font-bold text-sm tracking-tight leading-tight truncate">PM - HCNS - TNEC</h1>
-              <p className="text-slate-450 text-[10px] uppercase font-bold tracking-wider mt-0.5">Hệ thống HCNS</p>
+              <h1 className="text-[#1D1D1F] font-heading font-bold text-sm tracking-tight leading-tight truncate">{tenant.system_title}</h1>
+              <p className="text-slate-450 text-[10px] uppercase font-bold tracking-wider mt-0.5">{tenant.system_subtitle}</p>
             </div>
             <div className="ml-auto mr-6 lg:mr-0">
               <ThemeToggle />

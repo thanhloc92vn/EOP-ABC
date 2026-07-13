@@ -2,6 +2,7 @@
 
 import { useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
+import { useDepartments } from "@/lib/departments";
 import { 
   Send, 
   User, 
@@ -15,20 +16,11 @@ import {
   X
 } from "lucide-react";
 
-const DEPARTMENTS = [
-  "Ban Giám Đốc",
-  "Phòng Hành Chính Nhân Sự",
-  "Phòng Tài Chính Kế Toán",
-  "Phòng Vật Tư Thiết Bị",
-  "Phòng Kế Hoạch Đấu Thầu",
-  "Phòng Kỹ Thuật",
-  "Phòng An Toàn Lao Động",
-  "Phòng Quản Lý Dự Án",
-  "Ban Điều Hành Dự Án",
-  "Khác"
-];
-
 export default function SuggestionsPublicForm() {
+  // Phòng ban đọc từ bảng `departments` (form công khai dùng policy anon),
+  // bọc giữa các nhóm gộp thô cố định của form Góp ý.
+  const { phongBan } = useDepartments();
+  const DEPARTMENTS = ["Ban Giám Đốc", ...phongBan, "Ban Điều Hành Dự Án", "Khác"];
   const [isAnonymous, setIsAnonymous] = useState(true);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");

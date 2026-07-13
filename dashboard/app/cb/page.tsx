@@ -5,6 +5,7 @@ import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
 import { fetchApprovalPermissions } from "@/lib/approvers";
+import { useDepartments } from "@/lib/departments";
 import {
   User,
   Clock,
@@ -386,31 +387,9 @@ const matchEmployee = (rawName: string | undefined | null, rawCode: string | num
   return null;
 };
 
-// --- ORG CHART SETUP DATA ---
-const DEPARTMENTS_LIST = [
-  // Khối Văn Phòng (type: "office")
-  { name: "Phòng Hành Chính Nhân Sự", key: "hr", type: "office", desc: "Quản trị hành chính, tuyển dụng, đào tạo, C&B và các chế độ phúc lợi", color: "from-blue-600 to-indigo-600" },
-  { name: "Phòng Tài Chính Kế Toán", key: "accounting", type: "office", desc: "Quản lý tài chính doanh nghiệp, kế toán thuế, công nợ và quyết toán thanh toán", color: "from-indigo-600 to-purple-600" },
-  { name: "Phòng Vật Tư Thiết Bị", key: "materials", type: "office", desc: "Cung ứng vật tư thiết bị, quản lý điều động máy móc công trình dự án", color: "from-cyan-600 to-blue-600" },
-  { name: "Phòng Thị Trường", key: "market", type: "office", desc: "Phát triển thị trường, quan hệ đối tác, mở rộng dự án thi công xây dựng", color: "from-pink-600 to-rose-600" },
-  { name: "Phòng Kế Hoạch Đấu Thầu", key: "bidding", type: "office", desc: "Xây dựng kế hoạch đấu thầu, định giá dự án, lập hồ sơ thầu thi công", color: "from-purple-600 to-fuchsia-600" },
-  { name: "Phòng Kỹ Thuật", key: "technical", type: "office", desc: "Giám sát thiết kế, bóc tách khối lượng, giải pháp kỹ thuật công trình", color: "from-teal-600 to-emerald-600" },
-  { name: "Phòng An Toàn Lao Động", key: "safety", type: "office", desc: "Đảm bảo ATLĐ, vệ sinh môi trường công trường, đào tạo HSE", color: "from-emerald-600 to-green-600" },
-  { name: "Phòng Quản Lý Dự Án", key: "management", type: "office", desc: "Quản lý tiến độ, chất lượng thi công dự án, hồ sơ thanh quyết toán", color: "from-sky-600 to-indigo-600" },
-  { name: "Phòng Thư Ký, Trợ Lý", key: "assistant", type: "office", desc: "Hỗ trợ công tác thư ký Ban Giám đốc, điều phối công việc hành chính", color: "from-amber-600 to-yellow-600" },
-
-  // Khối Hiện Trường / Công Trường (type: "project")
-  { name: "BĐH Vàm Lẽo", key: "project_vamleo", type: "project", desc: "Ban điều hành trực tiếp thi công tại dự án Vàm Lẽo", color: "from-amber-600 to-orange-600" },
-  { name: "BĐH Rạch Xuyên Tâm", key: "project_rachxuyentam", type: "project", desc: "Ban điều hành trực tiếp thi công Rạch Xuyên Tâm", color: "from-green-500 to-emerald-500" },
-  { name: "BĐH Thường Phước", key: "project_thuongphuoc", type: "project", desc: "Ban điều hành trực tiếp thi công Thường Phước", color: "from-rose-500 to-orange-500" },
-  { name: "BĐH XLNT Tây Ninh", key: "project_tayninh", type: "project", desc: "Ban điều hành trực tiếp thi công XLNT Tây Ninh", color: "from-purple-500 to-pink-500" },
-  { name: "BĐH KCN Cà Ná", key: "project_kcncana", type: "project", desc: "Ban điều hành trực tiếp thi công KCN Cà Ná", color: "from-orange-600 to-red-600" },
-  { name: "BĐH Chống Hạn Ninh Thuận", key: "project_chonghanninhthuan", type: "project", desc: "Ban điều hành trực tiếp thi công Chống Hạn Ninh Thuận", color: "from-teal-500 to-cyan-500" },
-  { name: "BĐH Tỉnh Lộ 8", key: "project_tinhlo8", type: "project", desc: "Ban điều hành trực tiếp thi công Tỉnh Lộ 8", color: "from-blue-600 to-sky-600" },
-  { name: "BĐH Cầu Mã Đà", key: "project_caumada", type: "project", desc: "Ban điều hành trực tiếp thi công Cầu Mã Đà", color: "from-yellow-600 to-amber-600" },
-  { name: "BĐH ĐMT Trà Vinh 2", key: "project_travinh2", type: "project", desc: "Ban điều hành trực tiếp thi công ĐMT Trà Vinh 2", color: "from-blue-500 to-cyan-500" },
-  { name: "BĐH Hương Lộ 11", key: "project_huonglo11", type: "project", desc: "Ban điều hành trực tiếp thi công Hương Lộ 11", color: "from-red-500 to-pink-500" }
-];
+// Danh sách phòng ban / BĐH giờ đọc từ bảng `departments` (Supabase) qua
+// useDepartments() trong component — fallback về danh sách cũ nếu DB lỗi
+// (xem lib/departments.ts).
 
 const BOARD_OF_DIRECTORS = [
   { name: "Nguyễn Nam Hải", role: "Tổng Giám Đốc", email: "hai.nn@trungnamec.com.vn", phone: "0918.999.888", avatar: "NH" },
@@ -419,6 +398,8 @@ const BOARD_OF_DIRECTORS = [
 ];
 
 export default function CBPage() {
+  // Danh sách phòng ban / BĐH đọc từ bảng departments (fallback danh sách cũ)
+  const deptLists = useDepartments();
   // 5 Main Tabs: employee_profile, attendance, payroll_insurance, benefits, org_chart
   const [activeTab, setActiveTab] = useState("employee_profile");
   const [activeSubTab, setActiveSubTab] = useState("personal");
@@ -6436,8 +6417,8 @@ export default function CBPage() {
                       className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none transition-all text-xs font-semibold text-slate-600 cursor-pointer"
                     >
                       <option value="">Tất cả phòng ban</option>
-                      {DEPARTMENTS_LIST.filter(d => d.type !== "project").map(d => (
-                        <option key={d.key} value={d.name}>{d.name}</option>
+                      {deptLists.phongBan.map(name => (
+                        <option key={name} value={name}>{name}</option>
                       ))}
                     </select>
                     <select
@@ -6446,8 +6427,8 @@ export default function CBPage() {
                       className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none transition-all text-xs font-semibold text-slate-600 cursor-pointer"
                     >
                       <option value="">Tất cả Ban điều hành</option>
-                      {DEPARTMENTS_LIST.filter(d => d.type === "project").map(d => (
-                        <option key={d.key} value={d.name}>{d.name}</option>
+                      {deptLists.bdh.map(name => (
+                        <option key={name} value={name}>{name}</option>
                       ))}
                     </select>
                   </div>
@@ -6636,8 +6617,8 @@ export default function CBPage() {
                                     className="w-full bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 text-center cursor-pointer text-[10px] whitespace-normal break-words"
                                   >
                                     <option value="">Chưa phân loại</option>
-                                    {DEPARTMENTS_LIST.map(d => (
-                                      <option key={d.key} value={d.name}>{d.name}</option>
+                                    {deptLists.all.map(name => (
+                                      <option key={name} value={name}>{name}</option>
                                     ))}
                                   </select>
                                 </td>

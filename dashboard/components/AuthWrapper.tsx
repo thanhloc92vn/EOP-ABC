@@ -5,9 +5,11 @@ import { supabase } from "@/lib/supabase";
 import { Loader2, ShieldAlert } from "lucide-react";
 import { SidebarProvider } from "./SidebarContext";
 import { usePathname } from "next/navigation";
+import { useTenantConfig } from "@/lib/tenantConfig";
 
 export default function AuthWrapper({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const tenant = useTenantConfig();
   const isPublicRoute = pathname === "/gop-y" || pathname.startsWith("/gop-y/");
 
   const [session, setSession] = useState<any>(null);
@@ -158,14 +160,14 @@ export default function AuthWrapper({ children }: { children: React.ReactNode })
         <div className="absolute bottom-1/4 right-1/4 w-[350px] h-[350px] bg-purple-600/10 rounded-full blur-[120px] pointer-events-none" />
 
         <div className="relative max-w-md w-full mx-4 p-10 bg-slate-900/80 border border-slate-800/80 rounded-[2rem] shadow-2xl flex flex-col items-center text-center space-y-7 backdrop-blur-xl">
-          {/* Logo TNEC */}
+          {/* Logo công ty (đọc từ tenant_config, fallback TNEC) */}
           <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[#005BAC] to-[#00AEEF] flex items-center justify-center font-heading font-extrabold text-white text-2xl shadow-lg ring-4 ring-blue-500/10">
-            TN
+            {tenant.logo_text}
           </div>
-          
+
           <div className="space-y-2.5">
             <h1 className="font-heading font-extrabold text-2xl tracking-tight bg-gradient-to-r from-white via-slate-100 to-slate-300 bg-clip-text text-transparent">
-              PM - HCNS - TNEC
+              {tenant.system_title}
             </h1>
             <p className="text-[#00AEEF] text-xs font-bold uppercase tracking-widest">
               Hệ thống Quản lý Hành chính Nhân sự

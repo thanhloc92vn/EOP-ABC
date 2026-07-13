@@ -1,19 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-require-imports */
 import { NextRequest, NextResponse } from "next/server";
+import { getDepartmentListsServer } from "@/lib/departmentsServer";
 import OpenAI from "openai";
 import * as XLSX from "xlsx";
 
-const DEPARTMENTS = [
-  "Phòng Hành Chính Nhân Sự",
-  "Phòng Tài Chính Kế Toán",
-  "Phòng Vật Tư Thiết Bị",
-  "Phòng Thị Trường",
-  "Phòng Kế Hoạch Đấu Thầu",
-  "Phòng Kỹ Thuật",
-  "Phòng An Toàn Lao Động",
-  "Phòng Quản Lý Dự Án",
-  "Phòng Thư Ký, Trợ Lý"
-];
+// Danh sách phòng ban đọc động từ bảng `departments` (lib/departmentsServer)
 
 interface ExtractedEmployee {
   employee_code?: string;
@@ -230,7 +221,7 @@ function tryDirectExcelParse(sheet: XLSX.WorkSheet): ExtractedEmployee[] | null 
   return parsedEmployees;
 }
 
-const SYSTEM_PROMPT = `
+const buildSystemPrompt = (DEPARTMENTS: string[]) => `
 Bạn là một AI phân tích tài liệu và hồ sơ nhân sự chuyên nghiệp cho công ty Trung Nam E&C.
 Nhiệm vụ của bạn là đọc và trích xuất danh sách thông tin nhân viên từ tệp tài liệu (Excel, Word, PDF, hình ảnh) được cung cấp.
 
@@ -300,6 +291,7 @@ Mỗi nhân viên cần có các trường dữ liệu sau:
 
 export async function POST(req: NextRequest) {
   try {
+    const SYSTEM_PROMPT = buildSystemPrompt((await getDepartmentListsServer()).phongBan);
     const authHeader = req.headers.get("Authorization");
     const apiKey = (authHeader && authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : null) || process.env.OPENAI_API_KEY;
 
