@@ -538,8 +538,10 @@ export default function EmployeeManagementPage() {
     const isTargetAdmin = targetEmp.position.toLowerCase() === "admin" ||
                           targetEmp.email.toLowerCase() === "tnechcm@gmail.com";
 
-    const isUserAdmin = currentUser.isAdmin || 
+    const isUserAdmin = currentUser.isAdmin ||
                         currentUser.role.toLowerCase() === "admin" ||
+                        perms.canManageEmployees || // cờ approval_permissions là nguồn chính
+                        // check tên giữ làm fallback trong giai đoạn chạy song song (bước 4)
                         currentUser.name === "Lại Nguyễn Lan Phương" ||
                         currentUser.name === "Dương Nhật Hoành Anh" ||
                         currentUser.name === "Lê Thị Hoa Đào" ||
