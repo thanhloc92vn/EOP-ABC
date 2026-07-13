@@ -42,3 +42,6 @@ Thumbs.db
 downloaded_cvs/
 cv ung vien/
 cv pdf png/
+
+# One-time HDTV sync data (PII - khong deploy len public/)
+dashboard/public/sync/

@@ -473,6 +473,7 @@ export default function CBPage() {
   const [excelImportedContracts, setExcelImportedContracts] = useState<Contract[]>([]);
   const [showSingleContractModal, setShowSingleContractModal] = useState(false);
   const [savingContracts, setSavingContracts] = useState(false);
+  const [syncingProbation, setSyncingProbation] = useState(false);
   const [showAiSettingsModal, setShowAiSettingsModal] = useState(false);
   const [selectedAiModel, setSelectedAiModel] = useState("gpt-4o-mini");
   const [selectedAiApiKey, setSelectedAiApiKey] = useState("");
@@ -2259,6 +2260,60 @@ export default function CBPage() {
     }
   };
 
+  // Đồng bộ 1 lần "Ngày ký HĐ thử việc" (Từ/Đến) từ file DANH_SACH_01/02.xlsx
+  // (đã trích sẵn ra public/sync/probation-dates.json), khớp theo Mã NV.
+  // Chạy bằng session của người đang đăng nhập nên RLS áp dụng như thao tác tay.
+  const handleSyncProbationDates = async () => {
+    try {
+      setSyncingProbation(true);
+      const res = await fetch("/sync/probation-dates.json");
+      if (!res.ok) throw new Error("Không tải được dữ liệu đồng bộ (public/sync/probation-dates.json)");
+      const rows: { code: string; name: string; from: string | null; to: string | null }[] = await res.json();
+      const byCode = new Map(rows.map(r => [r.code, r]));
+
+      // Gom danh sách cần cập nhật trước, hỏi xác nhận rồi mới ghi
+      const pending: { id: string; code: string; name: string; patch: Record<string, string> }[] = [];
+      const matchedCodes = new Set<string>();
+      for (const c of tempContracts) {
+        if (!c.id || c.id.startsWith("new-")) continue; // dòng chưa lưu DB thì bỏ qua
+        const code = (c.employee_code || "").toString().trim();
+        const ex = byCode.get(code);
+        if (!ex) continue;
+        matchedCodes.add(code);
+        const patch: Record<string, string> = {};
+        if (ex.from && ex.from !== c.probation_start_date) patch.probation_start_date = ex.from;
+        if (ex.to && ex.to !== c.probation_end_date) patch.probation_end_date = ex.to;
+        if (Object.keys(patch).length > 0) pending.push({ id: c.id, code, name: ex.name, patch });
+      }
+
+      const unmatched = rows.filter(r => !matchedCodes.has(r.code));
+      if (pending.length === 0) {
+        alert(`Không có dòng nào cần cập nhật — dữ liệu đã khớp với Excel.${unmatched.length ? `\n(${unmatched.length} mã NV trong Excel không có hợp đồng trong hệ thống)` : ""}`);
+        return;
+      }
+      if (!confirm(`Sẽ điền Ngày ký HĐTV (Từ/Đến) từ Excel cho ${pending.length} hợp đồng khớp Mã NV. Tiếp tục?`)) return;
+
+      let updated = 0;
+      const failed: string[] = [];
+      for (const p of pending) {
+        const { error } = await supabase.from("contracts").update(p.patch).eq("id", p.id);
+        if (error) failed.push(`${p.code} ${p.name}: ${error.message}`);
+        else updated++;
+      }
+      await fetchContracts();
+      alert(
+        `Đồng bộ xong: cập nhật ${updated}/${pending.length} hợp đồng.` +
+        (failed.length ? `\nLỗi ${failed.length} dòng:\n${failed.slice(0, 5).join("\n")}` : "") +
+        (unmatched.length ? `\n${unmatched.length} mã NV trong Excel chưa có hợp đồng trong hệ thống: ${unmatched.slice(0, 10).map(r => r.code).join(", ")}${unmatched.length > 10 ? "..." : ""}` : "")
+      );
+    } catch (err: any) {
+      console.error("Lỗi đồng bộ ngày HĐTV:", err);
+      alert("Lỗi đồng bộ: " + err.message);
+    } finally {
+      setSyncingProbation(false);
+    }
+  };
+
   const handleBulkSaveContracts = async () => {
     try {
       setSavingContracts(true);
@@ -2708,8 +2763,88 @@ export default function CBPage() {
           };
         });
         
-        setContracts(normalizedData);
-        setTempContracts(normalizedData);
+        // GIAO THỨC HĐTV → HĐLĐ CHÍNH THỨC:
+        // 1) Khi đã tới ngày kết thúc HĐTV mà nhân viên còn làm việc (chưa "Nghỉ việc")
+        //    và chưa có ngày ký HĐLĐ chính thức → tự điền:
+        //      Từ  = ngày kết thúc HĐTV + 1 ngày
+        //      Đến = ngày kết thúc HĐTV + 1 năm
+        //    (VD: hết HĐTV 21/01/2026 → ký chính thức 22/01/2026 đến 21/01/2027)
+        // 2) Đã có ngày ký HĐLĐ chính thức mà Loại HĐLĐ vẫn là "Thử việc"
+        //    → tự chuyển sang "Xác định thời hạn".
+        const fmtDate = (d: Date) =>
+          `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        const todayStr = fmtDate(new Date());
+        const autoFilled: { id: string; name: string; patch: Record<string, string> }[] = [];
+        const finalData = normalizedData.map(c => {
+          const patch: Record<string, string> = {};
+          // Xác định "còn làm việc" dựa vào DANH SÁCH NHÂN VIÊN:
+          // khớp theo employee_id, nếu chưa liên kết thì khớp theo Mã NV.
+          // Không tìm thấy trong danh sách, hoặc trạng thái là "NV Nghỉ việc" -> không tự ký.
+          const contractCode = (c.employee_code || "").toString().trim();
+          const emp =
+            listToUse.find(e => e.id === c.employee_id) ||
+            (contractCode
+              ? listToUse.find(e => (e.employee_code || "").toString().trim() === contractCode)
+              : undefined);
+          const stillWorking = !!emp && !(emp.status || "").toLowerCase().includes("nghỉ việc");
+
+          // (1) Tự điền ngày ký HĐLĐ chính thức khi HĐTV đã kết thúc
+          if (
+            c.probation_end_date && c.probation_end_date <= todayStr &&
+            !c.sign_date && !c.expiration_date &&
+            stillWorking
+          ) {
+            // dùng 12h trưa để tránh lệch ngày do múi giờ
+            const end = new Date(c.probation_end_date + "T12:00:00");
+            if (!isNaN(end.getTime())) {
+              const from = new Date(end);
+              from.setDate(from.getDate() + 1);
+              const to = new Date(end);
+              to.setFullYear(to.getFullYear() + 1);
+              patch.sign_date = fmtDate(from);
+              patch.expiration_date = fmtDate(to);
+            }
+          }
+
+          // (2) Đã có HĐLĐ chính thức -> loại HĐ không thể còn là "Thử việc"
+          const hasOfficialDates = !!(patch.sign_date || c.sign_date || c.expiration_date);
+          if (hasOfficialDates && c.type === "Thử việc") {
+            patch.type = "Xác định thời hạn";
+          }
+
+          // (3) Đã ký chính thức + có Số HĐTV + chưa có Số HĐLĐ thật
+          //     -> tự sinh Số HĐLĐ từ Số HĐTV, chỉ đổi ký hiệu HĐTV thành HĐLĐ
+          //     (VD: 006335/2026/HĐTV/TNE&C -> 006335/2026/HĐLĐ/TNE&C)
+          const hasRealContractNumber = !!c.contract_number && !c.contract_number.startsWith("IMPORT-");
+          const probationNo = (c.probation_contract_number || "").trim();
+          if (hasOfficialDates && !hasRealContractNumber && /HĐTV|HDTV/.test(probationNo)) {
+            patch.contract_number = probationNo.replace(/HĐTV/g, "HĐLĐ").replace(/HDTV/g, "HDLD");
+          }
+
+          if (Object.keys(patch).length === 0) return c;
+          autoFilled.push({ id: c.id, name: c.employee_name || emp?.name || c.employee_code || "?", patch });
+          return { ...c, ...patch };
+        });
+
+        setContracts(finalData);
+        setTempContracts(finalData);
+
+        // Ghi các dòng tự điền vào DB (chạy bằng session người đăng nhập, RLS áp dụng)
+        if (autoFilled.length > 0) {
+          const results = await Promise.all(
+            autoFilled.map(a => supabase.from("contracts").update(a.patch).eq("id", a.id))
+          );
+          const failed = results.filter(r => r.error).length;
+          console.log(
+            `[HĐTV→HĐLĐ] Tự động cập nhật ${autoFilled.length - failed}/${autoFilled.length} hợp đồng hết hạn thử việc:`,
+            autoFilled.map(a => {
+              const dates = a.patch.sign_date ? `${a.patch.sign_date} → ${a.patch.expiration_date}` : "";
+              const typeNote = a.patch.type ? `loại HĐ → ${a.patch.type}` : "";
+              const numberNote = a.patch.contract_number ? `Số HĐLĐ → ${a.patch.contract_number}` : "";
+              return `${a.name}: ${[dates, typeNote, numberNote].filter(Boolean).join(", ")}`;
+            })
+          );
+        }
       }
     } catch (err) {
       console.error("Error fetching contracts in CB:", err);
@@ -6366,6 +6501,16 @@ export default function CBPage() {
                     {savingContracts ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
                     Lưu tất cả thay đổi
                   </button>
+
+                  <button
+                    onClick={handleSyncProbationDates}
+                    disabled={syncingProbation || loadingContracts}
+                    className="flex items-center gap-1.5 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-premium disabled:opacity-50 active:scale-95"
+                    title="Điền Ngày ký HĐTV (Từ/Đến) từ file DANH_SACH Excel, khớp theo Mã NV"
+                  >
+                    {syncingProbation ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                    Đồng bộ HĐTV (Excel)
+                  </button>
                     </>
                   )}
 
@@ -6391,18 +6536,18 @@ export default function CBPage() {
                 </div>
 
                 <div className="overflow-x-auto overflow-y-auto max-h-[600px] scrollbar-thin">
-                  <table className="w-full text-[11px] text-left border-collapse min-w-[2560px]">
+                  <table className="w-full text-[11px] text-left border-collapse min-w-[2640px]">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 font-extrabold uppercase tracking-wider text-[9px] sticky top-0 z-10">
                         <th className="py-2.5 px-2 w-12 text-center bg-slate-50 border-r border-slate-200">STT</th>
                         <th className="py-2.5 px-2 w-28 bg-slate-50 border-r border-slate-200">Mã NV</th>
                         <th className="py-2.5 px-2 w-48 bg-slate-50 border-r border-slate-200">Họ và tên</th>
                         <th className="py-2.5 px-2 w-40 bg-slate-50 border-r border-slate-200">Phòng ban</th>
-                        <th className="py-2.5 px-2 w-32 text-center bg-slate-50 border-r border-slate-200">Ngày nhận việc</th>
+                        <th className="py-2.5 px-2 w-44 text-center bg-slate-50 border-r border-slate-200">Ngày ký HĐTV</th>
                         <th className="py-2.5 px-2 w-44 bg-slate-50 border-r border-slate-200">Số HĐTV</th>
                         <th className="py-2.5 px-2 w-40 bg-slate-50 border-r border-slate-200">Loại HĐLĐ</th>
-                        <th className="py-2.5 px-2 w-32 text-center bg-slate-50 border-r border-slate-200">HĐLĐ Hiệu lực</th>
-                        <th className="py-2.5 px-2 w-32 text-center bg-slate-50 border-r border-slate-200">HĐLĐ Hết hạn</th>
+                        <th className="py-2.5 px-2 w-44 text-center bg-slate-50 border-r border-slate-200">Ngày ký HĐLĐ chính thức</th>
+                        <th className="py-2.5 px-2 w-44 bg-slate-50 border-r border-slate-200">Số HĐLĐ</th>
                         <th className="py-2.5 px-2 w-32 text-right bg-slate-50 border-r border-slate-200">Lương BHXH</th>
                         <th className="py-2.5 px-2 w-32 text-right bg-slate-50 border-r border-slate-200">Thưởng HQCV</th>
                         <th className="py-2.5 px-2 w-32 text-right bg-slate-50 border-r border-slate-200">Phụ cấp</th>
@@ -6496,14 +6641,28 @@ export default function CBPage() {
                                     ))}
                                   </select>
                                 </td>
-                                {/* Ngày nhận việc */}
-                                <td className="py-1 px-1 border-r border-slate-100 text-center">
-                                  <input
-                                    type="date"
-                                    value={c.onboard_date || ""}
-                                    onChange={(e) => handleContractCellChange(actualIdx, "onboard_date", e.target.value)}
-                                    className="bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 px-1 w-full text-center"
-                                  />
+                                {/* Ngày ký HĐTV (từ ngày → đến ngày) */}
+                                <td className="py-1 px-1 border-r border-slate-100">
+                                  <div className="flex flex-col gap-0.5">
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-[8px] font-extrabold text-slate-400 uppercase w-6 shrink-0">Từ</span>
+                                      <input
+                                        type="date"
+                                        value={c.probation_start_date || ""}
+                                        onChange={(e) => handleContractCellChange(actualIdx, "probation_start_date", e.target.value)}
+                                        className="bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-0.5 px-1 w-full text-center"
+                                      />
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-[8px] font-extrabold text-slate-400 uppercase w-6 shrink-0">Đến</span>
+                                      <input
+                                        type="date"
+                                        value={c.probation_end_date || ""}
+                                        onChange={(e) => handleContractCellChange(actualIdx, "probation_end_date", e.target.value)}
+                                        className="bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-0.5 px-1 w-full text-center"
+                                      />
+                                    </div>
+                                  </div>
                                 </td>
                                 {/* Số HĐTV */}
                                 <td className="py-1 px-1 border-r border-slate-100">
@@ -6534,30 +6693,45 @@ export default function CBPage() {
                                   </select>
                                 </td>
 
-                                {/* HĐLĐ Hiệu lực */}
-                                <td className="py-1 px-1 border-r border-slate-100 text-center">
-                                  <input
-                                    type="date"
-                                    value={c.sign_date || ""}
-                                    onChange={(e) => handleContractCellChange(actualIdx, "sign_date", e.target.value)}
-                                    className="bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 px-1 w-full text-center"
-                                  />
-                                </td>
-                                {/* HĐLĐ Hết hạn */}
-                                <td className={`py-1 px-1 border-r border-slate-100 text-center transition-colors ${
+                                {/* Ngày ký HĐLĐ chính thức (hiệu lực → hết hạn) */}
+                                <td className={`py-1 px-1 border-r border-slate-100 transition-colors ${
                                   c.expiration_date && (new Date(c.expiration_date).getTime() - new Date().getTime()) <= 30 * 24 * 60 * 60 * 1000 && (new Date(c.expiration_date).getTime() - new Date().getTime()) > -24 * 60 * 60 * 1000
                                     ? "bg-amber-100/50"
                                     : ""
                                 }`}>
+                                  <div className="flex flex-col gap-0.5">
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-[8px] font-extrabold text-slate-400 uppercase w-6 shrink-0">Từ</span>
+                                      <input
+                                        type="date"
+                                        value={c.sign_date || ""}
+                                        onChange={(e) => handleContractCellChange(actualIdx, "sign_date", e.target.value)}
+                                        className="bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-0.5 px-1 w-full text-center"
+                                      />
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-[8px] font-extrabold text-slate-400 uppercase w-6 shrink-0">Đến</span>
+                                      <input
+                                        type="date"
+                                        value={c.expiration_date || ""}
+                                        onChange={(e) => handleContractCellChange(actualIdx, "expiration_date", e.target.value)}
+                                        className={`bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-0.5 px-1 w-full text-center ${
+                                          c.expiration_date && (new Date(c.expiration_date).getTime() - new Date().getTime()) <= 30 * 24 * 60 * 60 * 1000 && (new Date(c.expiration_date).getTime() - new Date().getTime()) > -24 * 60 * 60 * 1000
+                                            ? "text-amber-600 font-bold"
+                                            : ""
+                                        }`}
+                                      />
+                                    </div>
+                                  </div>
+                                </td>
+                                {/* Số HĐLĐ */}
+                                <td className="py-1 px-1 border-r border-slate-100">
                                   <input
-                                    type="date"
-                                    value={c.expiration_date || ""}
-                                    onChange={(e) => handleContractCellChange(actualIdx, "expiration_date", e.target.value)}
-                                    className={`bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 px-1 w-full text-center ${
-                                      c.expiration_date && (new Date(c.expiration_date).getTime() - new Date().getTime()) <= 30 * 24 * 60 * 60 * 1000 && (new Date(c.expiration_date).getTime() - new Date().getTime()) > -24 * 60 * 60 * 1000
-                                        ? "text-amber-600 font-bold"
-                                        : ""
-                                    }`}
+                                    type="text"
+                                    value={c.contract_number && !c.contract_number.startsWith("IMPORT-") ? c.contract_number : ""}
+                                    onChange={(e) => handleContractCellChange(actualIdx, "contract_number", e.target.value)}
+                                    placeholder="Số HĐLĐ..."
+                                    className="w-full bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 px-1 font-mono text-[10px]"
                                   />
                                 </td>
                                 {/* Lương BHXH */}
