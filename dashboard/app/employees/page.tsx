@@ -613,6 +613,12 @@ export default function EmployeeManagementPage() {
     }
   };
 
+  // Nhận diện nhân viên đã nghỉ việc: theo trạng thái HOẶC ghi chú
+  // (nhiều hồ sơ chỉ đánh dấu "NV Nghỉ việc" ở cột Ghi chú)
+  const isResignedEmployee = (e: { status?: string; notes?: string }) =>
+    (e.status || "").toLowerCase().includes("nghỉ việc") ||
+    (e.notes || "").toLowerCase().includes("nghỉ việc");
+
   const filtered = employees.filter(emp => {
     const matchSearch = emp.name.toLowerCase().includes(search.toLowerCase()) || 
                         emp.id.toLowerCase().includes(search.toLowerCase()) ||
@@ -657,6 +663,9 @@ export default function EmployeeManagementPage() {
     if (isUserDeputy) return emp.department === currentUser.department;
 
     return emp.email.toLowerCase().includes(currentUser.email.toLowerCase());
+  }).sort((a, b) => {
+    // Nhân viên đã nghỉ việc luôn nằm cuối danh sách (kể cả khi lọc phòng ban)
+    return (isResignedEmployee(a) ? 1 : 0) - (isResignedEmployee(b) ? 1 : 0);
   });
 
   const handleUpdateEmployeeField = async (id: string, field: string, value: string) => {
@@ -1041,7 +1050,11 @@ export default function EmployeeManagementPage() {
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {filtered.map((emp, index) => (
-                      <tr key={emp.id} className="hover:bg-blue-50/20 bg-white/50 transition-all">
+                      <tr key={emp.id} className={`transition-all ${
+                        isResignedEmployee(emp)
+                          ? "bg-orange-50/80 hover:bg-orange-100/60"
+                          : "hover:bg-blue-50/20 bg-white/50"
+                      }`}>
                         {/* STT */}
                         <td className="px-4 py-3 text-center text-xs text-slate-400 font-mono">{index + 1}</td>
 
@@ -1055,6 +1068,11 @@ export default function EmployeeManagementPage() {
                               {emp.avatar}
                             </div>
                             <p className="font-heading font-bold text-slate-800 text-xs whitespace-nowrap">{emp.name}</p>
+                            {isResignedEmployee(emp) && (
+                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-200 uppercase tracking-wider shrink-0">
+                                Nghỉ việc
+                              </span>
+                            )}
                           </div>
                         </td>
 

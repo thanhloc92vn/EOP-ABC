@@ -81,6 +81,7 @@ interface ChecklistItem {
   status: "Kế hoạch" | "Đang xử lý" | "Chờ duyệt" | "Cần chỉnh sửa" | "Hoàn thành";
   priority?: "Cao" | "Trung bình" | "Thấp";
   date?: string;
+  notes?: string; // raw JSON notes của task (chứa chi tiết phiếu VPP nếu có)
 }
 
 interface Invoice {
@@ -383,6 +384,7 @@ export default function AdministrationPage() {
   } | null>(null);
   const [deptRequests, setDeptRequests] = useState<DeptRequest[]>([]);
   const [checklist, setChecklist] = useState<ChecklistItem[]>(INITIAL_CHECKLIST);
+  const [selectedChecklistTask, setSelectedChecklistTask] = useState<ChecklistItem | null>(null);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [recurringPayments, setRecurringPayments] = useState<RecurringPayment[]>(INITIAL_RECURRING);
 
@@ -981,7 +983,8 @@ export default function AdministrationPage() {
             frequency: frequency as any,
             status: t.status as any,
             priority: t.priority || "Trung bình",
-            date: t.start_date ? new Date(t.start_date).toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" }).replace("/", "-") : ""
+            date: t.start_date ? new Date(t.start_date).toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" }).replace("/", "-") : "",
+            notes: t.notes || ""
           };
         });
         setChecklist(mapped);
@@ -5674,11 +5677,12 @@ export default function AdministrationPage() {
                                   key={item.id}
                                   draggable
                                   onDragStart={(e) => handleDragStart(e, item.id)}
-                                  className="bg-white border border-slate-200/60 rounded-xl p-3.5 shadow-sm hover:shadow-md hover:border-slate-350 transition-all cursor-grab active:cursor-grabbing flex flex-col gap-2 relative group"
+                                  onClick={() => setSelectedChecklistTask(item)}
+                                  className="bg-white border border-slate-200/60 rounded-xl p-3.5 shadow-sm hover:shadow-md hover:border-slate-350 transition-all cursor-pointer active:cursor-grabbing flex flex-col gap-2 relative group"
                                 >
                                   {/* Delete card button */}
                                   <button
-                                    onClick={() => handleDeleteTask(item.id)}
+                                    onClick={(e) => { e.stopPropagation(); handleDeleteTask(item.id); }}
                                     className="absolute top-2 right-2 text-slate-300 hover:text-rose-600 p-0.5 rounded transition-colors opacity-0 group-hover:opacity-100"
                                     title="Xoá công việc"
                                   >
@@ -5741,6 +5745,139 @@ export default function AdministrationPage() {
                   </div>
                 </div>
               )}
+
+              {/* ─── MODAL CHI TIẾT CÔNG VIỆC CHECKLIST ─── */}
+              {selectedChecklistTask && (() => {
+                const t = selectedChecklistTask;
+                let vpp: any = null;
+                try {
+                  if (t.notes && t.notes.startsWith("{")) vpp = JSON.parse(t.notes);
+                } catch (e) {}
+                const vppItems: any[] = vpp && Array.isArray(vpp.items) ? vpp.items : [];
+                const statusBadge =
+                  t.status === "Hoàn thành" ? "bg-emerald-100 text-emerald-800" :
+                  t.status === "Chờ duyệt" ? "bg-blue-100 text-blue-800" :
+                  t.status === "Cần chỉnh sửa" ? "bg-rose-100 text-rose-700" :
+                  t.status === "Đang xử lý" ? "bg-amber-100 text-amber-800" :
+                  "bg-slate-100 text-slate-600";
+                return (
+                  <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fade-in"
+                    onClick={() => setSelectedChecklistTask(null)}
+                  >
+                    <div
+                      className="bg-white w-full max-w-2xl rounded-2xl shadow-premium border border-slate-100 overflow-hidden max-h-[85vh] flex flex-col animate-scale-up"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-[#005BAC] text-white shrink-0">
+                        <h3 className="font-heading font-black text-sm uppercase leading-snug pr-4">{t.task}</h3>
+                        <button
+                          onClick={() => setSelectedChecklistTask(null)}
+                          className="text-white/80 hover:text-white transition-all cursor-pointer p-1 rounded-lg hover:bg-white/10 shrink-0"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+
+                      <div className="p-6 overflow-y-auto space-y-5">
+                        {/* Thông tin chung */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                          <div className="bg-slate-50 border border-slate-100 rounded-xl p-3">
+                            <p className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider mb-1">Trạng thái</p>
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${statusBadge}`}>{t.status}</span>
+                          </div>
+                          <div className="bg-slate-50 border border-slate-100 rounded-xl p-3">
+                            <p className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider mb-1">Ưu tiên</p>
+                            <p className="text-xs font-bold text-slate-700">{t.priority || "Trung bình"}</p>
+                          </div>
+                          <div className="bg-slate-50 border border-slate-100 rounded-xl p-3">
+                            <p className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider mb-1">Tần suất</p>
+                            <p className="text-xs font-bold text-slate-700">{t.frequency}</p>
+                          </div>
+                          <div className="bg-slate-50 border border-slate-100 rounded-xl p-3">
+                            <p className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider mb-1">Ngày</p>
+                            <p className="text-xs font-bold text-slate-700 font-mono">{t.date || "—"}</p>
+                          </div>
+                        </div>
+
+                        <div className="bg-slate-50 border border-slate-100 rounded-xl p-3">
+                          <p className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider mb-1">Phụ trách / Đơn vị</p>
+                          <p className="text-xs font-bold text-slate-700">{t.assignee}</p>
+                        </div>
+
+                        {/* Chi tiết phiếu VPP nếu có */}
+                        {vpp && (
+                          <div className="space-y-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              {vpp.dept && (
+                                <div className="bg-blue-50 border border-blue-100 rounded-xl p-3">
+                                  <p className="text-[9px] font-extrabold text-blue-400 uppercase tracking-wider mb-1">Phòng ban / Dự án nhận</p>
+                                  <p className="text-xs font-bold text-blue-800">{vpp.dept}</p>
+                                </div>
+                              )}
+                              {vpp.requesterName && (
+                                <div className="bg-blue-50 border border-blue-100 rounded-xl p-3">
+                                  <p className="text-[9px] font-extrabold text-blue-400 uppercase tracking-wider mb-1">Người yêu cầu</p>
+                                  <p className="text-xs font-bold text-blue-800">{vpp.requesterName}</p>
+                                </div>
+                              )}
+                            </div>
+
+                            {vppItems.length > 0 && (
+                              <div className="border border-slate-200 rounded-xl overflow-hidden">
+                                <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200">
+                                  <p className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">
+                                    Danh sách vật tư yêu cầu ({vppItems.length})
+                                  </p>
+                                </div>
+                                <div className="overflow-x-auto max-h-[280px] overflow-y-auto">
+                                  <table className="w-full text-[11px] text-left border-collapse">
+                                    <thead>
+                                      <tr className="bg-slate-50/50 text-slate-400 font-extrabold uppercase tracking-wider text-[9px] border-b border-slate-100 sticky top-0 bg-white">
+                                        <th className="py-2 px-3 w-10 text-center">STT</th>
+                                        <th className="py-2 px-3">Tên vật tư</th>
+                                        <th className="py-2 px-3 w-16 text-center">ĐVT</th>
+                                        <th className="py-2 px-3 w-14 text-center">SL</th>
+                                        <th className="py-2 px-3 w-28 text-center">Trạng thái</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                                      {vppItems.map((it: any, idx: number) => (
+                                        <tr key={it.id ?? idx} className="hover:bg-slate-50/50">
+                                          <td className="py-2 px-3 text-center font-bold text-slate-400">{idx + 1}</td>
+                                          <td className="py-2 px-3 font-bold text-slate-800">{it.item || "—"}</td>
+                                          <td className="py-2 px-3 text-center">{it.unit || "—"}</td>
+                                          <td className="py-2 px-3 text-center font-bold">{it.qty ?? "—"}</td>
+                                          <td className="py-2 px-3 text-center">
+                                            <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                                              it.status === "Đã cấp phát" ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"
+                                            }`}>
+                                              {it.status || "Chờ duyệt"}
+                                            </span>
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/50 flex justify-end shrink-0">
+                        <button
+                          onClick={() => setSelectedChecklistTask(null)}
+                          className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                        >
+                          Đóng
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* ─── TAB 3: Đọc hóa đơn thanh toán ─── */}
               {activeTab === "invoice" && (

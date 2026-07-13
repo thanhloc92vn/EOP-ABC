@@ -6641,8 +6641,12 @@ export default function CBPage() {
                                     ))}
                                   </select>
                                 </td>
-                                {/* Ngày ký HĐTV (từ ngày → đến ngày) */}
-                                <td className="py-1 px-1 border-r border-slate-100">
+                                {/* Ngày ký HĐTV (từ ngày → đến ngày) — cảnh báo khi còn <= 30 ngày tới hạn */}
+                                <td className={`py-1 px-1 border-r border-slate-100 transition-colors ${
+                                  c.probation_end_date && (new Date(c.probation_end_date).getTime() - new Date().getTime()) <= 30 * 24 * 60 * 60 * 1000 && (new Date(c.probation_end_date).getTime() - new Date().getTime()) > -24 * 60 * 60 * 1000
+                                    ? "bg-amber-100/50"
+                                    : ""
+                                }`}>
                                   <div className="flex flex-col gap-0.5">
                                     <div className="flex items-center gap-1">
                                       <span className="text-[8px] font-extrabold text-slate-400 uppercase w-6 shrink-0">Từ</span>
@@ -6659,7 +6663,11 @@ export default function CBPage() {
                                         type="date"
                                         value={c.probation_end_date || ""}
                                         onChange={(e) => handleContractCellChange(actualIdx, "probation_end_date", e.target.value)}
-                                        className="bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-0.5 px-1 w-full text-center"
+                                        className={`bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-0.5 px-1 w-full text-center ${
+                                          c.probation_end_date && (new Date(c.probation_end_date).getTime() - new Date().getTime()) <= 30 * 24 * 60 * 60 * 1000 && (new Date(c.probation_end_date).getTime() - new Date().getTime()) > -24 * 60 * 60 * 1000
+                                            ? "text-amber-600 font-bold"
+                                            : ""
+                                        }`}
                                       />
                                     </div>
                                   </div>
