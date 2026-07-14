@@ -21,9 +21,20 @@ import {
   ChevronLeft,
   ChevronRight,
   CalendarDays,
+  CheckCircle2,
+  XCircle,
+  ShieldCheck,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { getGroupLeaderNameForMember } from "@/lib/approvers";
+import {
+  getGroupLeaderNameForMember,
+  isMarketingTeamMember,
+  isMarketingTeamLeader,
+  isManagerRole,
+  fetchApprovalPermissions,
+  NO_APPROVAL_PERMISSIONS,
+  type ApprovalPermissions,
+} from "@/lib/approvers";
 
 type BookingType = "xe" | "phong_hop";
 
@@ -74,10 +85,17 @@ function addOneHour(clock: string): string {
 }
 
 const STATUS_META: Record<string, { label: string; cls: string }> = {
-  pending_manager: { label: "Chờ Trưởng phòng xác nhận", cls: "bg-amber-50 text-amber-700 border-amber-200" },
-  pending_hcns: { label: "Chờ HCNS duyệt", cls: "bg-indigo-50 text-indigo-700 border-indigo-200" },
-  approved: { label: "Đã duyệt", cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
-  rejected: { label: "Từ chối", cls: "bg-rose-50 text-rose-600 border-rose-200" },
+  pending_manager: { label: "Chờ duyệt", cls: "bg-red-50 text-red-600 border-red-200" },
+  pending_hcns: { label: "Đã phê duyệt", cls: "bg-blue-50 text-blue-700 border-blue-200" },
+  approved: { label: "Điều phối Hành chính", cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  rejected: { label: "Từ chối", cls: "bg-slate-100 text-slate-500 border-slate-200" },
+};
+
+// Màu khối trên timeline theo đúng 3 trạng thái (đỏ -> xanh dương -> xanh lá)
+const TIMELINE_STATUS_COLOR: Record<string, string> = {
+  pending_manager: "bg-red-500",
+  pending_hcns: "bg-blue-500",
+  approved: "bg-emerald-500",
 };
 
 function formatDateTime(iso: string) {
@@ -120,12 +138,19 @@ function BookingContent() {
 
   // email: email đăng nhập Google (nhận diện người dùng); contactEmail: email trong hồ sơ
   // nhân viên (thường gồm email công ty, cách nhau dấu phẩy) — dùng để nhận mail kết quả.
-  const [currentUser, setCurrentUser] = useState<{ email: string; name: string; department: string; contactEmail: string } | null>(null);
+  // role/isAdmin dùng để xác định quyền Trưởng bộ phận / Hành chính (HCNS) trong modal duyệt nhanh.
+  const [currentUser, setCurrentUser] = useState<{ email: string; name: string; department: string; contactEmail: string; role: string; isAdmin: boolean } | null>(null);
+  const [approvalPerms, setApprovalPerms] = useState<ApprovalPermissions>(NO_APPROVAL_PERMISSIONS);
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [bookings, setBookings] = useState<BookingRow[]>([]);
   const [loadingList, setLoadingList] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState<{ type: "success" | "error"; msg: string } | null>(null);
+
+  // Modal chi tiết đăng ký (mở khi click vào khối trên timeline) — duyệt nhanh không cần vào tab "Duyệt yêu cầu"
+  const [selectedBooking, setSelectedBooking] = useState<BookingRow | null>(null);
+  const [modalResourceName, setModalResourceName] = useState("");
+  const [processingAction, setProcessingAction] = useState(false);
 
   // Form state
   const [hostName, setHostName] = useState("");
@@ -172,18 +197,27 @@ function BookingContent() {
         if (email) {
           const { data: empData } = await supabase
             .from("employees")
-            .select("name, department, email")
+            .select("name, department, email, role")
             .like("email", `%${email}%`)
             .maybeSingle();
+          const { data: allowedData } = await supabase
+            .from("allowed_users")
+            .select("role")
+            .ilike("email", email)
+            .maybeSingle();
+          const isAdmin = allowedData?.role === "Admin";
           const me = {
             email,
             name: empData?.name || session?.user?.user_metadata?.full_name || "Người dùng",
             department: empData?.department || "Chưa xếp phòng",
             contactEmail: empData?.email || email,
+            role: empData?.role || (isAdmin ? "Admin" : "Nhân viên"),
+            isAdmin,
           };
           setCurrentUser(me);
           setDepartment((prev) => prev || me.department);
           setHostName((prev) => prev || me.name);
+          setApprovalPerms(await fetchApprovalPermissions(email));
         }
 
         const { data: empList } = await supabase
@@ -434,6 +468,224 @@ function BookingContent() {
     }
   };
 
+  // Đọc SMTP dùng chung (giống trang Cài đặt hệ thống / C&B) từ localStorage
+  const readSmtpConfig = () => ({
+    user: localStorage.getItem("tnec_cb_smtp_user") || "",
+    pass: localStorage.getItem("tnec_cb_smtp_pass") || "",
+    host: localStorage.getItem("tnec_cb_smtp_host") || "smtp.gmail.com",
+    port: Number(localStorage.getItem("tnec_cb_smtp_port")) || 465,
+    secure: localStorage.getItem("tnec_cb_smtp_secure") !== "false",
+  });
+
+  // Admin: cờ isAdmin (bảng allowed_users) HOẶC role hiển thị là "Admin" (bảng employees) —
+  // đúng quy ước đã dùng ở Header.tsx/settings/page.tsx, tránh bỏ sót tài khoản Admin nội bộ.
+  const isUserAdmin = !!currentUser && (currentUser.isAdmin || (currentUser.role || "").toLowerCase() === "admin");
+
+  // Trưởng bộ phận cùng phòng ban (hoặc Tổ trưởng nhóm duyệt riêng, hoặc Admin) — quyền ở cấp "Chờ duyệt"
+  // và VẪN GIỮ quyền Từ chối/Xoá lịch ngay cả sau khi đã chuyển sang "Đã phê duyệt".
+  const isDeptManagerFor = (b: BookingRow) => {
+    if (!currentUser) return false;
+    if (isUserAdmin) return true;
+    if (isMarketingTeamMember(b.requester_name)) {
+      return isMarketingTeamLeader(currentUser.name);
+    }
+    return isManagerRole(currentUser.role) && currentUser.department === b.department;
+  };
+
+  // Hành chính (HCNS) điều phối xe/phòng cụ thể — chỉ thao tác được khi đã "Đã phê duyệt"
+  const isHcnsApproverUser = !!currentUser && (isUserAdmin || approvalPerms.canApproveBooking);
+
+  const canActOn = (b: BookingRow) => isDeptManagerFor(b) || isHcnsApproverUser;
+
+  const openBookingModal = (b: BookingRow) => {
+    setSelectedBooking(b);
+    setModalResourceName(b.resource_name);
+  };
+
+  const closeBookingModal = () => {
+    setSelectedBooking(null);
+    setModalResourceName("");
+  };
+
+  // Trưởng bộ phận phê duyệt cấp 1: Chờ duyệt -> Đã phê duyệt + báo email cho Hành chính (HCNS)
+  const handleManagerApprove = async (b: BookingRow) => {
+    if (!currentUser || processingAction) return;
+    try {
+      setProcessingAction(true);
+      const { error } = await supabase
+        .from("resource_bookings")
+        .update({
+          status: "pending_hcns",
+          resource_name: modalResourceName || b.resource_name,
+          manager_approved_by: currentUser.name,
+          manager_approved_at: new Date().toISOString(),
+        })
+        .eq("id", b.id);
+      if (error) throw error;
+
+      let emailMsg = "";
+      try {
+        const { data: perms } = await supabase
+          .from("approval_permissions")
+          .select("email, can_approve_booking");
+        const approverEmails = (perms || [])
+          .filter((p: any) => p.can_approve_booking && p.email)
+          .map((p: any) => p.email)
+          .join(", ");
+        if (approverEmails) {
+          const res = await fetch("/api/send-booking-email", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              mode: "notify_approver",
+              stage: "final",
+              smtpConfig: readSmtpConfig(),
+              booking: { ...b, resource_name: modalResourceName || b.resource_name, manager_approved_by: currentUser.name },
+              approverEmails,
+              siteUrl: window.location.origin,
+            }),
+          });
+          const result = await res.json();
+          emailMsg = res.ok ? result.message : `Chưa gửi được email báo Hành chính: ${result.error}`;
+        }
+      } catch (mailErr: any) {
+        emailMsg = `Chưa gửi được email báo Hành chính: ${mailErr.message || "lỗi kết nối"}`;
+      }
+
+      showToast("success", `Đã phê duyệt! Yêu cầu chuyển sang Hành chính điều phối.${emailMsg ? " " + emailMsg : ""}`);
+      closeBookingModal();
+      fetchBookings();
+    } catch (err: any) {
+      console.error("Error manager-approving booking:", err);
+      showToast("error", "Lỗi khi phê duyệt đăng ký!");
+    } finally {
+      setProcessingAction(false);
+    }
+  };
+
+  // Hành chính (HCNS) điều phối cuối: Đã phê duyệt -> Điều phối Hành chính (approved) + báo email kết quả cho người đăng ký
+  const handleHcnsDispatch = async (b: BookingRow) => {
+    if (!currentUser || processingAction) return;
+    try {
+      setProcessingAction(true);
+      const finalResource = modalResourceName || b.resource_name;
+      const { error } = await supabase
+        .from("resource_bookings")
+        .update({
+          status: "approved",
+          resource_name: finalResource,
+          final_decision_by: currentUser.name,
+          final_decision_at: new Date().toISOString(),
+          reject_reason: null,
+        })
+        .eq("id", b.id);
+      if (error) throw error;
+
+      let emailMsg = "";
+      try {
+        const res = await fetch("/api/send-booking-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            smtpConfig: readSmtpConfig(),
+            booking: { ...b, resource_name: finalResource },
+            decision: "approved",
+            rejectReason: "",
+            approverName: currentUser.name,
+          }),
+        });
+        const result = await res.json();
+        if (res.ok) {
+          await supabase.from("resource_bookings").update({ email_sent: true }).eq("id", b.id);
+          emailMsg = result.message;
+        } else {
+          emailMsg = `Chưa gửi được email kết quả: ${result.error}`;
+        }
+      } catch (mailErr: any) {
+        emailMsg = `Chưa gửi được email kết quả: ${mailErr.message || "lỗi kết nối"}`;
+      }
+
+      showToast("success", `Đã điều phối ${finalResource} cho ${b.host_name}.${emailMsg ? " " + emailMsg : ""}`);
+      closeBookingModal();
+      fetchBookings();
+    } catch (err: any) {
+      console.error("Error dispatching booking:", err);
+      showToast("error", "Lỗi khi điều phối đăng ký!");
+    } finally {
+      setProcessingAction(false);
+    }
+  };
+
+  // Từ chối — dùng chung cho cả Trưởng bộ phận (ở mọi giai đoạn) và Hành chính
+  const handleRejectBooking = async (b: BookingRow) => {
+    if (!currentUser || processingAction) return;
+    const rejectReason = window.prompt("Nhập lý do từ chối (sẽ được gửi trong email cho người đăng ký):") || "";
+    if (!rejectReason.trim()) {
+      showToast("error", "Vui lòng nhập lý do từ chối để người đăng ký nắm thông tin.");
+      return;
+    }
+    try {
+      setProcessingAction(true);
+      const { error } = await supabase
+        .from("resource_bookings")
+        .update({
+          status: "rejected",
+          final_decision_by: currentUser.name,
+          final_decision_at: new Date().toISOString(),
+          reject_reason: rejectReason.trim(),
+        })
+        .eq("id", b.id);
+      if (error) throw error;
+
+      let emailMsg = "";
+      try {
+        const res = await fetch("/api/send-booking-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            smtpConfig: readSmtpConfig(),
+            booking: b,
+            decision: "rejected",
+            rejectReason: rejectReason.trim(),
+            approverName: currentUser.name,
+          }),
+        });
+        const result = await res.json();
+        emailMsg = res.ok ? result.message : `Chưa gửi được email kết quả: ${result.error}`;
+      } catch (mailErr: any) {
+        emailMsg = `Chưa gửi được email kết quả: ${mailErr.message || "lỗi kết nối"}`;
+      }
+
+      showToast("success", `Đã từ chối đăng ký của ${b.host_name}.${emailMsg ? " " + emailMsg : ""}`);
+      closeBookingModal();
+      fetchBookings();
+    } catch (err: any) {
+      console.error("Error rejecting booking:", err);
+      showToast("error", "Lỗi khi từ chối đăng ký!");
+    } finally {
+      setProcessingAction(false);
+    }
+  };
+
+  // Xoá hẳn lịch book (dùng khi lỡ book nhầm) — Trưởng bộ phận và Hành chính đều có quyền, mọi trạng thái
+  const handleDeleteFromModal = async (b: BookingRow) => {
+    if (processingAction) return;
+    if (!window.confirm(`Xoá hẳn lịch book "${b.host_name}" (${b.resource_name})? Hành động này không thể hoàn tác.`)) return;
+    try {
+      setProcessingAction(true);
+      const { error } = await supabase.from("resource_bookings").delete().eq("id", b.id);
+      if (error) throw error;
+      showToast("success", "Đã xoá lịch book.");
+      closeBookingModal();
+      fetchBookings();
+    } catch (err: any) {
+      console.error("Error deleting booking from modal:", err);
+      showToast("error", "Lỗi khi xoá lịch book!");
+    } finally {
+      setProcessingAction(false);
+    }
+  };
+
   const myBookings = useMemo(() => {
     if (!currentUser) return [];
     const loginEmail = currentUser.email.toLowerCase();
@@ -515,6 +767,174 @@ function BookingContent() {
                 } text-white px-6 py-3 rounded-xl shadow-lg flex items-center gap-3 font-semibold text-sm max-w-md`}
               >
                 {toast.msg}
+              </div>
+            </div>
+          )}
+
+          {/* Modal chi tiết đăng ký — duyệt nhanh ngay tại lịch, không cần vào tab "Duyệt yêu cầu" */}
+          {selectedBooking && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4"
+              onClick={closeBookingModal}
+            >
+              <div
+                className="bg-white w-full max-w-lg rounded-2xl shadow-premium overflow-hidden animate-in zoom-in-95 duration-150 max-h-[90vh] flex flex-col"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="bg-[#005BAC] text-white px-6 py-4 flex items-center justify-between gap-3 shrink-0">
+                  <h3 className="font-heading font-bold text-sm flex items-center gap-2">
+                    <TabIcon size={16} />
+                    Chi tiết đăng ký {isVehicle ? "xe" : "phòng họp"}
+                  </h3>
+                  <button type="button" onClick={closeBookingModal} className="text-white/80 hover:text-white cursor-pointer">
+                    <X size={18} />
+                  </button>
+                </div>
+
+                <div className="p-6 space-y-4 overflow-y-auto text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className={`inline-block px-2.5 py-1 rounded-full border text-[9px] font-extrabold uppercase ${STATUS_META[selectedBooking.status]?.cls || ""}`}>
+                      {STATUS_META[selectedBooking.status]?.label || selectedBooking.status}
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-semibold">Gửi lúc {formatDateTime(selectedBooking.created_at)}</span>
+                  </div>
+
+                  {/* Bộ lọc xe/phòng — đổi nhanh sang xe/phòng khác trước khi phê duyệt/điều phối */}
+                  <div className="space-y-1">
+                    <label className="text-slate-500 font-bold flex items-center gap-1.5">
+                      <TabIcon size={12} /> {isVehicle ? "Xe" : "Phòng họp"}
+                    </label>
+                    {canActOn(selectedBooking) && selectedBooking.status !== "rejected" ? (
+                      <select
+                        value={modalResourceName}
+                        onChange={(e) => setModalResourceName(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40 cursor-pointer bg-white font-bold text-slate-700"
+                      >
+                        {resources.map((r) => (
+                          <option key={r} value={r}>{r}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <p className="font-bold text-slate-700">{selectedBooking.resource_name}</p>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <p className="text-slate-400 font-bold">Người chủ trì</p>
+                      <p className="font-bold text-slate-700">{selectedBooking.host_name}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-400 font-bold">Phòng ban</p>
+                      <p className="font-bold text-slate-700">{selectedBooking.department}</p>
+                    </div>
+                    <div className="col-span-2">
+                      <p className="text-slate-400 font-bold">Thời gian</p>
+                      <p className="font-bold text-slate-700 font-mono">
+                        {formatDateTime(selectedBooking.start_time)} ➔ {formatDateTime(selectedBooking.end_time)}
+                      </p>
+                    </div>
+                    <div className="col-span-2">
+                      <p className="text-slate-400 font-bold">{isVehicle ? "Mục đích / lộ trình" : "Nội dung cuộc họp"}</p>
+                      <p className="font-semibold text-slate-600">{selectedBooking.content}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-400 font-bold">Số người tham dự</p>
+                      <p className="font-bold text-slate-700">{selectedBooking.attendee_count}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-400 font-bold">Thành phần</p>
+                      <p className="font-semibold text-slate-600">{selectedBooking.participant_type === "khach_hang" ? "Có khách bên ngoài" : "Nội bộ công ty"}</p>
+                    </div>
+                    {selectedBooking.attendees && selectedBooking.attendees.length > 0 && (
+                      <div className="col-span-2">
+                        <p className="text-slate-400 font-bold">Nhân viên tham dự</p>
+                        <p className="font-semibold text-slate-600">{selectedBooking.attendees.join(", ")}</p>
+                      </div>
+                    )}
+                    {selectedBooking.customer_info && (
+                      <div className="col-span-2">
+                        <p className="text-slate-400 font-bold">Thông tin khách hàng</p>
+                        <p className="font-semibold text-slate-600">{selectedBooking.customer_info}</p>
+                      </div>
+                    )}
+                    {selectedBooking.notes && (
+                      <div className="col-span-2">
+                        <p className="text-slate-400 font-bold">Ghi chú</p>
+                        <p className="font-semibold text-slate-600">{selectedBooking.notes}</p>
+                      </div>
+                    )}
+                    <div className="col-span-2">
+                      <p className="text-slate-400 font-bold">Người đăng ký</p>
+                      <p className="font-semibold text-slate-600">{selectedBooking.requester_name}</p>
+                    </div>
+                    {selectedBooking.manager_approved_by && (
+                      <div className="col-span-2">
+                        <p className="text-slate-400 font-bold">Trưởng bộ phận đã phê duyệt</p>
+                        <p className="font-semibold text-emerald-600">{selectedBooking.manager_approved_by}</p>
+                      </div>
+                    )}
+                    {selectedBooking.status === "rejected" && selectedBooking.reject_reason && (
+                      <div className="col-span-2">
+                        <p className="text-slate-400 font-bold">Lý do từ chối</p>
+                        <p className="font-semibold text-rose-600">{selectedBooking.reject_reason}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {!canActOn(selectedBooking) && (
+                    <p className="text-[10px] text-slate-400 italic pt-2 border-t border-slate-100">
+                      Bạn chỉ có thể xem — chỉ Trưởng bộ phận ({selectedBooking.department}) hoặc Hành chính mới thao tác được đăng ký này.
+                    </p>
+                  )}
+                </div>
+
+                {/* Nút hành động */}
+                <div className="p-4 border-t border-slate-100 flex items-center justify-end gap-2 flex-wrap bg-slate-50/60 shrink-0">
+                  {(isDeptManagerFor(selectedBooking) || isHcnsApproverUser) && selectedBooking.status !== "rejected" && (
+                    <button
+                      type="button"
+                      disabled={processingAction}
+                      onClick={() => handleDeleteFromModal(selectedBooking)}
+                      className="inline-flex items-center gap-1.5 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 text-[11px] font-bold px-3.5 py-2 rounded-xl transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                    >
+                      <Trash2 size={13} /> Xoá lịch (book nhầm)
+                    </button>
+                  )}
+
+                  {isDeptManagerFor(selectedBooking) && (selectedBooking.status === "pending_manager" || selectedBooking.status === "pending_hcns") && (
+                    <button
+                      type="button"
+                      disabled={processingAction}
+                      onClick={() => handleRejectBooking(selectedBooking)}
+                      className="inline-flex items-center gap-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 text-[11px] font-bold px-3.5 py-2 rounded-xl transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                    >
+                      <XCircle size={13} /> Từ chối
+                    </button>
+                  )}
+
+                  {isDeptManagerFor(selectedBooking) && selectedBooking.status === "pending_manager" && (
+                    <button
+                      type="button"
+                      disabled={processingAction}
+                      onClick={() => handleManagerApprove(selectedBooking)}
+                      className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold px-3.5 py-2 rounded-xl transition-all active:scale-95 cursor-pointer disabled:opacity-50 shadow-sm"
+                    >
+                      <CheckCircle2 size={13} /> Phê duyệt
+                    </button>
+                  )}
+
+                  {isHcnsApproverUser && selectedBooking.status === "pending_hcns" && (
+                    <button
+                      type="button"
+                      disabled={processingAction}
+                      onClick={() => handleHcnsDispatch(selectedBooking)}
+                      className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold px-3.5 py-2 rounded-xl transition-all active:scale-95 cursor-pointer disabled:opacity-50 shadow-sm"
+                    >
+                      <ShieldCheck size={13} /> Điều phối
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -867,8 +1287,10 @@ function BookingContent() {
 
             {/* Legend */}
             <div className="flex items-center gap-4 text-[10px] font-bold text-slate-500">
-              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-amber-400 inline-block shrink-0" /> Chờ duyệt</span>
-              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-emerald-500 inline-block shrink-0" /> Đã duyệt</span>
+              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-red-500 inline-block shrink-0" /> Chờ duyệt</span>
+              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-blue-500 inline-block shrink-0" /> Đã phê duyệt</span>
+              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-emerald-500 inline-block shrink-0" /> Điều phối Hành chính</span>
+              <span className="text-[9px] font-semibold text-slate-400 normal-case">— Bấm vào khối lịch để xem chi tiết & duyệt nhanh</span>
             </div>
 
             <div className="overflow-x-auto">
@@ -908,24 +1330,21 @@ function BookingContent() {
                             />
                           )}
 
-                          {/* Khối đăng ký */}
-                          {rowBookings.map((b) => {
-                            const isApprovedBlock = b.status === "approved";
-                            return (
-                              <div
-                                key={b.id}
-                                title={`${b.host_name} • ${formatDateTime(b.start_time)} ➔ ${formatDateTime(b.end_time)} • ${b.content}${
-                                  isApprovedBlock ? "" : " (chờ duyệt)"
-                                }`}
-                                className={`absolute top-1 bottom-1 rounded-md px-2 flex items-center text-[10px] font-bold text-white truncate shadow-sm cursor-default z-10 ${
-                                  isApprovedBlock ? "bg-emerald-500" : "bg-amber-400"
-                                }`}
-                                style={getTimelineBlockStyle(b)}
-                              >
-                                {b.host_name}
-                              </div>
-                            );
-                          })}
+                          {/* Khối đăng ký — bấm để mở modal chi tiết & duyệt nhanh, không cần vào tab "Duyệt yêu cầu" */}
+                          {rowBookings.map((b) => (
+                            <button
+                              type="button"
+                              key={b.id}
+                              onClick={() => openBookingModal(b)}
+                              title={`${b.host_name} • ${formatDateTime(b.start_time)} ➔ ${formatDateTime(b.end_time)} • ${b.content} • ${STATUS_META[b.status]?.label || b.status} (bấm để xem chi tiết)`}
+                              className={`absolute top-1 bottom-1 rounded-md px-2 flex items-center text-[10px] font-bold text-white truncate shadow-sm cursor-pointer z-10 hover:brightness-95 active:scale-[0.98] transition-all ${
+                                TIMELINE_STATUS_COLOR[b.status] || "bg-slate-400"
+                              }`}
+                              style={getTimelineBlockStyle(b)}
+                            >
+                              {b.host_name}
+                            </button>
+                          ))}
                         </div>
                       </div>
                     );
