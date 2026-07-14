@@ -682,14 +682,37 @@ function BookingContent() {
   };
 
   // Xoá hẳn lịch book (dùng khi lỡ book nhầm) — Trưởng bộ phận và Hành chính đều có quyền, mọi trạng thái
+  // Vẫn báo email cho người đăng ký như khi Từ chối/Phê duyệt, để họ biết lịch không còn hiệu lực.
   const handleDeleteFromModal = async (b: BookingRow) => {
-    if (processingAction) return;
+    if (!currentUser || processingAction) return;
     if (!window.confirm(`Xoá hẳn lịch book "${b.host_name}" (${b.resource_name})? Hành động này không thể hoàn tác.`)) return;
+    const defaultNote = `${isVehicle ? "Xe" : "Phòng họp"} ưu tiên Ban lãnh đạo`;
+    const note = window.prompt("Ghi chú lý do xoá (sẽ gửi kèm email báo cho người đăng ký):", defaultNote) || "";
     try {
       setProcessingAction(true);
       const { error } = await supabase.from("resource_bookings").delete().eq("id", b.id);
       if (error) throw error;
-      showToast("success", "Đã xoá lịch book.");
+
+      let emailMsg = "";
+      try {
+        const res = await fetch("/api/send-booking-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            smtpConfig: readSmtpConfig(),
+            booking: b,
+            decision: "deleted",
+            rejectReason: note.trim(),
+            approverName: currentUser.name,
+          }),
+        });
+        const result = await res.json();
+        emailMsg = res.ok ? result.message : `Chưa gửi được email báo xoá lịch: ${result.error}`;
+      } catch (mailErr: any) {
+        emailMsg = `Chưa gửi được email báo xoá lịch: ${mailErr.message || "lỗi kết nối"}`;
+      }
+
+      showToast("success", `Đã xoá lịch book.${emailMsg ? " " + emailMsg : ""}`);
       closeBookingModal();
       fetchBookings();
     } catch (err: any) {
