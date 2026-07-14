@@ -3,8 +3,10 @@
 import { useState, useEffect, useMemo, Suspense } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
-import { Settings, Database, Info, Key, CheckCircle, ShieldAlert, Check, X, Calendar, Briefcase, User, CarFront, DoorOpen, Mail } from "lucide-react";
+import { Settings, Database, Info, Key, CheckCircle, ShieldAlert, Check, X, Calendar, Briefcase, User, CarFront, DoorOpen, Mail, Package } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { usePlan } from "@/lib/plan";
+import { PLAN_LABELS, type Plan } from "@/lib/planShared";
 import {
   fetchApprovalPermissions,
   hasAnyApprovalPermission,
@@ -23,6 +25,27 @@ function SettingsContent() {
   const searchParams = useSearchParams();
   const activeTab = searchParams.get("tab") || "system";
   const isApprovalsTab = activeTab === "approvals";
+  const { plan: activePlan } = usePlan();
+  const [changingPlan, setChangingPlan] = useState(false);
+
+  // Đổi gói dịch vụ (chỉ Admin — RLS tenant_config cũng chặn tầng DB).
+  // Ghi vào tenant_config.plan rồi tải lại trang để mọi nơi đọc gói mới.
+  const handleChangePlan = async (newPlan: Plan) => {
+    if (newPlan === activePlan) return;
+    if (!confirm(`Chuyển hệ thống sang gói ${PLAN_LABELS[newPlan]}?\nMenu và tính năng sẽ thay đổi theo gói ngay sau khi tải lại.`)) return;
+    try {
+      setChangingPlan(true);
+      const { error } = await supabase
+        .from("tenant_config")
+        .update({ value: newPlan })
+        .eq("key", "plan");
+      if (error) throw error;
+      window.location.reload();
+    } catch (err: any) {
+      alert("Không đổi được gói dịch vụ: " + (err.message || err) + "\n(Chỉ tài khoản Admin mới có quyền này.)");
+      setChangingPlan(false);
+    }
+  };
 
   const [apiKey, setApiKey] = useState("");
   const [webhookUrl, setWebhookUrl] = useState("");
@@ -773,6 +796,52 @@ function SettingsContent() {
 
           {!isApprovalsTab && (
             <>
+              {/* ─── GÓI DỊCH VỤ (chỉ Admin thấy và đổi được) ─── */}
+              {currentUser?.isAdmin && (
+              <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium">
+                <h2 className="font-heading font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+                  <Package size={18} className="text-blue-600" /> Gói dịch vụ
+                </h2>
+                <p className="text-[11px] text-slate-400 font-medium mb-5">
+                  Gói quyết định các module khả dụng trên toàn hệ thống. Chỉ Admin đổi được gói.
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {([
+                    { key: "basic" as Plan, desc: "Hồ sơ nhân viên, Hợp đồng & C&B, Phòng ban, Góp ý", accent: "border-slate-300", badge: "bg-slate-100 text-slate-600" },
+                    { key: "professional" as Plan, desc: "+ Công việc, Lịch, Đăng ký xe/phòng họp, Tuyển dụng, Hành chính, Văn thư", accent: "border-blue-300", badge: "bg-blue-50 text-blue-600" },
+                    { key: "enterprise" as Plan, desc: "+ Biên bản họp AI, Tìm kiếm AI thông minh", accent: "border-indigo-300", badge: "bg-indigo-50 text-indigo-600" },
+                  ]).map(p => {
+                    const isActive = activePlan === p.key;
+                    return (
+                      <button
+                        key={p.key}
+                        onClick={() => handleChangePlan(p.key)}
+                        disabled={changingPlan || isActive}
+                        className={`text-left p-4 rounded-2xl border-2 transition-all ${
+                          isActive
+                            ? `${p.accent} bg-slate-50/50 shadow-inner cursor-default`
+                            : "border-slate-100 hover:border-slate-200 hover:bg-slate-50/50 cursor-pointer"
+                        } disabled:opacity-90`}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider ${p.badge}`}>
+                            {PLAN_LABELS[p.key]}
+                          </span>
+                          {isActive && (
+                            <span className="text-[9px] font-extrabold text-emerald-600 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                              Đang dùng
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-slate-500 font-medium leading-relaxed">{p.desc}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              )}
+
               {/* Setup Configuration Form */}
               <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium">
             <h2 className="font-heading font-bold text-slate-800 text-sm flex items-center gap-2 mb-5">

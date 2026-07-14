@@ -14,6 +14,7 @@ import {
 } from "@/lib/approvers";
 import { useSidebar } from "./SidebarContext";
 import { useTenantConfig } from "@/lib/tenantConfig";
+import { usePlan } from "@/lib/plan";
 
 interface Props {
   title: string;
@@ -22,6 +23,8 @@ interface Props {
 
 export default function Header({ title, subtitle }: Props) {
   const tenant = useTenantConfig();
+  const { isFeatureAllowed } = usePlan();
+  const aiSearchAllowed = isFeatureAllowed("ai_search");
   const [profile, setProfile] = useState<{ name: string; role: string; avatar: string }>({
     name: "Đang tải...",
     role: "...",
@@ -52,7 +55,7 @@ export default function Header({ title, subtitle }: Props) {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "k") {
         e.preventDefault();
-        setShowSearchModal(true);
+        if (aiSearchAllowed) setShowSearchModal(true); // Tìm kiếm AI: gói Enterprise
       }
       if (e.key === "Escape") {
         setShowSearchModal(false);
@@ -60,7 +63,7 @@ export default function Header({ title, subtitle }: Props) {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [aiSearchAllowed]);
 
   const handleAiSearch = async (overrideQuery?: string) => {
     const queryToSend = (overrideQuery || searchQuery).trim();
@@ -569,8 +572,9 @@ export default function Header({ title, subtitle }: Props) {
 
       {/* Search Bar & Actions */}
       <div className="flex items-center gap-3 sm:gap-6 shrink-0">
-        {/* Notion-like Search Bar */}
-        <div 
+        {/* Notion-like Search Bar — Tìm kiếm AI thuộc gói Enterprise */}
+        {aiSearchAllowed && (
+        <div
           onClick={() => setShowSearchModal(true)}
           className="relative w-48 lg:w-64 hidden md:block cursor-pointer"
         >
@@ -582,6 +586,7 @@ export default function Header({ title, subtitle }: Props) {
             className="w-full pl-9 pr-4 py-1.5 bg-slate-100/50 hover:bg-slate-100 focus:bg-white text-xs text-slate-700 placeholder:text-slate-400 border border-slate-200/60 rounded-xl outline-none transition-all shadow-inner cursor-pointer"
           />
         </div>
+        )}
 
         {/* Global Notifications & Tools */}
         <div className="flex items-center gap-1 sm:gap-2 relative">

@@ -5,6 +5,7 @@ import OpenAI from "openai";
 import fs from "fs";
 import path from "path";
 import os from "os";
+import { normalizePlan, isFeatureAllowed } from "@/lib/planShared";
 
 // Whisper trên file ~20MB mất vài phút; mặc định Vercel cắt function sớm hơn
 // khiến client nhận trang lỗi HTML/text ("A server error...") thay vì JSON.
@@ -124,6 +125,15 @@ export async function POST(req: NextRequest) {
           global: { headers: { Authorization: `Bearer ${supabaseToken}` } }
         })
       : supabase;
+
+    // GATE GÓI DỊCH VỤ: Biên bản họp AI thuộc gói Enterprise (tenant_config.plan)
+    const { data: planRow } = await dbClient
+      .from("tenant_config").select("value").eq("key", "plan").maybeSingle();
+    if (!isFeatureAllowed(normalizePlan(planRow?.value), "meeting_ai")) {
+      return NextResponse.json({
+        error: "Tính năng Biên bản họp AI thuộc gói Enterprise. Vui lòng liên hệ Quản trị viên để nâng cấp gói dịch vụ."
+      }, { status: 403 });
+    }
 
     // 1. Download file from Supabase Storage
     const { data: fileData, error: downloadError } = await dbClient.storage

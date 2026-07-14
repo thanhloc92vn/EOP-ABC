@@ -27,12 +27,14 @@ import ThemeToggle from "./ThemeToggle";
 import { supabase } from "@/lib/supabase";
 import { fetchApprovalPermissions, hasAnyApprovalPermission, isMarketingTeamLeader } from "@/lib/approvers";
 import { useTenantConfig } from "@/lib/tenantConfig";
+import { usePlan } from "@/lib/plan";
 
 function SidebarLinks({ isApprover, pathname, setSidebarOpen }: { isApprover: boolean; pathname: string; setSidebarOpen: (o: boolean) => void }) {
   const searchParams = useSearchParams();
   const currentTab = searchParams.get("tab");
   const isBookingSection = pathname.startsWith("/dang-ky");
   const [bookingGroupOpen, setBookingGroupOpen] = useState(isBookingSection);
+  const { isPathAllowed } = usePlan();
 
   const navItems = [
     { label: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -46,11 +48,14 @@ function SidebarLinks({ isApprover, pathname, setSidebarOpen }: { isApprover: bo
     { label: "Biên bản họp (Meeting)", href: "/meeting-team", icon: Mic },
     { label: "Góp ý & Kiến nghị", href: "/suggestions", icon: MessageSquare },
     { label: "Cài đặt hệ thống", href: "/settings?tab=system", icon: Settings },
-  ];
+  ].filter(item => isPathAllowed(item.href.split("?")[0])); // ẩn module ngoài gói dịch vụ
 
   if (isApprover) {
     navItems.push({ label: "Duyệt yêu cầu", href: "/settings?tab=approvals", icon: CheckSquare });
   }
+
+  // Nhóm "Quản lý Đăng ký" (/dang-ky) thuộc gói Professional trở lên
+  const bookingAllowed = isPathAllowed("/dang-ky");
 
   const bookingChildren = [
     { label: "Đăng ký xe", href: "/dang-ky?tab=xe", tab: "xe", icon: CarFront },
@@ -135,12 +140,12 @@ function SidebarLinks({ isApprover, pathname, setSidebarOpen }: { isApprover: bo
           </Link>
         );
 
-        // Chèn nhóm "Quản lý Đăng ký" ngay sau mục Lịch công việc
+        // Chèn nhóm "Quản lý Đăng ký" ngay sau mục Lịch công việc (nếu gói cho phép)
         if (item.href === "/calendar") {
           return (
             <div key={item.href} className="space-y-2.5">
               {linkEl}
-              {bookingGroup}
+              {bookingAllowed && bookingGroup}
             </div>
           );
         }
@@ -155,7 +160,9 @@ export default function Sidebar() {
   const pathname = usePathname();
   const { sidebarOpen, setSidebarOpen } = useSidebar();
   const [isApprover, setIsApprover] = useState(false);
+  const [isAdminUser, setIsAdminUser] = useState(false); // badge gói chỉ hiện với Admin
   const tenant = useTenantConfig();
+  const { plan, planLabel } = usePlan();
 
   useEffect(() => {
     const fetchUserRole = async () => {
@@ -171,6 +178,7 @@ export default function Sidebar() {
           .ilike("email", email)
           .maybeSingle();
         const isAdmin = allowedData?.role === "Admin";
+        setIsAdminUser(isAdmin);
 
         // Check Employees
         const { data: empData } = await supabase
@@ -228,7 +236,18 @@ export default function Sidebar() {
             </div>
             <div className="min-w-0">
               <h1 className="text-[#1D1D1F] font-heading font-bold text-sm tracking-tight leading-tight truncate">{tenant.system_title}</h1>
-              <p className="text-slate-450 text-[10px] uppercase font-bold tracking-wider mt-0.5">{tenant.system_subtitle}</p>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <p className="text-slate-450 text-[10px] uppercase font-bold tracking-wider truncate">{tenant.system_subtitle}</p>
+                {isAdminUser && (
+                  <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded-full uppercase tracking-wider shrink-0 ${
+                    plan === "enterprise" ? "bg-indigo-50 text-indigo-600 border border-indigo-100" :
+                    plan === "professional" ? "bg-blue-50 text-blue-600 border border-blue-100" :
+                    "bg-slate-100 text-slate-500 border border-slate-200"
+                  }`} title={`Gói dịch vụ: ${planLabel}`}>
+                    {planLabel}
+                  </span>
+                )}
+              </div>
             </div>
             <div className="ml-auto mr-6 lg:mr-0">
               <ThemeToggle />

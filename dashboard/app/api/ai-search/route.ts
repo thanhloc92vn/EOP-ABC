@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { createClient } from "@supabase/supabase-js";
 import OpenAI from "openai";
+import { normalizePlan, isFeatureAllowed } from "@/lib/planShared";
 
 export const maxDuration = 60; // Allow enough time for AI response
 
@@ -72,6 +73,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         error: "Phiên đăng nhập không hợp lệ hoặc đã hết hạn. Vui lòng tải lại trang và đăng nhập lại để dùng Tìm kiếm AI."
       }, { status: 401 });
+    }
+
+    // GATE GÓI DỊCH VỤ: Tìm kiếm AI thuộc gói Enterprise (tenant_config.plan)
+    const { data: planRow } = await dbClient
+      .from("tenant_config").select("value").eq("key", "plan").maybeSingle();
+    if (!isFeatureAllowed(normalizePlan(planRow?.value), "ai_search")) {
+      return NextResponse.json({
+        error: "Tính năng Tìm kiếm AI thuộc gói Enterprise. Hệ thống của bạn đang dùng gói thấp hơn — vui lòng liên hệ Quản trị viên để nâng cấp."
+      }, { status: 403 });
     }
 
     // Tra cứu vai trò/phòng ban THẬT từ DB theo email đã xác minh.

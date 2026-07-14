@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import OpenAI from "openai";
+import { normalizePlan, isFeatureAllowed } from "@/lib/planShared";
 
 // GPT phân tích transcript dài có thể mất vài phút; tránh Vercel timeout trả về non-JSON.
 export const maxDuration = 300;
@@ -120,6 +121,15 @@ export async function POST(req: NextRequest) {
           global: { headers: { Authorization: `Bearer ${supabaseToken}` } }
         })
       : supabase;
+
+    // GATE GÓI DỊCH VỤ: Biên bản họp AI thuộc gói Enterprise (tenant_config.plan)
+    const { data: planRow } = await dbClient
+      .from("tenant_config").select("value").eq("key", "plan").maybeSingle();
+    if (!isFeatureAllowed(normalizePlan(planRow?.value), "meeting_ai")) {
+      return NextResponse.json({
+        error: "Tính năng Biên bản họp AI thuộc gói Enterprise. Vui lòng liên hệ Quản trị viên để nâng cấp gói dịch vụ."
+      }, { status: 403 });
+    }
 
     // 1. Call OpenAI
     const openai = new OpenAI({ apiKey });

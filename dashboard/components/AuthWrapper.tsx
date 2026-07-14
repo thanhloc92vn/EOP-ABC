@@ -2,10 +2,11 @@
 
 import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
-import { Loader2, ShieldAlert } from "lucide-react";
+import { Loader2, ShieldAlert, Lock } from "lucide-react";
 import { SidebarProvider } from "./SidebarContext";
 import { usePathname } from "next/navigation";
 import { useTenantConfig } from "@/lib/tenantConfig";
+import { normalizePlan, isPathAllowed, getMinPlanForPath, PLAN_LABELS } from "@/lib/planShared";
 
 export default function AuthWrapper({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -258,6 +259,41 @@ export default function AuthWrapper({ children }: { children: React.ReactNode })
     );
   }
 
-  // 4. Logged in & Is Admin -> Render dashboard
+  // 4. Kiểm tra GÓI DỊCH VỤ: module ngoài gói -> màn hình nâng cấp
+  // (chặn cả truy cập thẳng URL, không chỉ ẩn menu). Tính theo tenant_config.plan;
+  // fallback enterprise nên không bao giờ khoá nhầm khi config lỗi.
+  const activePlan = normalizePlan(tenant.plan);
+  if (!isPathAllowed(activePlan, pathname)) {
+    const minPlan = getMinPlanForPath(pathname);
+    return (
+      <SidebarProvider>
+        <div className="flex flex-col items-center justify-center min-h-screen bg-[#F7F9FC] px-4">
+          <div className="max-w-md w-full bg-white border border-slate-200/60 rounded-[2rem] shadow-premium p-10 flex flex-col items-center text-center space-y-5">
+            <div className="w-16 h-16 rounded-2xl bg-amber-50 flex items-center justify-center text-amber-500 ring-4 ring-amber-100/50">
+              <Lock size={30} />
+            </div>
+            <div className="space-y-2">
+              <h2 className="font-heading font-extrabold text-slate-800 text-base">
+                Tính năng thuộc gói {PLAN_LABELS[minPlan]}
+              </h2>
+              <p className="text-slate-500 text-xs leading-relaxed font-medium">
+                Hệ thống của bạn đang dùng gói <strong>{PLAN_LABELS[activePlan]}</strong>.
+                Module này chỉ khả dụng từ gói <strong>{PLAN_LABELS[minPlan]}</strong> trở lên —
+                vui lòng liên hệ Quản trị viên để nâng cấp gói dịch vụ.
+              </p>
+            </div>
+            <a
+              href="/"
+              className="w-full bg-[#005BAC] hover:bg-blue-700 text-white text-xs font-bold py-3.5 rounded-2xl transition-all"
+            >
+              Về trang Dashboard
+            </a>
+          </div>
+        </div>
+      </SidebarProvider>
+    );
+  }
+
+  // 5. Logged in & Is Admin & đúng gói -> Render dashboard
   return <SidebarProvider>{children}</SidebarProvider>;
 }
