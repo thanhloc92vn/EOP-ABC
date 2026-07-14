@@ -252,6 +252,20 @@ function BookingContent() {
     fetchBookings();
   }, []);
 
+  // Mở thẳng popup chi tiết khi đến từ link trong email (?bookingId=...) — không bắt người
+  // duyệt phải tự tìm trên timeline. Chỉ tự mở 1 lần cho mỗi id để không bật lại sau khi đóng.
+  const autoOpenedBookingId = useRef<string | null>(null);
+  useEffect(() => {
+    const bookingId = searchParams.get("bookingId");
+    if (!bookingId || bookings.length === 0 || autoOpenedBookingId.current === bookingId) return;
+    const target = bookings.find((b) => b.id === bookingId);
+    if (target) {
+      autoOpenedBookingId.current = bookingId;
+      setViewDate(toDateKey(new Date(target.start_time)));
+      openBookingModal(target);
+    }
+  }, [bookings, searchParams]);
+
   // Close attendee dropdown when clicking outside
   useEffect(() => {
     const onClick = (e: MouseEvent) => {

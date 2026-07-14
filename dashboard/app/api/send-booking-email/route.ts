@@ -77,7 +77,9 @@ export async function POST(request: NextRequest) {
         ? "duyệt cuối (điều phối xe & phòng họp)"
         : "xác nhận cấp Trưởng phòng / Tổ trưởng";
       const siteOrigin = body.siteUrl || request.headers.get("origin") || process.env.NEXT_PUBLIC_SITE_URL || cfg.site_url;
-      const approvalUrl = `${siteOrigin}/settings?tab=approvals&subtab=booking`;
+      // Mở thẳng trang Đăng ký xe/phòng họp và tự bật popup chi tiết của đúng đăng ký này
+      // (không bắt người duyệt phải tự tìm trong tab "Duyệt yêu cầu" nữa).
+      const approvalUrl = `${siteOrigin}/dang-ky?tab=${isVehicle ? "xe" : "phong_hop"}&bookingId=${booking.id}`;
 
       const notifyRows = [
         infoRow("Loại đăng ký", typeLabel),
@@ -139,7 +141,7 @@ export async function POST(request: NextRequest) {
                 </tr>
               </table>
               <p style="margin: 12px 0 0 0; font-size: 11px; color: #94a3b8;">
-                Nút sẽ mở trang <strong>Duyệt yêu cầu → 4. Duyệt Đăng ký</strong> (đăng nhập bằng tài khoản Google của Anh/Chị nếu được hỏi).
+                Nút sẽ mở thẳng lịch <strong>${isVehicle ? "Đăng ký xe" : "Đăng ký phòng họp"}</strong> và bật popup chi tiết để Anh/Chị duyệt ngay (đăng nhập bằng tài khoản Google nếu được hỏi).
               </p>
             </div>
 
