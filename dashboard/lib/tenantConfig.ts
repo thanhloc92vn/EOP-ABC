@@ -13,6 +13,16 @@ import { supabase } from "./supabase";
 // - Cache module-level: mỗi phiên chỉ query 1 lần cho mọi component.
 // ============================================================
 
+// Nhân sự hành chính (kanban VPP trang Hành chính). `name` phải khớp giá trị
+// cột `assignee` của task trong bảng tasks (tên ngắn), `full_name` dùng cho
+// form hồ sơ thanh toán.
+export type AdminStaff = {
+  name: string;
+  full_name?: string;
+  role: string;
+  duties: string;
+};
+
 export type TenantConfig = {
   company_name: string;
   company_short: string;
@@ -22,6 +32,12 @@ export type TenantConfig = {
   contract_no_suffix: string;
   email_sender_name: string;
   chairman_name: string;
+  site_url: string;
+  hcns_head_name: string;
+  admin_staff: AdminStaff[];
+  // Người được miễn làm thứ Bảy nhưng vẫn tính đủ công (bảng công C&B);
+  // khớp tên kiểu "chứa, không phân biệt dấu"
+  saturday_exempt_names: string[];
   plan: "basic" | "professional" | "enterprise";
 };
 
@@ -34,6 +50,14 @@ export const TENANT_DEFAULTS: TenantConfig = {
   contract_no_suffix: "TNE&C",
   email_sender_name: "Phòng HCNS TNEC",
   chairman_name: "Huỳnh Giáp Nhân",
+  site_url: "https://nhansutrungnamec.com",
+  hcns_head_name: "Lê Thị Hoa Đào",
+  admin_staff: [
+    { name: "Như Quỳnh", full_name: "Nguyễn Bích Như Quỳnh", role: "Phó phòng Hành chính", duties: "Phụ trách hậu cần, kho VPP, phòng họp, tiếp khách & làm hồ sơ thanh toán, đối soát hóa đơn" },
+    { name: "Thanh Hằng", role: "Văn thư", duties: "Phụ trách tiếp nhận, phân loại, lưu trữ và chuyển phát công văn" },
+    { name: "Thanh Ngân", role: "Hành chính", duties: "Phụ trách hỗ trợ công tác hành chính, quản lý văn phòng phẩm & cấp phát vật tư" },
+  ],
+  saturday_exempt_names: ["Phạm Thành Lộc"],
   plan: "enterprise",
 };
 
@@ -55,9 +79,10 @@ export async function fetchTenantConfig(): Promise<TenantConfig> {
         }
       }
       // Chưa đăng nhập RLS chỉ trả các khóa brand -> dùng được nhưng KHÔNG cache,
-      // để sau khi đăng nhập hook sẽ đọc lại đủ bộ khóa.
-      const totalKeys = Object.keys(TENANT_DEFAULTS).length;
-      if (data.length >= totalKeys) {
+      // để sau khi đăng nhập hook sẽ đọc lại đủ bộ khóa. Nhận biết phiên đã
+      // đăng nhập qua khóa 'plan' (anon không đọc được khóa này) — không đếm
+      // số dòng vì DB có thể chưa chạy đủ các migration seed khóa mới.
+      if (data.some(row => row.key === "plan")) {
         cached = merged as TenantConfig;
       }
       return merged as TenantConfig;

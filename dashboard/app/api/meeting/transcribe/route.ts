@@ -6,6 +6,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { normalizePlan, isFeatureAllowed } from "@/lib/planShared";
+import { getTenantConfigServer } from "@/lib/tenantConfigServer";
 
 // Whisper trên file ~20MB mất vài phút; mặc định Vercel cắt function sớm hơn
 // khiến client nhận trang lỗi HTML/text ("A server error...") thay vì JSON.
@@ -166,7 +167,7 @@ export async function POST(req: NextRequest) {
       file: fileStream,
       model: "whisper-1",
       language: "vi",
-      prompt: "Trung Nam E&C, họp giao ban, dự án, báo cáo",
+      prompt: `${(await getTenantConfigServer()).company_name}, họp giao ban, dự án, báo cáo`,
     });
 
     const rawText = transcription.text || "";

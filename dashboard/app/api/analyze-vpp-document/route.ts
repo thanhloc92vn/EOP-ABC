@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDepartmentListsServer, type ServerDepartmentLists } from "@/lib/departmentsServer";
+import { getTenantConfigServer } from "@/lib/tenantConfigServer";
 import OpenAI from "openai";
 import * as XLSX from "xlsx";
 
-const buildSystemPrompt = (lists: ServerDepartmentLists) => `
-Bạn là AI chuyên phân tích phiếu/file yêu cầu văn phòng phẩm (VPP) của công ty Trung Nam E&C.
+const buildSystemPrompt = (lists: ServerDepartmentLists, companyName: string) => `
+Bạn là AI chuyên phân tích phiếu/file yêu cầu văn phòng phẩm (VPP) của công ty ${companyName}.
 Nhiệm vụ của bạn là phân tích văn bản hoặc tệp (Excel, Word, PDF, hình ảnh) được tải lên và trích xuất các thông tin dưới định dạng JSON.
 
 ━━━ QUY TẮC ĐỐI CHIẾU NHIỀU SHEET (QUAN TRỌNG) ━━━
@@ -50,7 +51,7 @@ Nếu tài liệu Excel có nhiều sheet, bạn phải đối chiếu chéo đ�
 export async function POST(req: NextRequest) {
   try {
     const deptLists = await getDepartmentListsServer();
-    const SYSTEM_PROMPT = buildSystemPrompt(deptLists);
+    const SYSTEM_PROMPT = buildSystemPrompt(deptLists, (await getTenantConfigServer()).company_name);
     const authHeader = req.headers.get("Authorization");
     const apiKey = (authHeader && authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : null) || process.env.OPENAI_API_KEY;
 

@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-require-imports */
 import { NextRequest, NextResponse } from "next/server";
 import { getDepartmentListsServer } from "@/lib/departmentsServer";
+import { getTenantConfigServer } from "@/lib/tenantConfigServer";
 import OpenAI from "openai";
 import * as XLSX from "xlsx";
 
@@ -221,14 +222,14 @@ function tryDirectExcelParse(sheet: XLSX.WorkSheet): ExtractedEmployee[] | null 
   return parsedEmployees;
 }
 
-const buildSystemPrompt = (DEPARTMENTS: string[]) => `
-Bạn là một AI phân tích tài liệu và hồ sơ nhân sự chuyên nghiệp cho công ty Trung Nam E&C.
+const buildSystemPrompt = (DEPARTMENTS: string[], companyName: string, companyShort: string) => `
+Bạn là một AI phân tích tài liệu và hồ sơ nhân sự chuyên nghiệp cho công ty ${companyName}.
 Nhiệm vụ của bạn là đọc và trích xuất danh sách thông tin nhân viên từ tệp tài liệu (Excel, Word, PDF, hình ảnh) được cung cấp.
 
 Hãy trích xuất và chuyển đổi các thông tin thành định dạng JSON chứa một danh sách các nhân viên.
 
 Mỗi nhân viên cần có các trường dữ liệu sau:
-1. "employee_code": Mã nhân viên (ví dụ: "NV001", "TNEC-001"). Nếu không có, để trống "".
+1. "employee_code": Mã nhân viên (ví dụ: "NV001", "${companyShort}-001"). Nếu không có, để trống "".
 2. "name": Họ và tên đầy đủ của nhân viên. Viết hoa các chữ cái đầu (ví dụ: "Nguyễn Văn A").
 3. "department": Tên phòng ban làm việc. PHẢI được ánh xạ chính xác về một trong các phòng ban hợp lệ dưới đây:
    ${JSON.stringify(DEPARTMENTS)}
@@ -291,7 +292,8 @@ Mỗi nhân viên cần có các trường dữ liệu sau:
 
 export async function POST(req: NextRequest) {
   try {
-    const SYSTEM_PROMPT = buildSystemPrompt((await getDepartmentListsServer()).phongBan);
+    const tenantCfg = await getTenantConfigServer();
+    const SYSTEM_PROMPT = buildSystemPrompt((await getDepartmentListsServer()).phongBan, tenantCfg.company_name, tenantCfg.company_short);
     const authHeader = req.headers.get("Authorization");
     const apiKey = (authHeader && authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : null) || process.env.OPENAI_API_KEY;
 

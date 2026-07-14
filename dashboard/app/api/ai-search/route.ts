@@ -3,6 +3,7 @@ import { supabase } from "@/lib/supabase";
 import { createClient } from "@supabase/supabase-js";
 import OpenAI from "openai";
 import { normalizePlan, isFeatureAllowed } from "@/lib/planShared";
+import { getTenantConfigServer } from "@/lib/tenantConfigServer";
 
 export const maxDuration = 60; // Allow enough time for AI response
 
@@ -586,7 +587,8 @@ export async function POST(req: NextRequest) {
     // 5. Gọi OpenAI (GPT-4o).
     const openai = new OpenAI({ apiKey });
 
-    const systemPrompt = `Bạn là Trợ lý Trí tuệ Nhân tạo chuyên nghiệp quản lý dữ liệu nội bộ của công ty Trung Nam E&C.
+    const tenantCfg = await getTenantConfigServer();
+    const systemPrompt = `Bạn là Trợ lý Trí tuệ Nhân tạo chuyên nghiệp quản lý dữ liệu nội bộ của công ty ${tenantCfg.company_name}.
 Nhiệm vụ của bạn là trả lời các câu hỏi tìm kiếm của nhân sự dựa trên dữ liệu hệ thống được cung cấp làm Ngữ cảnh bên dưới.
 
 QUY TẮC BẢO MẬT & VẬN HÀNH QUAN TRỌNG:

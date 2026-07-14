@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import nodemailer from "nodemailer";
+import { getTenantConfigServer } from "@/lib/tenantConfigServer";
 
 // Email của module Đăng ký xe / phòng họp. Hai chế độ:
 //  - mode "notify_approver": báo người duyệt (Trưởng phòng / HCNS) có yêu cầu mới chờ xử lý,
@@ -38,6 +39,8 @@ export async function POST(request: NextRequest) {
     const isApproved = decision === "approved";
     const isVehicle = booking.booking_type === "xe";
     const typeLabel = isVehicle ? "Đăng ký xe công tác" : "Đăng ký phòng họp";
+    // Brand công ty (tenant_config): tên gửi, tiêu đề hệ thống, URL trong email
+    const cfg = await getTenantConfigServer();
 
     const transporter = nodemailer.createTransport({
       host: smtpHost,
@@ -73,7 +76,7 @@ export async function POST(request: NextRequest) {
       const stageLabel = isFinalStage
         ? "duyệt cuối (điều phối xe & phòng họp)"
         : "xác nhận cấp Trưởng phòng / Tổ trưởng";
-      const siteOrigin = body.siteUrl || request.headers.get("origin") || process.env.NEXT_PUBLIC_SITE_URL || "https://nhansutrungnamec.com";
+      const siteOrigin = body.siteUrl || request.headers.get("origin") || process.env.NEXT_PUBLIC_SITE_URL || cfg.site_url;
       const approvalUrl = `${siteOrigin}/settings?tab=approvals&subtab=booking`;
 
       const notifyRows = [
@@ -99,9 +102,9 @@ export async function POST(request: NextRequest) {
 
             <!-- Banner Header -->
             <div style="background-color: #005BAC; background: linear-gradient(135deg, #005BAC 0%, #1e40af 100%); padding: 32px 40px; color: #ffffff;">
-              <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.15em; color: #93c5fd; margin-bottom: 8px;">TRUNG NAM E&C — HỆ THỐNG HCNS</div>
+              <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.15em; color: #93c5fd; margin-bottom: 8px;">${cfg.company_name.toUpperCase()} — ${cfg.system_subtitle.toUpperCase()}</div>
               <h1 style="margin: 0; font-size: 22px; font-weight: 850; letter-spacing: -0.025em; color: #ffffff;">🔔 Yêu Cầu ${typeLabel} Chờ Duyệt</h1>
-              <div style="font-size: 13px; color: #bfdbfe; margin-top: 6px; font-weight: 500;">Hệ thống điều phối xe & phòng họp — PM-HCNS-TNEC</div>
+              <div style="font-size: 13px; color: #bfdbfe; margin-top: 6px; font-weight: 500;">Hệ thống điều phối xe & phòng họp — ${cfg.system_title}</div>
             </div>
 
             <!-- Greeting -->
@@ -142,7 +145,7 @@ export async function POST(request: NextRequest) {
 
             <!-- Footer -->
             <div style="background-color: #f8fafc; padding: 24px 40px; text-align: center; border-top: 1px solid #e2e8f0; font-size: 11px; color: #64748b; line-height: 1.5; margin-top: 16px;">
-              Trực thuộc hệ thống quản trị nhân sự <strong>PM-HCNS-TNEC</strong><br>
+              Trực thuộc hệ thống quản trị nhân sự <strong>${cfg.system_title}</strong><br>
               Email này được gửi tự động khi có yêu cầu mới. Vui lòng không trả lời trực tiếp email này.
             </div>
           </div>
@@ -161,9 +164,9 @@ export async function POST(request: NextRequest) {
       ).join(", ");
 
       await transporter.sendMail({
-        from: `"Phòng HCNS TNEC" <${smtpUser}>`,
+        from: `"${cfg.email_sender_name}" <${smtpUser}>`,
         to: uniqueRecipients,
-        subject: `[Trung Nam E&C] 🔔 Chờ duyệt: ${typeLabel} ${booking.resource_name} - ${booking.requester_name || ""} (${dateStr2})`,
+        subject: `[${cfg.company_name}] 🔔 Chờ duyệt: ${typeLabel} ${booking.resource_name} - ${booking.requester_name || ""} (${dateStr2})`,
         html: notifyHtml,
       });
 
@@ -223,9 +226,9 @@ export async function POST(request: NextRequest) {
 
           <!-- Banner Header -->
           <div style="background-color: #005BAC; background: linear-gradient(135deg, #005BAC 0%, #1e40af 100%); padding: 32px 40px; color: #ffffff;">
-            <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.15em; color: #93c5fd; margin-bottom: 8px;">TRUNG NAM E&C — PHÒNG HÀNH CHÍNH NHÂN SỰ</div>
+            <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.15em; color: #93c5fd; margin-bottom: 8px;">${cfg.company_name.toUpperCase()} — ${cfg.email_sender_name.toUpperCase()}</div>
             <h1 style="margin: 0; font-size: 22px; font-weight: 850; letter-spacing: -0.025em; color: #ffffff;">Kết Quả ${typeLabel}</h1>
-            <div style="font-size: 13px; color: #bfdbfe; margin-top: 6px; font-weight: 500;">Hệ thống điều phối xe & phòng họp — PM-HCNS-TNEC</div>
+            <div style="font-size: 13px; color: #bfdbfe; margin-top: 6px; font-weight: 500;">Hệ thống điều phối xe & phòng họp — ${cfg.system_title}</div>
           </div>
 
           <!-- Status Banner -->
@@ -260,7 +263,7 @@ export async function POST(request: NextRequest) {
 
           <!-- Footer -->
           <div style="background-color: #f8fafc; padding: 24px 40px; text-align: center; border-top: 1px solid #e2e8f0; font-size: 11px; color: #64748b; line-height: 1.5;">
-            Trực thuộc hệ thống quản trị nhân sự <strong>PM-HCNS-TNEC</strong><br>
+            Trực thuộc hệ thống quản trị nhân sự <strong>${cfg.system_title}</strong><br>
             Email này được gửi tự động sau khi có kết quả phê duyệt. Vui lòng không trả lời trực tiếp email này.
           </div>
         </div>
@@ -270,9 +273,9 @@ export async function POST(request: NextRequest) {
 
     const dateStr = booking.start_time ? new Date(booking.start_time).toLocaleDateString("vi-VN") : "";
     await transporter.sendMail({
-      from: `"Phòng HCNS TNEC" <${smtpUser}>`,
+      from: `"${cfg.email_sender_name}" <${smtpUser}>`,
       to: booking.requester_email,
-      subject: `[Trung Nam E&C] ${isApproved ? "✅ Đã duyệt" : "❌ Từ chối"} - ${typeLabel} ${booking.resource_name} ngày ${dateStr}`,
+      subject: `[${cfg.company_name}] ${isApproved ? "✅ Đã duyệt" : "❌ Từ chối"} - ${typeLabel} ${booking.resource_name} ngày ${dateStr}`,
       html: mailHtml,
     });
 

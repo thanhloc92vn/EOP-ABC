@@ -4,8 +4,9 @@ import { useState, useEffect, useMemo } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
-import { fetchApprovalPermissions } from "@/lib/approvers";
+import { fetchApprovalPermissions, normalizeName } from "@/lib/approvers";
 import { useDepartments } from "@/lib/departments";
+import { useTenantConfig } from "@/lib/tenantConfig";
 import {
   User,
   Clock,
@@ -118,16 +119,16 @@ interface Contract {
 
 // --- MOCK DATA FOR C&B SUBSECTIONS ---
 const MOCK_SALARY_INFO = [
-  { id: "1", name: "Phạm Thành Lộc", base: 18000000, insurance: 5000000, phone: 300000, lunch: 730000, gas: 500000, total: 19530000 },
-  { id: "2", name: "Nguyễn Bích Như Quỳnh", base: 15000000, insurance: 5000000, phone: 300000, lunch: 730000, gas: 500000, total: 16530000 },
-  { id: "3", name: "Nguyễn Ngọc Thanh Hằng", base: 14000000, insurance: 4500000, phone: 200000, lunch: 730000, gas: 500000, total: 15430000 },
-  { id: "4", name: "Trần Nghiệp Quang", base: 22000000, insurance: 6000000, phone: 500000, lunch: 730000, gas: 1000000, total: 24230000 }
+  { id: "1", name: "Nguyễn Văn An", base: 18000000, insurance: 5000000, phone: 300000, lunch: 730000, gas: 500000, total: 19530000 },
+  { id: "2", name: "Trần Thị Bích", base: 15000000, insurance: 5000000, phone: 300000, lunch: 730000, gas: 500000, total: 16530000 },
+  { id: "3", name: "Lê Thị Chi", base: 14000000, insurance: 4500000, phone: 200000, lunch: 730000, gas: 500000, total: 15430000 },
+  { id: "4", name: "Phạm Văn Dũng", base: 22000000, insurance: 6000000, phone: 500000, lunch: 730000, gas: 1000000, total: 24230000 }
 ];
 
 const MOCK_PROMOTIONS = [
-  { name: "Phạm Thành Lộc", oldRole: "Nhân viên Marketing", newRole: "Trưởng nhóm Marketing", oldDept: "Phòng HCNS", newDept: "Phòng HCNS", date: "2026-01-01", type: "Thăng chức" },
-  { name: "Trần Nghiệp Quang", oldRole: "Kỹ sư giám sát", newRole: "Chỉ huy phó", oldDept: "Phòng Dự án", newDept: "Dự án Vàm Lẽo", date: "2026-03-15", type: "Bổ nhiệm" },
-  { name: "Nguyễn Ngọc Thanh Hằng", oldRole: "Nhân viên C&B bậc 1", newRole: "Nhân viên C&B bậc 2", oldDept: "Phòng HCNS", newDept: "Phòng HCNS", date: "2026-05-01", type: "Tăng bậc" }
+  { name: "Nguyễn Văn An", oldRole: "Nhân viên Marketing", newRole: "Trưởng nhóm Marketing", oldDept: "Phòng HCNS", newDept: "Phòng HCNS", date: "2026-01-01", type: "Thăng chức" },
+  { name: "Phạm Văn Dũng", oldRole: "Kỹ sư giám sát", newRole: "Chỉ huy phó", oldDept: "Phòng Dự án", newDept: "Dự án Vàm Lẽo", date: "2026-03-15", type: "Bổ nhiệm" },
+  { name: "Lê Thị Chi", oldRole: "Nhân viên C&B bậc 1", newRole: "Nhân viên C&B bậc 2", oldDept: "Phòng HCNS", newDept: "Phòng HCNS", date: "2026-05-01", type: "Tăng bậc" }
 ];
 
 const MOCK_TERMINATIONS = [
@@ -136,14 +137,14 @@ const MOCK_TERMINATIONS = [
 ];
 
 const MOCK_CONCURRENTS = [
-  { name: "Trần Nghiệp Quang", primary: "Chỉ huy phó Vàm Lẽo", concurrent: "Giám sát ATLĐ dự án Vàm Lẽo", dept: "Khối Dự án", allowance: 3000000, date: "2026-04-01" }
+  { name: "Phạm Văn Dũng", primary: "Chỉ huy phó Vàm Lẽo", concurrent: "Giám sát ATLĐ dự án Vàm Lẽo", dept: "Khối Dự án", allowance: 3000000, date: "2026-04-01" }
 ];
 
 const MOCK_ATTENDANCE_LOGS = [
-  { date: "2026-06-09", name: "Phạm Thành Lộc", checkin: "07:55", checkout: "17:05", hours: 8, status: "Đúng giờ" },
-  { date: "2026-06-09", name: "Nguyễn Bích Như Quỳnh", checkin: "08:02", checkout: "17:15", hours: 8, status: "Muộn (2')" },
-  { date: "2026-06-09", name: "Nguyễn Ngọc Thanh Hằng", checkin: "07:45", checkout: "17:00", hours: 8, status: "Đúng giờ" },
-  { date: "2026-06-09", name: "Trần Nghiệp Quang", checkin: "08:15", checkout: "17:30", hours: 8, status: "Muộn (15')" }
+  { date: "2026-06-09", name: "Nguyễn Văn An", checkin: "07:55", checkout: "17:05", hours: 8, status: "Đúng giờ" },
+  { date: "2026-06-09", name: "Trần Thị Bích", checkin: "08:02", checkout: "17:15", hours: 8, status: "Muộn (2')" },
+  { date: "2026-06-09", name: "Lê Thị Chi", checkin: "07:45", checkout: "17:00", hours: 8, status: "Đúng giờ" },
+  { date: "2026-06-09", name: "Phạm Văn Dũng", checkin: "08:15", checkout: "17:30", hours: 8, status: "Muộn (15')" }
 ];
 
 const MOCK_EXPLANATIONS: any[] = [];
@@ -164,10 +165,10 @@ const MOCK_ALLOWANCES = [
 ];
 
 const MOCK_BHXH_LOGS = [
-  { name: "Phạm Thành Lộc", code: "0123456789", base: 18000000, SI: 1440000, HI: 270000, UI: 180000, company_total: 3870000, booklet: "Công ty giữ" },
-  { name: "Nguyễn Bích Như Quỳnh", code: "0123456790", base: 15000000, SI: 1200000, HI: 225000, UI: 150000, company_total: 3225000, booklet: "Công ty giữ" },
-  { name: "Nguyễn Ngọc Thanh Hằng", code: "0123456791", base: 14000000, SI: 1120000, HI: 210000, UI: 140000, company_total: 3010000, booklet: "Công ty giữ" },
-  { name: "Trần Nghiệp Quang", code: "0123456792", base: 22000000, SI: 1760000, HI: 330000, UI: 220000, company_total: 4730000, booklet: "Công ty giữ" }
+  { name: "Nguyễn Văn An", code: "0123456789", base: 18000000, SI: 1440000, HI: 270000, UI: 180000, company_total: 3870000, booklet: "Công ty giữ" },
+  { name: "Trần Thị Bích", code: "0123456790", base: 15000000, SI: 1200000, HI: 225000, UI: 150000, company_total: 3225000, booklet: "Công ty giữ" },
+  { name: "Lê Thị Chi", code: "0123456791", base: 14000000, SI: 1120000, HI: 210000, UI: 140000, company_total: 3010000, booklet: "Công ty giữ" },
+  { name: "Phạm Văn Dũng", code: "0123456792", base: 22000000, SI: 1760000, HI: 330000, UI: 220000, company_total: 4730000, booklet: "Công ty giữ" }
 ];
 
 const BENEFIT_POLICY: Record<string, Record<string, number | string>> = {
@@ -400,6 +401,8 @@ const BOARD_OF_DIRECTORS = [
 export default function CBPage() {
   // Danh sách phòng ban / BĐH đọc từ bảng departments (fallback danh sách cũ)
   const deptLists = useDepartments();
+  // Cấu hình công ty (tenant_config) — lấy tên Trưởng phòng HCNS làm người duyệt mặc định
+  const tenantCfg = useTenantConfig();
   // 5 Main Tabs: employee_profile, attendance, payroll_insurance, benefits, org_chart
   const [activeTab, setActiveTab] = useState("employee_profile");
   const [activeSubTab, setActiveSubTab] = useState("personal");
@@ -1153,7 +1156,12 @@ export default function CBPage() {
     const daysInMonth = new Date(year, month, 0).getDate();
 
     const rows: TimesheetMatrixRow[] = parsedEmployees.map(emp => {
-      const isLocMarketing = normalizeText(emp.name).includes("pham thanh loc");
+      // Người được miễn thứ Bảy vẫn tính đủ công — danh sách khai trong
+      // tenant_config.saturday_exempt_names (khớp tên kiểu chứa, không dấu)
+      const empNameNorm = normalizeText(emp.name);
+      const isSaturdayExempt = (tenantCfg.saturday_exempt_names || []).some(
+        n => n && empNameNorm.includes(normalizeText(n))
+      );
       const days: string[] = [];
       let vanPhong = 0, phepCoLuong = 0, congTac = 0, nghiKhongLuong = 0;
 
@@ -1183,8 +1191,8 @@ export default function CBPage() {
             tag = "x";
             vanPhong += 1;
           }
-        } else if (isSaturday && isLocMarketing) {
-          // Phạm Thành Lộc (Tổ trưởng Marketing) được ưu tiên không làm thứ Bảy, vẫn tính đủ công
+        } else if (isSaturday && isSaturdayExempt) {
+          // Được ưu tiên không làm thứ Bảy, vẫn tính đủ công (tenant_config.saturday_exempt_names)
           tag = "";
         } else if (isSunday) {
           tag = "";
@@ -2923,11 +2931,13 @@ export default function CBPage() {
     // 2. Search systematically for a department head based on title/role (like TP. HCNS)
     let manager = deptMembers.find(m => isManagerRole(m.role));
 
-    // 3. Specific override for HCNS (Hành chính Nhân sự) as requested by user
-    if (normalizedTarget === "Phòng Hành Chính Nhân Sự") {
+    // 3. Specific override for HCNS (Hành chính Nhân sự) as requested by user:
+    // ưu tiên đúng Trưởng phòng HCNS khai trong tenant_config.hcns_head_name
+    const headNorm = normalizeName(tenantCfg.hcns_head_name || "");
+    if (normalizedTarget === "Phòng Hành Chính Nhân Sự" && headNorm) {
       const daoEmp = deptMembers.find(m => {
         const nameLower = (m.name || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[đĐ]/g, "d");
-        return nameLower.includes("dao");
+        return nameLower.includes(headNorm);
       });
       if (daoEmp) manager = daoEmp;
     }
@@ -2944,7 +2954,7 @@ export default function CBPage() {
 
     // 5. Hardcoded fallbacks if no employee record is found in DB matching department head
     if (normalizedTarget === "Phòng Hành Chính Nhân Sự") {
-      return "Lê Thị Hoa Đào"; // Trưởng phòng HCNS thực tế trong DB
+      return tenantCfg.hcns_head_name; // Trưởng phòng HCNS khai trong tenant_config
     }
     if (normalizedTarget === "Phòng Kỹ Thuật") {
       return "Phó Giám Đốc";
@@ -3461,7 +3471,7 @@ export default function CBPage() {
     const formatDate = (d: Date) => d.toLocaleDateString("vi-VN");
     return [
       {
-        title: "Gia nhập Trung Nam EC",
+        title: `Gia nhập ${tenantCfg.company_name}`,
         description: `Bắt đầu công tác tại ${emp.department} với vị trí ${emp.role}.`,
         date: formatDate(joinDate),
         icon: UserCheck,
@@ -4975,7 +4985,7 @@ export default function CBPage() {
                                 <td className="py-3.5 px-3 text-slate-500 font-medium">{e.department || "Phòng HCNS"}</td>
                                 <td className="py-3.5 px-3 text-slate-550 italic font-medium">{e.reason}</td>
                                 <td className="py-3.5 px-3 font-mono text-[#005BAC]">{e.propose}</td>
-                                <td className="py-3.5 px-3 text-slate-650 font-medium">{e.approver || "Lê Thị Hoa Đào"}</td>
+                                <td className="py-3.5 px-3 text-slate-650 font-medium">{e.approver || tenantCfg.hcns_head_name}</td>
                                 <td className="py-3.5 px-3 text-center">
                                   <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
                                     e.status === "Đã duyệt" ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"

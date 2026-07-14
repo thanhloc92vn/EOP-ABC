@@ -3,12 +3,13 @@ import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import OpenAI from "openai";
 import { normalizePlan, isFeatureAllowed } from "@/lib/planShared";
+import { getTenantConfigServer } from "@/lib/tenantConfigServer";
 
 // GPT phân tích transcript dài có thể mất vài phút; tránh Vercel timeout trả về non-JSON.
 export const maxDuration = 300;
 
-const SYSTEM_PROMPT = `
-Bạn là Trợ lý Thư ký Trưởng cấp cao của Ban Giám Đốc Tập đoàn Trung Nam E&C. 
+const buildSystemPrompt = (companyName: string, chairmanName: string) => `
+Bạn là Trợ lý Thư ký Trưởng cấp cao của Ban Giám Đốc công ty ${companyName}.
 Nhiệm vụ của bạn là nhận văn bản gỡ băng thô (transcript_raw) từ cuộc họp, LỌC BỎ HOÀN TOÀN các đoạn nói chuyện phiếm, thảo luận lan man ngoài lề, ý kiến trùng lặp hoặc từ ngữ rườm rà. Hãy tập trung 100% VÀO CÁC Ý CHÍNH TRỌNG TÂM, KẾT LUẬN CỦA CHỦ TRÌ VÀ CÁC ĐẦU VIỆC ĐƯỢC GIAO.
 
 ━━ QUY TẮC PHÂN TÍCH VÀ CHẮT LỌC NỘI DUNG (RẤT BẮT BUỘC) ━━
@@ -27,14 +28,14 @@ Nhiệm vụ của bạn là nhận văn bản gỡ băng thô (transcript_raw) 
    - "package_name": Tên gói thầu liên quan (nếu có).
 3. TRÍCH XUẤT NỘI DUNG CHI TIẾT ("transcript_clean"):
    - Hãy biên tập lại bản gỡ băng thành các đoạn thoại ngắn gọn, lịch sự, chuẩn mực ngôn ngữ doanh nghiệp.
-   - Gán đúng tên người phát biểu (Ví dụ: "Ông Huỳnh Giáp Nhân:", "Bà Đoàn Thị Minh Thương:").
+   - Gán đúng tên người phát biểu (Ví dụ: "Ông ${chairmanName}:", "Bà Nguyễn Thị B:").
    - Chỉ giữ lại các ý kiến đóng góp mang tính chuyên môn, báo cáo số liệu thực tế và các câu chỉ đạo quan trọng của Chủ trì.
 4. TÓM TẮT TRỌNG TÂM & DIỄN BIẾN CUỘC HỌP ("summary"):
     - Trình bày chi tiết, chuyên nghiệp và chia làm 2 phần rõ rệt bằng tiếng Việt:
       * "PHẦN 1: TÓM TẮT DIỄN BIẾN CUỘC HỌP" (Nêu rõ bối cảnh, lý do họp, các báo cáo chính và các ý kiến đóng góp/thảo luận quan trọng của các bộ phận).
-      * "PHẦN 2: TIẾN TRÌNH & TIMELINE CHI TIẾT" (Phác thảo lại diễn biến cuộc họp theo trình tự thời gian hoặc trình tự phát biểu của các thành viên. Ví dụ: "09:00 - 09:15: ...", "09:15 - 09:40: ...", hoặc "1. Báo cáo tiến độ dự án Tây Ninh (Mr Vinh/BĐH)...", "2. Ý kiến phản hồi của Phòng KHĐT...", "3. Kết luận và chỉ đạo của Giám đốc (Mr Nhân)..."). Phần này cần chi tiết, có số liệu thực tế được nhắc đến trong file ghi âm để người đọc nắm được dòng sự kiện chính.
+      * "PHẦN 2: TIẾN TRÌNH & TIMELINE CHI TIẾT" (Phác thảo lại diễn biến cuộc họp theo trình tự thời gian hoặc trình tự phát biểu của các thành viên. Ví dụ: "09:00 - 09:15: ...", "09:15 - 09:40: ...", hoặc "1. Báo cáo tiến độ dự án (đại diện BĐH)...", "2. Ý kiến phản hồi của Phòng KHĐT...", "3. Kết luận và chỉ đạo của Chủ trì (${chairmanName})..."). Phần này cần chi tiết, có số liệu thực tế được nhắc đến trong file ghi âm để người đọc nắm được dòng sự kiện chính.
 5. BÓC TÁCH NỘI DUNG CUỘC HỌP & ĐẦU VIỆC ("action_items"):
-    - Trích xuất mảng JSON chứa toàn bộ nội dung diễn biến cuộc họp và các đầu việc được giao, phân tách theo các mục chính (như mẫu Biên bản họp Tập đoàn Trung Nam).
+    - Trích xuất mảng JSON chứa toàn bộ nội dung diễn biến cuộc họp và các đầu việc được giao, phân tách theo các mục chính (như mẫu Biên bản họp của công ty).
     - Các phần chính bắt buộc phải xuất hiện (tương ứng với các dòng Tiêu đề phần trong mảng action_items):
       * Mục A: "A. MỤC ĐÍCH CUỘC HỌP"
       * Mục B: "B. SỰ CẦN THIẾT TRIỂN KHAI" hoặc "BỐI CẢNH/HIỆN TRẠNG"
@@ -51,9 +52,9 @@ Nhiệm vụ của bạn là nhận văn bản gỡ băng thô (transcript_raw) 
 
     - Đối với các dòng nội dung chi tiết hoặc công việc cụ thể nằm dưới từng mục:
       * "stt": Số thứ tự dạng số (1, 2, 3...)
-      * "content": Mô tả đầy đủ, chi tiết, chuyên nghiệp nội dung phát biểu, báo cáo của bộ phận, các chỉ đạo/góp ý cốt lõi của sếp (Huỳnh Giáp Nhân hoặc người chủ trì). Viết đầy đủ nghiệp vụ dài từ 2-4 câu, KHÔNG tóm tắt sơ sài chung chung.
-      * "assignee": Bộ phận hoặc Cá nhân chịu trách nhiệm chính (Ví dụ: "Tất cả", "Mr Lộc", "P. HCNS", "P. MKT", "P. QLDA", "BĐH", "Mr Hưng"). Cố gắng chuẩn hoá tên.
-      * "coop": Bộ phận phối hợp (nếu có, ví dụ: "Tất cả", "P. Nhân sự", "Mr Lộc"). Nếu không có thì để "".
+      * "content": Mô tả đầy đủ, chi tiết, chuyên nghiệp nội dung phát biểu, báo cáo của bộ phận, các chỉ đạo/góp ý cốt lõi của sếp (${chairmanName} hoặc người chủ trì). Viết đầy đủ nghiệp vụ dài từ 2-4 câu, KHÔNG tóm tắt sơ sài chung chung.
+      * "assignee": Bộ phận hoặc Cá nhân chịu trách nhiệm chính (Ví dụ: "Tất cả", "Mr A", "P. HCNS", "P. MKT", "P. QLDA", "BĐH", "Mr B"). Cố gắng chuẩn hoá tên.
+      * "coop": Bộ phận phối hợp (nếu có, ví dụ: "Tất cả", "P. Nhân sự", "Mr A"). Nếu không có thì để "".
       * "deadline": Hạn hoàn thành cụ thể (Ví dụ: "Trước 11/07/2026", "Nắm chủ trương thực hiện", "Đang vận hành").
       * "is_header": false
 
@@ -134,7 +135,11 @@ export async function POST(req: NextRequest) {
     // 1. Call OpenAI
     const openai = new OpenAI({ apiKey });
     const model = req.headers.get("x-openai-model") || process.env.OPENAI_MODEL || "gpt-4o-mini";
-    
+
+    // Tên công ty + người chủ trì mặc định lấy từ tenant_config (company_name, chairman_name)
+    const tenantCfg = await getTenantConfigServer();
+    const SYSTEM_PROMPT = buildSystemPrompt(tenantCfg.company_name, tenantCfg.chairman_name);
+
     const completion = await openai.chat.completions.create({
       model: model === "gpt-4o-mini" ? "gpt-4o-mini" : model,
       messages: [

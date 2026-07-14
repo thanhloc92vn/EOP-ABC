@@ -3,6 +3,7 @@
 import { useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import { useDepartments } from "@/lib/departments";
+import { useTenantConfig } from "@/lib/tenantConfig";
 import { 
   Send, 
   User, 
@@ -20,6 +21,7 @@ export default function SuggestionsPublicForm() {
   // Phòng ban đọc từ bảng `departments` (form công khai dùng policy anon),
   // bọc giữa các nhóm gộp thô cố định của form Góp ý.
   const { phongBan } = useDepartments();
+  const tenantCfg = useTenantConfig();
   const DEPARTMENTS = ["Ban Giám Đốc", ...phongBan, "Ban Điều Hành Dự Án", "Khác"];
   const [isAnonymous, setIsAnonymous] = useState(true);
   const [title, setTitle] = useState("");
@@ -162,7 +164,7 @@ export default function SuggestionsPublicForm() {
           <div className="space-y-2">
             <h2 className="text-xl font-bold text-white tracking-tight">Gửi Góp Ý Thành Công!</h2>
             <p className="text-slate-400 text-xs leading-relaxed px-2">
-              Chân thành cảm ơn bạn đã gửi ý kiến đóng góp. Mọi ý kiến đều góp phần xây dựng môi trường làm việc tốt hơn tại Trung Nam E&C.
+              Chân thành cảm ơn bạn đã gửi ý kiến đóng góp. Mọi ý kiến đều góp phần xây dựng môi trường làm việc tốt hơn tại {tenantCfg.company_name}.
             </p>
           </div>
 
@@ -188,13 +190,13 @@ export default function SuggestionsPublicForm() {
       {/* Title Header */}
       <div className="text-center mb-8 max-w-md px-4 relative">
         <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-600 to-cyan-500 flex items-center justify-center font-heading font-extrabold text-white text-xl shadow-lg shadow-blue-500/20 mx-auto mb-4">
-          TN
+          {tenantCfg.logo_text}
         </div>
         <h1 className="text-2xl font-black text-white tracking-tight bg-gradient-to-r from-white via-slate-100 to-slate-350 bg-clip-text text-transparent">
           HỘP THƯ GÓP Ý ONLINE
         </h1>
         <p className="text-xs text-slate-400 font-medium tracking-wide mt-1.5 uppercase leading-relaxed">
-          Trung Nam E&C • Ban điều hành dự án
+          {tenantCfg.company_name} • Ban điều hành dự án
         </p>
       </div>
 

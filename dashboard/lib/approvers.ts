@@ -119,6 +119,64 @@ export function isMarketingTeamLeader(userName?: string | null): boolean {
   return activeGroups().some(g => g.leader_name.trim().toLowerCase() === n);
 }
 
+// ━━━ NGOẠI LỆ DUYỆT NGHỈ 1 NGÀY (bảng leave_exceptions) ━━━
+// Mỗi dòng = "approver được duyệt cấp 1 đơn nghỉ 1 NGÀY của assignee" (đặc cách
+// theo quy định nội bộ). Khớp tên kiểu "chứa, không phân biệt hoa thường & dấu"
+// — lưu "Quỳnh" khớp cả "Nguyễn Bích Như Quỳnh" lẫn biến thể không dấu.
+// Cùng cơ chế cache + fallback như approval_groups ở trên.
+
+export type LeaveException = {
+  approver_name: string;
+  assignee_name: string;
+};
+
+const FALLBACK_LEAVE_EXCEPTIONS: LeaveException[] = [
+  { approver_name: "Quỳnh", assignee_name: "Hằng" },
+  { approver_name: "Hoành Anh", assignee_name: "Quyên" },
+];
+
+let leaveExceptionsCache: LeaveException[] | null = null;
+let leaveExceptionsInflight: Promise<void> | null = null;
+
+export async function fetchLeaveExceptions(): Promise<void> {
+  if (leaveExceptionsCache) return;
+  if (leaveExceptionsInflight) return leaveExceptionsInflight;
+  leaveExceptionsInflight = (async () => {
+    try {
+      const { data, error } = await supabase
+        .from("leave_exceptions")
+        .select("approver_name, assignee_name")
+        .eq("active", true);
+      if (!error && data) {
+        // Bảng tồn tại nhưng rỗng = chủ động tắt hết ngoại lệ -> tôn trọng
+        leaveExceptionsCache = data.map(r => ({
+          approver_name: r.approver_name || "",
+          assignee_name: r.assignee_name || "",
+        }));
+      }
+    } catch {
+      // giữ fallback
+    } finally {
+      leaveExceptionsInflight = null;
+    }
+  })();
+  return leaveExceptionsInflight;
+}
+
+function activeLeaveExceptions(): LeaveException[] {
+  if (!leaveExceptionsCache) {
+    void fetchLeaveExceptions();
+    return FALLBACK_LEAVE_EXCEPTIONS;
+  }
+  return leaveExceptionsCache;
+}
+
+// Bỏ dấu + thường hoá để so khớp tên kiểu "chứa" (giữ đúng hành vi cũ vốn
+// check cả "quỳnh"/"quynh"). Export cho các trang cần so tên cùng kiểu (cb).
+export function normalizeName(s: string): string {
+  return s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[\u0111\u0110]/g, "d").trim();
+}
+
 // ━━━ Chuẩn hoá nhận diện vai trò Trưởng/Phó phòng (dùng cho cấp 1 của Nghỉ phép/Công tác) ━━━
 // Trước đây logic này bị lặp lại (và hơi lệch nhau) ở Header.tsx, settings/page.tsx và
 // calendar/page.tsx — gom về một chỗ để tránh một nơi coi là quản lý còn nơi khác thì không.
@@ -164,19 +222,21 @@ export function isLeaveTripCap1Approver(params: {
     return assigneeGroup.leader_name.trim().toLowerCase() === currentUserName.trim().toLowerCase();
   }
 
-  const nameLower = currentUserName.toLowerCase();
-  const assigneeLower = assigneeName.toLowerCase();
   const isOneDay = taskTitleLower.includes("1 ngày") || taskTitleLower.includes("1 ngay");
 
-  // Quỳnh xác nhận đơn nghỉ 1 ngày của Hằng (đặc cách theo quy định nội bộ)
-  const isQuynh = nameLower.includes("quỳnh") || nameLower.includes("quynh");
-  const isHang = assigneeLower.includes("hằng") || assigneeLower.includes("hang");
-  if (isQuynh && isHang && isOneDay) return true;
-
-  // Hoành Anh xác nhận đơn nghỉ 1 ngày của Quyên (đặc cách theo quy định nội bộ)
-  const isHoanhAnh = nameLower.includes("hoành anh") || nameLower.includes("hoanh anh");
-  const isQuyen = assigneeLower.includes("quyên") || assigneeLower.includes("quyen");
-  if (isHoanhAnh && isQuyen && isOneDay) return true;
+  // Ngoại lệ duyệt nghỉ 1 ngày (bảng leave_exceptions, VD Quỳnh->Hằng,
+  // Hoành Anh->Quyên): đặc cách theo quy định nội bộ
+  if (isOneDay) {
+    const userNorm = normalizeName(currentUserName);
+    const assigneeNorm = normalizeName(assigneeName);
+    const matched = activeLeaveExceptions().some(ex => {
+      const approverNorm = normalizeName(ex.approver_name);
+      const exAssigneeNorm = normalizeName(ex.assignee_name);
+      return !!approverNorm && !!exAssigneeNorm &&
+        userNorm.includes(approverNorm) && assigneeNorm.includes(exAssigneeNorm);
+    });
+    if (matched) return true;
+  }
 
   // Người được nhân viên chỉ định tường minh khi gửi đơn ("Người duyệt: X")
   if (taskNotes && taskNotes.includes(`Người duyệt: ${currentUserName}`)) return true;

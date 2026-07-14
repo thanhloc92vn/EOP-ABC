@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
+import { getTenantConfigServer } from "@/lib/tenantConfigServer";
 
-const SYSTEM_PROMPT = `
-Bạn là một AI phân tích hóa đơn chuyên nghiệp cho phòng Hành chính của công ty Trung Nam E&C.
+const buildSystemPrompt = (companyName: string) => `
+Bạn là một AI phân tích hóa đơn chuyên nghiệp cho phòng Hành chính của công ty ${companyName}.
 Nhiệm vụ của bạn là đọc nội dung hóa đơn (hoặc phân tích hình ảnh hóa đơn) và trích xuất chính xác các thông tin cần thiết dưới định dạng JSON theo đúng hướng dẫn nghiệp vụ sau:
 
 ━━━ HƯỚNG DẪN BÓC TÁCH CHI TIẾT (XIN LƯU Ý KỸ) ━━━
@@ -57,7 +58,8 @@ async function analyzeWithResponsesAPI(
   model: string,
   fileBuffer: Buffer,
   fileName: string,
-  mimeType: string
+  mimeType: string,
+  systemPrompt: string
 ): Promise<Record<string, unknown>> {
   const base64Data = fileBuffer.toString("base64");
   const fileDataUrl = `data:${mimeType};base64,${base64Data}`;
@@ -68,7 +70,7 @@ async function analyzeWithResponsesAPI(
       {
         role: "user",
         content: [
-          { type: "input_text", text: `${SYSTEM_PROMPT}\n\n${FULL_PROMPT}` },
+          { type: "input_text", text: `${systemPrompt}\n\n${FULL_PROMPT}` },
           { type: "input_file", filename: fileName, file_data: fileDataUrl },
         ],
       },
@@ -123,6 +125,7 @@ export async function POST(req: NextRequest) {
     }
 
     const openai = new OpenAI({ apiKey });
+    const SYSTEM_PROMPT = buildSystemPrompt((await getTenantConfigServer()).company_name);
     const fileBuffer = Buffer.from(await file.arrayBuffer());
     const fileType = file.name.toLowerCase();
     const model =
@@ -143,7 +146,8 @@ export async function POST(req: NextRequest) {
         model,
         fileBuffer,
         file.name,
-        "application/pdf"
+        "application/pdf",
+        SYSTEM_PROMPT
       );
     }
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

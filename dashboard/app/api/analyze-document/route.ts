@@ -1,14 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
+import { getTenantConfigServer } from "@/lib/tenantConfigServer";
 
-const SYSTEM_PROMPT = `
-Bạn là một AI phân tích công văn chuyên nghiệp cho phòng Văn thư của công ty Trung Nam E&C.
+const buildSystemPrompt = (companyName: string, companyShort: string) => `
+Bạn là một AI phân tích công văn chuyên nghiệp cho phòng Văn thư của công ty ${companyName}.
 Nhiệm vụ của bạn là đọc nội dung văn bản (hoặc phân tích hình ảnh quét công văn) và trích xuất chính xác các thông tin cần thiết dưới định dạng JSON, bao gồm cả việc TỰ ĐỘNG PHÂN LOẠI công văn.
 
 ━━━ CÁC TRƯỜNG THÔNG TIN CẦN TRÍCH XUẤT ━━━
 1. "type": Phân loại loại công văn. Phải là một trong bốn giá trị sau:
-   - "incoming": Công văn đến (Văn bản từ cơ quan/đơn vị bên ngoài gửi ĐẾN Trung Nam E&C. Ví dụ kính gửi: Công ty CP Xây dựng và Lắp máy Trung Nam, hoặc Trung Nam E&C).
-   - "outgoing_1": Công văn đi 1 (Công văn đi chung của công ty Trung Nam E&C gửi cho đơn vị khác, ký bởi Ban Giám đốc hoặc Đại diện công ty, số hiệu thường có dạng "TNEC-CV", "TNEC/", "CV/TNEC"...).
+   - "incoming": Công văn đến (Văn bản từ cơ quan/đơn vị bên ngoài gửi ĐẾN ${companyName}. Ví dụ phần kính gửi ghi tên công ty ${companyName}).
+   - "outgoing_1": Công văn đi 1 (Công văn đi chung của công ty ${companyName} gửi cho đơn vị khác, ký bởi Ban Giám đốc hoặc Đại diện công ty, số hiệu thường có dạng "${companyShort}-CV", "${companyShort}/", "CV/${companyShort}"...).
    - "outgoing_2": Công văn đi 2 (Các loại văn bản đi khác như hồ sơ thầu, công văn của ban quản lý dự án, báo giá, yêu cầu vật tư... số hiệu thường chứa ký hiệu các dự án hoặc ban điều hành công trường khác).
    - "outgoing_hdqt": Công văn HĐQT (Công văn đi phát hành từ Hội đồng Quản trị, số hiệu thường chứa ký hiệu "HĐQT" hoặc ký bởi Chủ tịch HĐQT).
 2. "doc_number": Số hiệu văn bản / Số hiệu công văn (ví dụ: "1577/BQLDAGT-DA5", "575/PMUMT-DHDA1"). Nếu không tìm thấy hoặc chưa có, điền rỗng "".
@@ -24,7 +25,7 @@ Nhiệm vụ của bạn là đọc nội dung văn bản (hoặc phân tích h�
 
 ━━━ QUY TẮC PHÂN TÍCH ━━━
 - Hãy đọc thật kỹ các phần: Tiêu đề công văn, Nơi nhận (Kính gửi / To), Người ký (Signed by), và phần Trích yếu (V/v...) để lấy đúng thông tin và phân loại loại công văn chính xác.
-- Đối với "doc_number" (Số văn bản): Hãy chú ý đối chiếu và so sánh giữa nội dung văn bản với Tên file tài liệu gốc (nếu có cung cấp). Thường số hiệu văn bản có thể được viết trong tên file dưới dạng các ký hiệu phân tách bằng dấu chấm hoặc dấu gạch chéo (ví dụ tên file "20210604.711.026.CV.TNEC..." tương ứng với Số văn bản là "711/026/CV/TNEC" hoặc "711.026/CV/TNEC"). Hãy khôi phục số hiệu chính xác nhất bằng cách kết hợp thông tin đọc được trong văn bản và tên file.
+- Đối với "doc_number" (Số văn bản): Hãy chú ý đối chiếu và so sánh giữa nội dung văn bản với Tên file tài liệu gốc (nếu có cung cấp). Thường số hiệu văn bản có thể được viết trong tên file dưới dạng các ký hiệu phân tách bằng dấu chấm hoặc dấu gạch chéo (ví dụ tên file "20210604.711.026.CV.${companyShort}..." tương ứng với Số văn bản là "711/026/CV/${companyShort}" hoặc "711.026/CV/${companyShort}"). Hãy khôi phục số hiệu chính xác nhất bằng cách kết hợp thông tin đọc được trong văn bản và tên file.
 - Chuẩn hoá ngày về dạng YYYY-MM-DD. Ví dụ "ngày 10 tháng 03 năm 2026" hoặc "10/03/2026" đều chuyển thành "2026-03-10".
 - Trả về kết quả CHỈ dạng JSON, không kèm bất kỳ giải thích nào bên ngoài.
 
@@ -61,6 +62,8 @@ export async function POST(req: NextRequest) {
     }
 
     const openai = new OpenAI({ apiKey });
+    const tenantCfg = await getTenantConfigServer();
+    const SYSTEM_PROMPT = buildSystemPrompt(tenantCfg.company_name, tenantCfg.company_short);
     const fileBuffer = Buffer.from(await file.arrayBuffer());
     const fileType = file.name.toLowerCase();
 

@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import nodemailer from "nodemailer";
 import * as XLSX from "xlsx";
+import { getTenantConfigServer } from "@/lib/tenantConfigServer";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { smtpConfig, recipient, summary, details, month } = body;
+    // Brand công ty (tenant_config): tên gửi, tiêu đề hệ thống trong email
+    const cfg = await getTenantConfigServer();
 
     if (!smtpConfig || !smtpConfig.user || !smtpConfig.pass) {
       return NextResponse.json({ error: "Cấu hình gửi email (SMTP) không đầy đủ!" }, { status: 400 });
@@ -102,7 +105,7 @@ export async function POST(request: NextRequest) {
           
           <!-- Banner Header -->
           <div style="background: linear-gradient(135deg, #005BAC 0%, #1e40af 100%); padding: 32px 40px; text-align: left; color: #ffffff;">
-            <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.15em; color: #93c5fd; margin-bottom: 8px;">TRUNG NAM E&C</div>
+            <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.15em; color: #93c5fd; margin-bottom: 8px;">${cfg.company_name.toUpperCase()}</div>
             <h1 style="margin: 0; font-size: 22px; font-weight: 850; letter-spacing: -0.025em; color: #ffffff;">Báo Cáo Chi Tiết Chấm Công</h1>
             <div style="font-size: 13px; color: #bfdbfe; margin-top: 6px; font-weight: 500;">Đối soát thông tin chấm công tự động - Tháng ${month}</div>
           </div>
@@ -206,7 +209,7 @@ export async function POST(request: NextRequest) {
           
           <!-- Footer -->
           <div style="background-color: #f8fafc; padding: 24px 40px; text-align: center; border-top: 1px solid #e2e8f0; font-size: 11px; color: #64748b; line-height: 1.5;">
-            Trực thuộc hệ thống quản trị nhân sự <strong>PM-HCNS-TNEC</strong><br>
+            Trực thuộc hệ thống quản trị nhân sự <strong>${cfg.system_title}</strong><br>
             Báo cáo này được gửi tự động. Vui lòng không trả lời trực tiếp email này.
           </div>
         </div>
@@ -217,9 +220,9 @@ export async function POST(request: NextRequest) {
     // Send email
     const safeMonthStr = month.replace("/", "_");
     await transporter.sendMail({
-      from: `"Phòng Nhân Sự TNEC" <${smtpConfig.user}>`,
+      from: `"${cfg.email_sender_name}" <${smtpConfig.user}>`,
       to: recipient.email,
-      subject: `[Trung Nam E&C] Bảng đối soát chi tiết chấm công - Tháng ${month} - ${recipient.name}`,
+      subject: `[${cfg.company_name}] Bảng đối soát chi tiết chấm công - Tháng ${month} - ${recipient.name}`,
       html: mailHtmlContent,
       attachments: [
         {

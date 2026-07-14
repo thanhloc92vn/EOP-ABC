@@ -1,9 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-require-imports */
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
+import { getTenantConfigServer } from "@/lib/tenantConfigServer";
 
-const SYSTEM_PROMPT = `
-Bạn là một AI phân tích hợp đồng lao động chuyên nghiệp cho phòng Hành chính Nhân sự của công ty Trung Nam E&C.
+const buildSystemPrompt = (companyName: string) => `
+Bạn là một AI phân tích hợp đồng lao động chuyên nghiệp cho phòng Hành chính Nhân sự của công ty ${companyName}.
 Nhiệm vụ của bạn là đọc nội dung hợp đồng lao động cá nhân (tệp PDF, Word hoặc hình ảnh quét) và trích xuất chính xác các thông tin cần thiết dưới định dạng JSON.
 
 ━━━ CÁC TRƯỜNG THÔNG TIN CẦN TRÍCH XUẤT ━━━
@@ -78,6 +79,7 @@ export async function POST(req: NextRequest) {
     }
 
     const openai = new OpenAI({ apiKey });
+    const SYSTEM_PROMPT = buildSystemPrompt((await getTenantConfigServer()).company_name);
     const fileBuffer = Buffer.from(await file.arrayBuffer());
     const fileType = file.name.toLowerCase();
 

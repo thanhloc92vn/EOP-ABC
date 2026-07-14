@@ -37,6 +37,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { docSoVietNam, exportDeNghiChuyenTien, downloadDocFile } from "@/lib/wordExporter";
 import { supabase } from "@/lib/supabase";
 import { useDepartments } from "@/lib/departments";
+import { useTenantConfig, TENANT_DEFAULTS, AdminStaff } from "@/lib/tenantConfig";
 import * as XLSX from "xlsx";
 
 // ─── TYPES & INTERFACES ──────────────────────────────────────────────────────
@@ -77,7 +78,8 @@ interface AllocationTarget {
 interface ChecklistItem {
   id: string;
   task: string;
-  assignee: "Như Quỳnh" | "Thùy Quyên" | "Thanh Hằng" | "Thanh Ngân";
+  // Tên ngắn nhân sự hành chính — danh sách đọc từ tenant_config.admin_staff
+  assignee: string;
   frequency: "Hàng ngày" | "Hàng tuần" | "Hàng tháng";
   status: "Kế hoạch" | "Đang xử lý" | "Chờ duyệt" | "Cần chỉnh sửa" | "Hoàn thành";
   priority?: "Cao" | "Trung bình" | "Thấp";
@@ -194,16 +196,16 @@ const normalizeDeptName = (name: string): string => {
 };
 
 const INITIAL_ALLOCATION_TARGETS: AllocationTarget[] = [
-  { id: "CP-01", type: "phongban", name: "Phòng Hành Chính Nhân Sự", receiver: "Như Quỳnh", notes: "Văn phòng công ty" },
-  { id: "CP-02", type: "phongban", name: "Phòng Tài Chính Kế Toán", receiver: "Thanh Hằng", notes: "Văn phòng công ty" },
-  { id: "CP-03", type: "phongban", name: "Phòng Vật Tư Thiết Bị", receiver: "Thùy Quyên", notes: "Văn phòng công ty" },
+  { id: "CP-01", type: "phongban", name: "Phòng Hành Chính Nhân Sự", receiver: "Đại diện phòng", notes: "Văn phòng công ty" },
+  { id: "CP-02", type: "phongban", name: "Phòng Tài Chính Kế Toán", receiver: "Đại diện phòng", notes: "Văn phòng công ty" },
+  { id: "CP-03", type: "phongban", name: "Phòng Vật Tư Thiết Bị", receiver: "Đại diện phòng", notes: "Văn phòng công ty" },
   { id: "CP-04", type: "phongban", name: "Phòng Thị Trường", receiver: "Nguyễn Văn A", notes: "Văn phòng công ty" },
   { id: "CP-05", type: "phongban", name: "Phòng Kế Hoạch Đấu Thầu", receiver: "Nguyễn Văn B", notes: "Văn phòng công ty" },
   { id: "CP-06", type: "phongban", name: "Phòng Kỹ Thuật", receiver: "Nguyễn Văn C", notes: "Văn phòng công ty" },
   { id: "CP-07", type: "phongban", name: "Phòng An Toàn Lao Động", receiver: "Nguyễn Văn D", notes: "Văn phòng công ty" },
   { id: "CP-08", type: "phongban", name: "Phòng Quản Lý Dự Án", receiver: "Nguyễn Văn E", notes: "Văn phòng công ty" },
   { id: "CP-09", type: "phongban", name: "Phòng Thư Ký, Trợ Lý", receiver: "Nguyễn Văn F", notes: "Văn phòng công ty" },
-  { id: "CP-10", type: "phongban", name: "Giám đốc", receiver: "Trần Nghiệp Quang", notes: "Ban Giám đốc" },
+  { id: "CP-10", type: "phongban", name: "Giám đốc", receiver: "Giám đốc", notes: "Ban Giám đốc" },
   { id: "CP-11", type: "phongban", name: "Phó Giám đốc", receiver: "Phó Giám đốc", notes: "Ban Giám đốc" },
   { id: "CP-12", type: "duan", name: "BĐH Vàm Lẽo", receiver: "Chỉ huy trưởng", notes: "Dự án Vàm Lẽo" },
   { id: "CP-13", type: "duan", name: "BĐH Tỉnh Lộ 8", receiver: "Chỉ huy trưởng", notes: "Dự án Tỉnh Lộ 8" },
@@ -327,10 +329,25 @@ const DEFAULT_REPORT_ROWS: Array<{ stt: string; content: string; category_type: 
   { stt: "17.1", content: "Tiền thuê nhà BĐH", category_type: "project" },
 ];
 
+// Avatar kanban VPP: chữ viết tắt (2 từ cuối của tên) + màu ổn định theo vị trí
+// trong danh sách nhân sự hành chính (tên lạ ngoài danh sách -> màu cuối bảng).
+const STAFF_AVATAR_COLORS = ["bg-pink-500", "bg-blue-500", "bg-violet-500", "bg-emerald-500", "bg-amber-500", "bg-cyan-600"];
+const staffInitials = (name: string): string => {
+  const words = (name || "").trim().split(/\s+/).filter(Boolean);
+  return words.slice(-2).map(w => w.charAt(0)).join("").toUpperCase() || "?";
+};
+const staffColor = (name: string, staff: AdminStaff[]): string => {
+  const idx = staff.findIndex(s => s.name === name);
+  return STAFF_AVATAR_COLORS[(idx >= 0 ? idx : staff.length) % STAFF_AVATAR_COLORS.length];
+};
+
 // ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
 export default function AdministrationPage() {
   // Danh sách phòng ban / BĐH đọc từ bảng departments
   const deptLists = useDepartments();
+  // Nhân sự hành chính (kanban VPP + form thanh toán) đọc từ tenant_config.admin_staff
+  const tenantCfg = useTenantConfig();
+  const adminStaff = tenantCfg.admin_staff.length > 0 ? tenantCfg.admin_staff : TENANT_DEFAULTS.admin_staff;
   const PROJECTS = deptLists.bdh; // giữ nguyên tên để các chỗ dùng bên dưới không đổi
   const [activeTab, setActiveTab] = useState<"checklist" | "invoice" | "recurring" | "report" | "vpp">("checklist");
   const [recurringSubTab, setRecurringSubTab] = useState<"suppliers" | "payments">("suppliers");
@@ -386,9 +403,18 @@ export default function AdministrationPage() {
   const [draggedOverCol, setDraggedOverCol] = useState<string | null>(null);
   const [showAddTask, setShowAddTask] = useState(false);
   const [newTaskName, setNewTaskName] = useState("");
-  const [newTaskAssignee, setNewTaskAssignee] = useState<"Như Quỳnh" | "Thùy Quyên" | "Thanh Hằng" | "Thanh Ngân">("Như Quỳnh");
+  const [newTaskAssignee, setNewTaskAssignee] = useState<string>(TENANT_DEFAULTS.admin_staff[0]?.name || "");
   const [newTaskPriority, setNewTaskPriority] = useState<"Cao" | "Trung bình" | "Thấp">("Trung bình");
   const [newTaskFreq, setNewTaskFreq] = useState<"Hàng ngày" | "Hàng tuần" | "Hàng tháng">("Hàng ngày");
+
+  // Khi config nạp xong mà người được chọn không nằm trong danh sách nhân sự
+  // của khách (VD deploy công ty khác) -> tự chuyển về người đầu danh sách
+  useEffect(() => {
+    if (adminStaff.length > 0 && !adminStaff.some(s => s.name === newTaskAssignee)) {
+      setNewTaskAssignee(adminStaff[0].name);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminStaff]);
 
   // Drag and Drop handlers
   const handleDragStart = (e: React.DragEvent, id: string) => {
@@ -594,7 +620,7 @@ export default function AdministrationPage() {
   const [tempEndDate, setTempEndDate] = useState("2026-06-30");
 
   // Form metadata for document generation
-  const [employeeName, setEmployeeName] = useState("Nguyễn Bích Như Quỳnh");
+  const [employeeName, setEmployeeName] = useState(TENANT_DEFAULTS.admin_staff[0]?.full_name || TENANT_DEFAULTS.admin_staff[0]?.name || "");
   const [employeeDept, setEmployeeDept] = useState("Phòng Hành chính nhân sự");
   const [paymentMission, setPaymentMission] = useState("Thanh toán chi phí hành chính tháng 06");
   const [documentType, setDocumentType] = useState<"payment" | "transfer">("transfer");
@@ -986,7 +1012,7 @@ export default function AdministrationPage() {
           return {
             id: t.id,
             task: t.title,
-            assignee: t.assignee || "Như Quỳnh",
+            assignee: t.assignee || adminStaff[0]?.name || "",
             frequency: frequency as any,
             status: t.status as any,
             priority: t.priority || "Trung bình",
@@ -5582,12 +5608,12 @@ export default function AdministrationPage() {
                           <label className="text-[10px] font-bold text-slate-400 uppercase">Người thực hiện</label>
                           <select
                             value={newTaskAssignee}
-                            onChange={(e) => setNewTaskAssignee(e.target.value as any)}
+                            onChange={(e) => setNewTaskAssignee(e.target.value)}
                             className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-bold bg-white"
                           >
-                            <option value="Như Quỳnh">Như Quỳnh</option>
-                            <option value="Thanh Hằng">Thanh Hằng</option>
-                            <option value="Thanh Ngân">Thanh Ngân</option>
+                            {adminStaff.map(s => (
+                              <option key={s.name} value={s.name}>{s.name}</option>
+                            ))}
                           </select>
                         </div>
                         <div className="space-y-1">
@@ -5627,20 +5653,14 @@ export default function AdministrationPage() {
                     </form>
                   )}
 
-                  {/* Personnel summary */}
+                  {/* Personnel summary — đọc từ tenant_config.admin_staff */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-100">
-                    <div>
-                      <p className="text-[10px] font-bold text-slate-400 uppercase">Nhân sự: <strong>Như Quỳnh (Phó phòng Hành chính)</strong></p>
-                      <p className="text-[11px] text-slate-600 font-semibold mt-1">Nhiệm vụ: Phụ trách hậu cần, kho VPP, phòng họp, tiếp khách & làm hồ sơ thanh toán, đối soát hóa đơn</p>
-                    </div>
-                    <div className="border-l border-slate-200 pl-4">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase">Nhân sự: <strong>Thanh Hằng (Văn thư)</strong></p>
-                      <p className="text-[11px] text-slate-600 font-semibold mt-1">Nhiệm vụ: Phụ trách tiếp nhận, phân loại, lưu trữ và chuyển phát công văn</p>
-                    </div>
-                    <div className="border-l border-slate-200 pl-4">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase">Nhân sự: <strong>Thanh Ngân (Hành chính)</strong></p>
-                      <p className="text-[11px] text-slate-600 font-semibold mt-1">Nhiệm vụ: Phụ trách hỗ trợ công tác hành chính, quản lý văn phòng phẩm & cấp phát vật tư</p>
-                    </div>
+                    {adminStaff.map((s, i) => (
+                      <div key={s.name} className={i > 0 ? "border-l border-slate-200 pl-4" : ""}>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase">Nhân sự: <strong>{s.name} ({s.role})</strong></p>
+                        <p className="text-[11px] text-slate-600 font-semibold mt-1">Nhiệm vụ: {s.duties}</p>
+                      </div>
+                    ))}
                   </div>
 
                   {/* Kanban Drag and Drop Board */}
@@ -5719,12 +5739,8 @@ export default function AdministrationPage() {
                                   <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100">
                                     {/* Assignee indicator */}
                                     <div className="flex items-center gap-1.5 min-w-0">
-                                      <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white uppercase shrink-0 ${
-                                        item.assignee === "Như Quỳnh" ? "bg-pink-500" :
-                                        item.assignee === "Thùy Quyên" ? "bg-emerald-500" :
-                                        "bg-blue-500"
-                                      }`}>
-                                        {item.assignee === "Như Quỳnh" ? "NQ" : item.assignee === "Thùy Quyên" ? "TQ" : "TH"}
+                                      <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white uppercase shrink-0 ${staffColor(item.assignee, adminStaff)}`}>
+                                        {staffInitials(item.assignee)}
                                       </div>
                                       <span className="text-[9px] font-bold text-slate-500 truncate">{item.assignee}</span>
                                     </div>
