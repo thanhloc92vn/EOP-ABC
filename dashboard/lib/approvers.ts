@@ -38,24 +38,85 @@ export function hasAnyApprovalPermission(perms: ApprovalPermissions): boolean {
   return perms.canApproveTrip || perms.canApproveLeave || perms.canApproveJustification || perms.canApproveBooking;
 }
 
-// ━━━ Tổ Marketing (trực thuộc phòng HCNS nhưng có luồng duyệt cấp 1 riêng) ━━━
-// Khi thành viên tổ Marketing đăng ký xe / phòng họp, cấp 1 do Tổ trưởng Marketing
-// duyệt (không phải Trưởng phòng HCNS), sau đó vẫn chuyển HCNS (chị Quỳnh) duyệt cuối.
-export const MARKETING_TEAM_LEADER = "Phạm Thành Lộc";
-export const MARKETING_TEAM_MEMBERS = ["Võ Thị Thanh Nhàn", "Trịnh An Thuận"];
+// ━━━ NHÓM DUYỆT RIÊNG (bảng approval_groups) ━━━
+// Nhóm = tổ có luồng duyệt cấp 1 riêng: thành viên gửi đơn/đăng ký -> TỔ TRƯỞNG
+// nhóm duyệt (không phải Trưởng phòng ban), sau đó vẫn chuyển HCNS duyệt cuối.
+// VD hiện tại: Tổ Marketing (trực thuộc HCNS). Danh sách đọc từ bảng
+// approval_groups — thêm/bớt thành viên, đổi tổ trưởng chỉ cần sửa bảng.
+//
+// Các hàm is/get bên dưới là ĐỒNG BỘ (được gọi trong filter/render), nên nhóm
+// được nạp 1 lần vào cache module; chưa nạp xong thì dùng FALLBACK_GROUPS
+// (đúng hiện trạng cũ) — hành vi không đổi khi DB lỗi.
 
-// Dùng chung cho mọi loại đăng ký/đơn từ (booking, nghỉ phép, công tác) — không chỉ booking,
-// đặt tên chung để không gây hiểu lầm khi tái sử dụng ở module khác.
-export function isMarketingTeamMember(personName?: string | null): boolean {
+export type ApprovalGroup = {
+  name: string;
+  leader_name: string;
+  member_names: string[];
+};
+
+const FALLBACK_GROUPS: ApprovalGroup[] = [
+  { name: "Tổ Marketing", leader_name: "Phạm Thành Lộc", member_names: ["Võ Thị Thanh Nhàn", "Trịnh An Thuận"] },
+];
+
+let groupsCache: ApprovalGroup[] | null = null;
+let groupsInflight: Promise<void> | null = null;
+
+export async function fetchApprovalGroups(): Promise<void> {
+  if (groupsCache) return;
+  if (groupsInflight) return groupsInflight;
+  groupsInflight = (async () => {
+    try {
+      const { data, error } = await supabase
+        .from("approval_groups")
+        .select("name, leader_name, member_names")
+        .eq("active", true);
+      if (!error && data && data.length > 0) {
+        groupsCache = data.map(g => ({
+          name: g.name,
+          leader_name: g.leader_name || "",
+          member_names: Array.isArray(g.member_names) ? g.member_names : [],
+        }));
+      }
+    } catch {
+      // giữ fallback
+    } finally {
+      groupsInflight = null;
+    }
+  })();
+  return groupsInflight;
+}
+
+function activeGroups(): ApprovalGroup[] {
+  if (!groupsCache) {
+    // Kích hoạt nạp nền cho lần đánh giá sau; lần này trả fallback (hành vi cũ)
+    void fetchApprovalGroups();
+    return FALLBACK_GROUPS;
+  }
+  return groupsCache;
+}
+
+// Nhóm duyệt mà người này là THÀNH VIÊN (null nếu không thuộc nhóm nào)
+export function getApprovalGroupOfMember(personName?: string | null): ApprovalGroup | null {
   const n = (personName || "").trim().toLowerCase();
-  if (!n) return false;
-  return MARKETING_TEAM_MEMBERS.some(m => m.toLowerCase() === n);
+  if (!n) return null;
+  return activeGroups().find(g => g.member_names.some(m => m.trim().toLowerCase() === n)) || null;
+}
+
+// Tên tổ trưởng phụ trách duyệt cấp 1 cho thành viên này (null nếu không thuộc nhóm)
+export function getGroupLeaderNameForMember(personName?: string | null): string | null {
+  return getApprovalGroupOfMember(personName)?.leader_name || null;
+}
+
+// Giữ nguyên tên 2 hàm cũ để các chỗ gọi hiện có không phải đổi.
+// "MarketingTeam" giờ hiểu là "thuộc bất kỳ nhóm duyệt riêng nào trong bảng".
+export function isMarketingTeamMember(personName?: string | null): boolean {
+  return !!getApprovalGroupOfMember(personName);
 }
 
 export function isMarketingTeamLeader(userName?: string | null): boolean {
   const n = (userName || "").trim().toLowerCase();
   if (!n) return false;
-  return n === MARKETING_TEAM_LEADER.toLowerCase();
+  return activeGroups().some(g => g.leader_name.trim().toLowerCase() === n);
 }
 
 // ━━━ Chuẩn hoá nhận diện vai trò Trưởng/Phó phòng (dùng cho cấp 1 của Nghỉ phép/Công tác) ━━━
@@ -96,9 +157,11 @@ export function isLeaveTripCap1Approver(params: {
   const { currentUserName, currentUserRole, currentUserIsAdmin, assigneeName, taskNotes, taskTitleLower } = params;
   if (currentUserIsAdmin) return true;
 
-  // Tổ Marketing (Nhàn, Thuận): cấp 1 do Tổ trưởng Marketing duyệt, không phải Trưởng phòng HCNS
-  if (isMarketingTeamMember(assigneeName)) {
-    return isMarketingTeamLeader(currentUserName);
+  // Thành viên nhóm duyệt riêng (VD tổ Marketing): cấp 1 do TỔ TRƯỞNG CỦA CHÍNH
+  // NHÓM ĐÓ duyệt, không phải Trưởng phòng ban
+  const assigneeGroup = getApprovalGroupOfMember(assigneeName);
+  if (assigneeGroup) {
+    return assigneeGroup.leader_name.trim().toLowerCase() === currentUserName.trim().toLowerCase();
   }
 
   const nameLower = currentUserName.toLowerCase();
@@ -139,6 +202,8 @@ export function isLeaveTripCap2Approver(params: {
 // grant or revoke. Email matching mirrors the employees lookup: the stored
 // email only needs to contain the login email.
 export async function fetchApprovalPermissions(email?: string | null): Promise<ApprovalPermissions> {
+  // Nhân tiện nạp sớm cache nhóm duyệt (Header/Sidebar gọi hàm này ở mọi trang)
+  void fetchApprovalGroups();
   if (!email) return NO_APPROVAL_PERMISSIONS;
   try {
     // select("*") để không lỗi khi cột mới (vd can_approve_booking) chưa được migrate

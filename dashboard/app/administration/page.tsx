@@ -234,15 +234,10 @@ const INITIAL_RECURRING: RecurringPayment[] = [
   { name: "Cước Internet cáp quang", bank: "BIDV", account: "1199558877", owner: "VIETTEL TELECOM", lastAmount: 3500000, content: "Thanh toan cuoc internet TNEC thang" }
 ];
 
-const INITIAL_SUPPLIERS: Supplier[] = [
-  { id: "NCC-01", name: "CÔNG TY CỔ PHẦN AN CƯ ĐỨC PHÚ", account: "520052868", bank: "TP BANK - PGD Kỳ Hòa - CN Sài Gòn", service: "Thuê văn phòng HCM", project_name: "Văn phòng HCM" },
-  { id: "NCC-02", name: "CÔNG TY CỔ PHẦN ĐẦU TƯ THỊNH VƯỢNG HVC", account: "334818", bank: "ACB - CN Tân Bình", service: "Lắp máy lạnh văn phòng", project_name: "Văn phòng HCM" },
-  { id: "NCC-03", name: "CÔNG TY CỔ PHẦN HAI BỐN BẢY", account: "14020592925013", bank: "NH TMCP Kỹ Thương VN - CN Quang Trung", service: "Chuyển phát nhanh", project_name: "Văn phòng HCM" },
-  { id: "NCC-04", name: "CÔNG TY CỔ PHẦN THƯƠNG MẠI XÂY DỰNG HPK", account: "3181551718", bank: "NH ACB - CN Gò Vấp", service: "Thi công sửa chữa văn phòng", project_name: "Văn phòng HCM" },
-  { id: "NCC-05", name: "Nguyễn Bích Như Quỳnh", account: "11112857", bank: "Ngân hàng ACB", service: "", project_name: "Văn phòng HCM" },
-  { id: "NCC-06", name: "Nguyễn Ngọc Thanh Hằng", account: "02597652501", bank: "Ngân hàng Tiên Phong (TP BANK)", service: "", project_name: "Văn phòng HCM" },
-  { id: "NCC-07", name: "TRẦN NGHIỆP QUANG", account: "0942870512", bank: "Ngân hàng SHB", service: "Thuê nhà Vàm Lẽo", project_name: "Vàm Lẽo" },
-];
+// Danh mục nhà cung cấp nằm HOÀN TOÀN trong bảng `suppliers` (Supabase).
+// KHÔNG seed dữ liệu thật ở đây — số tài khoản ngân hàng là dữ liệu nhạy cảm,
+// không được commit vào source code (lịch sử Git tồn tại vĩnh viễn).
+const INITIAL_SUPPLIERS: Supplier[] = [];
 
 interface AdminMonthlyReport {
   id: string;
@@ -6461,7 +6456,7 @@ export default function AdministrationPage() {
                               required
                               value={supplierAccountState}
                               onChange={(e) => setSupplierAccountState(e.target.value)}
-                              placeholder="Ví dụ: 14020592925013"
+                              placeholder="Ví dụ: 0123456789"
                               className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 bg-white text-xs font-mono font-semibold text-slate-800"
                             />
                           </div>

@@ -23,7 +23,7 @@ import {
   CalendarDays,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { isMarketingTeamMember, MARKETING_TEAM_LEADER } from "@/lib/approvers";
+import { getGroupLeaderNameForMember } from "@/lib/approvers";
 
 type BookingType = "xe" | "phong_hop";
 
@@ -358,13 +358,15 @@ function BookingContent() {
         .select();
       if (error) throw error;
 
-      // Gửi email báo người duyệt cấp 1 (Trưởng phòng cùng phòng ban; tổ Marketing thì
-      // báo Tổ trưởng Marketing). Chạy nền, lỗi không chặn việc gửi đăng ký.
+      // Gửi email báo người duyệt cấp 1 (Trưởng phòng cùng phòng ban; thành viên nhóm
+      // duyệt riêng trong bảng approval_groups — VD tổ Marketing — thì báo tổ trưởng nhóm).
+      // Chạy nền, lỗi không chặn việc gửi đăng ký.
       try {
         let approverEmails = "";
-        if (isMarketingTeamMember(currentUser.name)) {
+        const groupLeaderName = getGroupLeaderNameForMember(currentUser.name);
+        if (groupLeaderName) {
           approverEmails = employees
-            .filter((e) => e.name.trim().toLowerCase() === MARKETING_TEAM_LEADER.toLowerCase())
+            .filter((e) => e.name.trim().toLowerCase() === groupLeaderName.trim().toLowerCase())
             .map((e) => e.email)
             .filter(Boolean)
             .join(", ");

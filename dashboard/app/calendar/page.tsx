@@ -7,8 +7,7 @@ import { supabase } from "@/lib/supabase";
 import { exportPhieuThanhToan, exportPhieuCongTac, downloadDocFile } from "@/lib/wordExporter";
 import {
   isManagerRole,
-  isMarketingTeamMember,
-  MARKETING_TEAM_LEADER,
+  getGroupLeaderNameForMember,
   getRequestStage,
   isLeaveTripCap1Approver,
 } from "@/lib/approvers";
@@ -954,13 +953,15 @@ ${tripRoutes.map((r, i) => `Chặng ${i + 1}:
 
       if (error) throw error;
 
-      // Báo email cho người duyệt cấp 1: Tổ trưởng Marketing (nếu là Nhàn/Thuận) hoặc
+      // Báo email cho người duyệt cấp 1: tổ trưởng nhóm duyệt riêng (nếu người gửi
+      // thuộc nhóm trong bảng approval_groups, VD tổ Marketing) hoặc
       // Trưởng/Phó phòng cùng phòng ban với người đăng ký — chạy nền, không chặn việc gửi đơn
       try {
         let approverEmails = "";
-        if (isMarketingTeamMember(modalName)) {
+        const groupLeaderName = getGroupLeaderNameForMember(modalName);
+        if (groupLeaderName) {
           approverEmails = employeeDirectory
-            .filter(e => e.name.trim().toLowerCase() === MARKETING_TEAM_LEADER.toLowerCase())
+            .filter(e => e.name.trim().toLowerCase() === groupLeaderName.trim().toLowerCase())
             .map(e => e.email)
             .filter(Boolean)
             .join(", ");
