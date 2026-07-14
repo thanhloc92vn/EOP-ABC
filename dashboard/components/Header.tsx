@@ -485,6 +485,7 @@ export default function Header({ title, subtitle }: Props) {
         return {
           id: b.id,
           type: "booking",
+          bookingType: isVehicleBooking ? "xe" : "phong_hop",
           typeText: isVehicleBooking ? "Đăng ký xe" : "Đăng ký phòng họp",
           message: `${b.requester_name} đăng ký ${isVehicleBooking ? "xe" : ""} ${b.resource_name} lúc ${timeStr}${b.status === "pending_hcns" ? " (đã qua Trưởng phòng, chờ HCNS duyệt cuối)" : ""}`,
           time: b.created_at ? new Date(b.created_at).toLocaleTimeString("vi-VN", { hour: '2-digit', minute: '2-digit' }) + " " + new Date(b.created_at).toLocaleDateString("vi-VN") : "",
@@ -635,7 +636,8 @@ export default function Header({ title, subtitle }: Props) {
                         notif.type === "justification"
                           ? "/settings?tab=approvals&subtab=explanation"
                           : notif.type === "booking"
-                          ? "/settings?tab=approvals&subtab=booking"
+                          // Mở thẳng lịch đăng ký xe/phòng họp + bật popup chi tiết của đúng đăng ký này
+                          ? `/dang-ky?tab=${notif.bookingType || "phong_hop"}&bookingId=${notif.id}`
                           : notif.type === "leave"
                           ? "/settings?tab=approvals&subtab=leave"
                           : notif.type === "trip"
