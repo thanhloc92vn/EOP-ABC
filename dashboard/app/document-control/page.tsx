@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
+import { fetchApprovalPermissions, ApprovalPermissions, NO_APPROVAL_PERMISSIONS } from "@/lib/approvers";
 import {
   FileDown,
   FileUp,
@@ -21,7 +22,8 @@ import {
   AlertCircle,
   CheckCircle,
   Eye,
-  Download
+  Download,
+  ShieldAlert
 } from "lucide-react";
 
 interface ClericalDoc {
@@ -186,6 +188,7 @@ export default function DocumentControlPage() {
     department: string;
     isAdmin: boolean;
   } | null>(null);
+  const [approvalPerms, setApprovalPerms] = useState<ApprovalPermissions>(NO_APPROVAL_PERMISSIONS);
 
   const fetchCurrentUser = useCallback(async () => {
     try {
@@ -218,14 +221,23 @@ export default function DocumentControlPage() {
         department: empData?.department || "Chưa xếp phòng",
         isAdmin
       });
+
+      // Per-user grant xem Văn Thư (cờ can_view_documents trong approval_permissions)
+      setApprovalPerms(await fetchApprovalPermissions(email));
     } catch (err) {
       console.error("Error fetching current user info:", err);
     }
   }, []);
 
+  // Chỉ Admin hoặc người được cấp cờ can_view_documents (bảng approval_permissions —
+  // cấp/thu quyền trong Supabase Table Editor, không cần sửa code) mới được vào trang
+  // Văn Thư. Khớp đúng RLS trên bảng clerical_documents.
+  const canView = !!(currentUser && (currentUser.isAdmin || approvalPerms.canViewDocuments));
+
   const canManage = useMemo(() => {
     if (!currentUser) return false;
     if (currentUser.isAdmin) return true;
+    if (approvalPerms.canViewDocuments) return true;
 
     const roleLower = (currentUser.role || "").toLowerCase();
     const deptLower = (currentUser.department || "").toLowerCase();
@@ -239,7 +251,7 @@ export default function DocumentControlPage() {
       roleLower.includes("phó phòng") ||
       roleLower.includes("giám đốc")
     );
-  }, [currentUser]);
+  }, [currentUser, approvalPerms]);
 
   // Load API Settings & Current User & Active Tab on mount
   useEffect(() => {
@@ -854,6 +866,39 @@ export default function DocumentControlPage() {
       (d.file_name || "").toLowerCase().includes(q)
     );
   });
+
+  // Màn chặn truy cập (giống Góp ý & Kiến nghị): tài khoản không có quyền thấy
+  // thông báo từ chối, không thấy bất kỳ dữ liệu công văn nào. RLS trên bảng
+  // clerical_documents là lớp chặn thật ở database.
+  if (currentUser && !canView) {
+    return (
+      <div className="flex min-h-screen bg-[#F7F9FC]">
+        <Sidebar />
+        <div className="ml-60 flex-1 flex flex-col min-w-0">
+          <Header title="Văn Thư" subtitle="Quản lý và số hóa công văn đi/đến, tự động phân tích trích xuất dữ liệu bằng AI" />
+          <main className="flex-1 p-8 flex flex-col items-center justify-center max-w-4xl">
+            <div className="glass bg-white rounded-2xl p-8 border border-slate-200/50 shadow-premium text-center space-y-4 max-w-md">
+              <div className="w-16 h-16 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center mx-auto shadow-sm">
+                <ShieldAlert size={32} />
+              </div>
+              <h2 className="font-heading font-extrabold text-slate-800 text-lg">Truy cập bị từ chối</h2>
+              <p className="text-xs text-slate-500 font-semibold leading-relaxed">
+                Tài khoản của bạn ({currentUser.email}) không có quyền xem nội dung Văn Thư. Chỉ Admin và cán bộ được cấp quyền riêng (Phòng HCNS) mới truy cập được mục này.
+              </p>
+              <div className="pt-2">
+                <a
+                  href="/"
+                  className="inline-block px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-all shadow active:scale-95"
+                >
+                  Quay lại Dashboard
+                </a>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen bg-[#F7F9FC]">
