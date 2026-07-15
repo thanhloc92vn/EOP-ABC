@@ -720,6 +720,12 @@ export default function EmployeeManagementPage() {
     perms.canManageEmployees
   ));
 
+  // Nút "Danh sách nhân sự" (nhập/upload hồ sơ hàng loạt) dùng chung cờ quản lý hồ
+  // sơ nhân sự: Admin + người có cờ perms.canManageEmployees (hiện là C&B Lại Nguyễn
+  // Lan Phương và TP. HCNS Lê Thị Hoa Đào). Cấp/thu quyền cho ai khác chỉ cần bật/tắt
+  // cột can_manage_employees trong bảng approval_permissions — không sửa code.
+  const canUploadEmployeeList = isOnlyAdmin;
+
   const handleRestoreAccess = async (emp: Employee) => {
     if (!confirm(`Mở lại quyền truy cập hệ thống cho "${emp.name}"?\n\nTrạng thái sẽ được đổi từ "NV Nghỉ việc" về "Chính thức", tài khoản Google của họ sẽ đăng nhập được ngay lập tức.`)) return;
     await handleUpdateEmployeeField(emp.id, "status", "Chính thức");
@@ -955,14 +961,16 @@ export default function EmployeeManagementPage() {
                   Bàn giao & Khóa tài khoản
                 </button>
               )}
-              <button 
-                onClick={() => fileInputRef.current?.click()}
-                className="flex items-center gap-1.5 bg-white border border-slate-200 text-slate-700 text-xs font-semibold px-4 py-2.5 rounded-xl hover:bg-slate-50 transition-all shadow-sm cursor-pointer"
-                title="Nhập danh sách nhân sự tự động bằng AI từ Excel, Word, PDF, Ảnh"
-              >
-                <Upload size={13} className="text-slate-500" />
-                Danh sách nhân sự
-              </button>
+              {canUploadEmployeeList && (
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center gap-1.5 bg-white border border-slate-200 text-slate-700 text-xs font-semibold px-4 py-2.5 rounded-xl hover:bg-slate-50 transition-all shadow-sm cursor-pointer"
+                  title="Nhập danh sách nhân sự tự động bằng AI từ Excel, Word, PDF, Ảnh"
+                >
+                  <Upload size={13} className="text-slate-500" />
+                  Danh sách nhân sự
+                </button>
+              )}
               <button
                 onClick={openSettings}
                 className="p-2.5 bg-white border border-slate-200 text-slate-500 rounded-xl hover:bg-slate-50 transition-all shadow-sm cursor-pointer inline-flex items-center justify-center"
