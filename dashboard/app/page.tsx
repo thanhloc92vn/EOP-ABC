@@ -5,6 +5,7 @@ import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
 import { useTenantConfig } from "@/lib/tenantConfig";
+import { fetchApprovalPermissions } from "@/lib/approvers";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 import {
   Users,
@@ -15,6 +16,8 @@ import {
   Briefcase,
   ChevronRight,
   Loader2,
+  Receipt,
+  FileText,
 } from "lucide-react";
 
 const CHART_COLORS = ["#10B981", "#3B82F6", "#8B5CF6", "#F59E0B", "#06B6D4", "#EC4899", "#34D399", "#A78BFA", "#F472B6"];
@@ -160,6 +163,10 @@ export default function DashboardPage() {
   const [contracts, setContracts] = useState<any[]>([]);
   const [officeNeeds, setOfficeNeeds] = useState<Record<string, number>>({});
   const [projectNeeds, setProjectNeeds] = useState<Record<string, number>>({});
+  // "Chi phí của tôi": phiếu thanh toán do chính user tạo (RLS invoices trả về đúng
+  // phiếu của họ). isHcnsViewer = Admin/HCNS thì vẫn thấy khối chi phí tổng hợp.
+  const [isHcnsViewer, setIsHcnsViewer] = useState(false);
+  const [myInvoices, setMyInvoices] = useState<any[]>([]);
 
   // Bộ lọc thời gian khối Tuyển dụng — mặc định tháng hiện tại, cho phép chỉnh từ ngày/đến ngày.
   const nowD = new Date();
@@ -197,6 +204,41 @@ export default function DashboardPage() {
       }
     };
     fetchAll();
+  }, []);
+
+  // Nạp thông tin "của tôi": quyền xem tổng hợp (Admin/HCNS) + các phiếu do chính
+  // user tạo. RLS trên bảng invoices đảm bảo nhân viên thường chỉ nhận về phiếu của
+  // họ; với Admin/HCNS ta lọc thêm theo created_by để ra đúng "chi phí của tôi".
+  useEffect(() => {
+    const fetchMine = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const email = session?.user?.email || "";
+        if (!email) return;
+
+        const { data: allowed } = await supabase
+          .from("allowed_users")
+          .select("role")
+          .ilike("email", email)
+          .maybeSingle();
+        const isAdmin = allowed?.role === "Admin";
+        const perms = await fetchApprovalPermissions(email);
+        setIsHcnsViewer(isAdmin || perms.canViewInvoices);
+
+        const { data: inv } = await supabase
+          .from("invoices")
+          .select("amount, date, number, created_by");
+        if (inv) {
+          const mine = inv.filter(
+            (r: any) => (r.created_by || "").toLowerCase() === email.toLowerCase()
+          );
+          setMyInvoices(mine);
+        }
+      } catch (err) {
+        console.error("Error loading personal cost data:", err);
+      }
+    };
+    fetchMine();
   }, []);
 
   // Nhu cầu tuyển dụng theo THÁNG đang lọc (đồng bộ trang Tuyển dụng).
@@ -288,6 +330,26 @@ export default function DashboardPage() {
     return { headcount, official };
   }, [employees, contracts]);
 
+  // Chi phí của tôi trong THÁNG HIỆN TẠI (theo ngày phiếu) + tổng lũy kế
+  const myCost = useMemo(() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = now.getMonth() + 1;
+    let monthTotal = 0;
+    let monthCount = 0;
+    let allTotal = 0;
+    myInvoices.forEach((r) => {
+      const amt = Number(r.amount) || 0;
+      allTotal += amt;
+      const d = parseDate(r.date);
+      if (d && d.getFullYear() === y && d.getMonth() + 1 === m) {
+        monthTotal += amt;
+        monthCount++;
+      }
+    });
+    return { monthTotal, monthCount, allTotal, hasAny: myInvoices.length > 0 };
+  }, [myInvoices]);
+
   const hrCards = [
     { label: "Nhân sự hiện tại", value: hr.headcount, icon: Users, grad: "from-indigo-500 to-blue-600" },
     { label: "Nhân sự mới vào (nhận việc)", value: recruit.acceptedHires, icon: UserPlus, grad: "from-emerald-500 to-teal-600" },
@@ -308,34 +370,76 @@ export default function DashboardPage() {
             </div>
           ) : (
             <>
-              {/* ── Chi phí hành chính tổng hợp 2 khối ── */}
-              <section className="space-y-4 animate-in fade-in duration-200">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Chi phí hành chính tổng hợp</h2>
-                  <a href="/administration" className="text-xs text-blue-600 font-semibold hover:underline flex items-center gap-1">
-                    Xem chi tiết <ChevronRight size={12} />
-                  </a>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                  {[
-                    { label: "Khối Văn Phòng", value: cost.office, icon: Building2, grad: "linear-gradient(135deg,#f59e0b,#d97706)" },
-                    { label: "Khối Dự Án", value: cost.project, icon: Briefcase, grad: "linear-gradient(135deg,#2563eb,#1d4ed8)" },
-                    { label: "Tổng cộng CPQL phát sinh", value: cost.grand, icon: Wallet, grad: "linear-gradient(135deg,#059669,#047857)" },
-                  ].map((c) => {
-                    const Icon = c.icon;
-                    return (
-                      <div key={c.label} style={{ background: c.grad }} className="rounded-2xl p-5 text-white shadow-lg relative overflow-hidden">
-                        <div className="flex items-center justify-between">
-                          <p className="text-[11px] font-semibold opacity-80 uppercase tracking-wider">{c.label}</p>
-                          <Icon size={18} className="opacity-70" />
+              {/* ── Chi phí hành chính tổng hợp 2 khối (chỉ Admin/HCNS) ── */}
+              {isHcnsViewer && (
+                <section className="space-y-4 animate-in fade-in duration-200">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Chi phí hành chính tổng hợp</h2>
+                    <a href="/administration" className="text-xs text-blue-600 font-semibold hover:underline flex items-center gap-1">
+                      Xem chi tiết <ChevronRight size={12} />
+                    </a>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                    {[
+                      { label: "Khối Văn Phòng", value: cost.office, icon: Building2, grad: "linear-gradient(135deg,#f59e0b,#d97706)" },
+                      { label: "Khối Dự Án", value: cost.project, icon: Briefcase, grad: "linear-gradient(135deg,#2563eb,#1d4ed8)" },
+                      { label: "Tổng cộng CPQL phát sinh", value: cost.grand, icon: Wallet, grad: "linear-gradient(135deg,#059669,#047857)" },
+                    ].map((c) => {
+                      const Icon = c.icon;
+                      return (
+                        <div key={c.label} style={{ background: c.grad }} className="rounded-2xl p-5 text-white shadow-lg relative overflow-hidden">
+                          <div className="flex items-center justify-between">
+                            <p className="text-[11px] font-semibold opacity-80 uppercase tracking-wider">{c.label}</p>
+                            <Icon size={18} className="opacity-70" />
+                          </div>
+                          <p className="font-heading font-extrabold text-3xl mt-2 leading-none">{formatMoney(c.value)}</p>
+                          <p className="text-[10px] opacity-70 mt-1.5">VNĐ · Lũy kế năm</p>
                         </div>
-                        <p className="font-heading font-extrabold text-3xl mt-2 leading-none">{formatMoney(c.value)}</p>
-                        <p className="text-[10px] opacity-70 mt-1.5">VNĐ · Lũy kế năm</p>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
+
+              {/* ── Chi phí của tôi (phiếu thanh toán do chính user tạo) ── */}
+              {/* Nhân viên thường: luôn hiện (thay cho khối tổng hợp). Admin/HCNS: chỉ hiện
+                  khi họ có phiếu tự tạo, để không làm rối dashboard bằng thẻ 0đ. */}
+              {(!isHcnsViewer || myCost.hasAny) && (
+                <section className="space-y-4 animate-in fade-in duration-200">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Chi phí của tôi</h2>
+                    <a href="/administration" className="text-xs text-blue-600 font-semibold hover:underline flex items-center gap-1">
+                      Tạo &amp; xem phiếu <ChevronRight size={12} />
+                    </a>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                    <div style={{ background: "linear-gradient(135deg,#0ea5e9,#0369a1)" }} className="rounded-2xl p-5 text-white shadow-lg relative overflow-hidden">
+                      <div className="flex items-center justify-between">
+                        <p className="text-[11px] font-semibold opacity-80 uppercase tracking-wider">Chi phí tháng này</p>
+                        <Wallet size={18} className="opacity-70" />
                       </div>
-                    );
-                  })}
-                </div>
-              </section>
+                      <p className="font-heading font-extrabold text-3xl mt-2 leading-none">{formatMoney(myCost.monthTotal)}</p>
+                      <p className="text-[10px] opacity-70 mt-1.5">VNĐ · Tháng {new Date().getMonth() + 1}/{new Date().getFullYear()}</p>
+                    </div>
+                    <div style={{ background: "linear-gradient(135deg,#6366f1,#4338ca)" }} className="rounded-2xl p-5 text-white shadow-lg relative overflow-hidden">
+                      <div className="flex items-center justify-between">
+                        <p className="text-[11px] font-semibold opacity-80 uppercase tracking-wider">Số phiếu tháng này</p>
+                        <FileText size={18} className="opacity-70" />
+                      </div>
+                      <p className="font-heading font-extrabold text-3xl mt-2 leading-none">{myCost.monthCount}</p>
+                      <p className="text-[10px] opacity-70 mt-1.5">phiếu thanh toán do bạn tạo</p>
+                    </div>
+                    <div style={{ background: "linear-gradient(135deg,#334155,#0f172a)" }} className="rounded-2xl p-5 text-white shadow-lg relative overflow-hidden">
+                      <div className="flex items-center justify-between">
+                        <p className="text-[11px] font-semibold opacity-80 uppercase tracking-wider">Lũy kế của tôi</p>
+                        <Receipt size={18} className="opacity-70" />
+                      </div>
+                      <p className="font-heading font-extrabold text-3xl mt-2 leading-none">{formatMoney(myCost.allTotal)}</p>
+                      <p className="text-[10px] opacity-70 mt-1.5">VNĐ · Tổng tất cả phiếu của bạn</p>
+                    </div>
+                  </div>
+                </section>
+              )}
 
               {/* ── Tuyển dụng nhân sự 2 khối ── */}
               <section className="space-y-4 animate-in fade-in duration-300">

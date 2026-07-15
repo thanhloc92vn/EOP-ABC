@@ -38,6 +38,7 @@ import { docSoVietNam, exportDeNghiChuyenTien, downloadDocFile } from "@/lib/wor
 import { supabase } from "@/lib/supabase";
 import { useDepartments } from "@/lib/departments";
 import { useTenantConfig, TENANT_DEFAULTS, AdminStaff } from "@/lib/tenantConfig";
+import { fetchApprovalPermissions } from "@/lib/approvers";
 import * as XLSX from "xlsx";
 
 // ─── TYPES & INTERFACES ──────────────────────────────────────────────────────
@@ -375,6 +376,10 @@ export default function AdministrationPage() {
     department: string;
     isAdmin: boolean;
   } | null>(null);
+  // HCNS/Admin (Admin HOẶC cờ can_view_invoices) => thấy toàn bộ trang Hành chính.
+  // Nhân viên phòng ban khác => chế độ rút gọn: chỉ tạo phiếu + xem phiếu của chính họ.
+  const [isHcnsViewer, setIsHcnsViewer] = useState(false);
+  const [permsLoaded, setPermsLoaded] = useState(false);
   const [deptRequests, setDeptRequests] = useState<DeptRequest[]>([]);
   const [checklist, setChecklist] = useState<ChecklistItem[]>(INITIAL_CHECKLIST);
   const [selectedChecklistTask, setSelectedChecklistTask] = useState<ChecklistItem | null>(null);
@@ -1103,6 +1108,15 @@ export default function AdministrationPage() {
     }
   }, [fetchSuppliers]);
 
+  // Nhân viên không phải HCNS không được ở các tab chỉ dành cho HCNS (checklist/report/vpp)
+  // — đưa họ về công cụ tạo & theo dõi thanh toán của chính họ.
+  useEffect(() => {
+    if (!permsLoaded || isHcnsViewer) return;
+    if (activeTab === "checklist" || activeTab === "report" || activeTab === "vpp") {
+      setActiveTab("recurring");
+    }
+  }, [permsLoaded, isHcnsViewer, activeTab]);
+
   const fetchUserRoleAndDept = async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -1134,10 +1148,17 @@ export default function AdministrationPage() {
         department: empData?.department || "Chưa xếp phòng",
         isAdmin
       };
-      
+
       setCurrentUser(userInfo);
+
+      // Ai được xem toàn bộ dữ liệu Hành chính: Admin hoặc người có cờ can_view_invoices
+      // (khớp đúng RLS trên bảng invoices). Người khác chỉ được chế độ rút gọn.
+      const perms = await fetchApprovalPermissions(email);
+      setIsHcnsViewer(isAdmin || perms.canViewInvoices);
+      setPermsLoaded(true);
     } catch (err) {
       console.error("Error fetching user permissions in admin:", err);
+      setPermsLoaded(true);
     }
   };
 
@@ -1434,7 +1455,9 @@ export default function AdministrationPage() {
           beneficiary_name: supp.name,
           bank_account: supp.account,
           bank_name_branch: supp.bank,
-          project_name: supp.project_name || "Văn phòng HCM"
+          project_name: supp.project_name || "Văn phòng HCM",
+          // Gắn người tạo để RLS cho chính họ xem/sửa/xoá phiếu của mình
+          created_by: currentUser?.email || null
         }])
         .select();
       if (error) throw error;
@@ -3621,7 +3644,9 @@ export default function AdministrationPage() {
         beneficiary_name: supplierName || firstItem.beneficiaryName || "",
         bank_account: bankAccount || firstItem.bankAccount || "",
         bank_name_branch: bankNameBranch || firstItem.bankNameBranch || "",
-        project_name: projectName || "Văn phòng HCM"
+        project_name: projectName || "Văn phòng HCM",
+        // Gắn người tạo để RLS cho chính họ xem/sửa/xoá phiếu của mình
+        created_by: currentUser?.email || null
       }];
 
       const { data, error } = await supabase
@@ -3869,12 +3894,12 @@ export default function AdministrationPage() {
               </div>
               <div className="space-y-2.5">
                 {[
-                  { id: "checklist", label: "1. Checklist phân việc định kỳ", icon: ClipboardList, desc: "Phân công việc cho nhân sự" },
-                  { id: "invoice", label: "2. Đọc hóa đơn thanh toán", icon: Receipt, desc: "AI trích xuất làm HS thanh toán" },
-                  { id: "recurring", label: "3. HS thanh toán định kỳ", icon: RefreshCw, desc: "Ghi nhớ TK ngân hàng định kỳ" },
-                  { id: "report", label: "4. Báo cáo chi phí tháng", icon: BarChart3, desc: "Tổng hợp toàn bộ HS thanh toán" },
-                  { id: "vpp", label: "5. VPP (Văn phòng phẩm)", icon: Package, desc: "Tồn kho & cấp phát phòng ban" }
-                ].map((item) => {
+                  { id: "checklist", label: "1. Checklist phân việc định kỳ", restrictedLabel: "Checklist phân việc định kỳ", icon: ClipboardList, desc: "Phân công việc cho nhân sự", hcnsOnly: true },
+                  { id: "invoice", label: "2. Đọc hóa đơn thanh toán", restrictedLabel: "Đọc hóa đơn thanh toán", icon: Receipt, desc: "AI trích xuất làm HS thanh toán", hcnsOnly: false },
+                  { id: "recurring", label: "3. HS thanh toán định kỳ", restrictedLabel: "Tạo & theo dõi thanh toán", icon: RefreshCw, desc: "Ghi nhớ TK ngân hàng định kỳ", hcnsOnly: false },
+                  { id: "report", label: "4. Báo cáo chi phí tháng", restrictedLabel: "Báo cáo chi phí tháng", icon: BarChart3, desc: "Tổng hợp toàn bộ HS thanh toán", hcnsOnly: true },
+                  { id: "vpp", label: "5. VPP (Văn phòng phẩm)", restrictedLabel: "VPP (Văn phòng phẩm)", icon: Package, desc: "Tồn kho & cấp phát phòng ban", hcnsOnly: true }
+                ].filter((item) => isHcnsViewer || !item.hcnsOnly).map((item) => {
                   const Icon = item.icon;
                   const isActive = activeTab === item.id;
                   return (
@@ -3894,7 +3919,7 @@ export default function AdministrationPage() {
                         <Icon size={16} />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className={`font-heading font-extrabold text-xs leading-tight ${isActive ? "text-white" : "text-slate-800"}`}>{item.label}</p>
+                        <p className={`font-heading font-extrabold text-xs leading-tight ${isActive ? "text-white" : "text-slate-800"}`}>{isHcnsViewer ? item.label : item.restrictedLabel}</p>
                         <p className={`text-[10px] mt-1 font-medium truncate ${isActive ? "text-blue-100" : "text-slate-400"}`}>
                           {item.desc}
                         </p>
@@ -3909,7 +3934,7 @@ export default function AdministrationPage() {
             <div className="lg:col-span-3 space-y-6">
               
               {/* ─── TAB 5: VPP (Văn phòng phẩm) ─── */}
-              {activeTab === "vpp" && (
+              {activeTab === "vpp" && isHcnsViewer && (
                 <div className="space-y-6 animate-in fade-in-50 slide-in-from-bottom-2 duration-300">
                   {/* KPI Cards (5 Columns with Modern Gradients & Shadow Glows) */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
@@ -5566,7 +5591,7 @@ export default function AdministrationPage() {
               )}
 
               {/* ─── TAB 2: Checklist phân việc định kỳ ─── */}
-              {activeTab === "checklist" && (
+              {activeTab === "checklist" && isHcnsViewer && (
                 <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium space-y-5">
                   <div className="flex items-center justify-between border-b border-slate-100 pb-4">
                     <div>
@@ -6830,7 +6855,7 @@ export default function AdministrationPage() {
           )}
 
               {/* ─── TAB 4: Báo cáo chi phí tháng ─── */}
-              {activeTab === "report" && (() => {
+              {activeTab === "report" && isHcnsViewer && (() => {
                 const { combinedItems, invoiceCount, recurringCount } = getReportData(reportStartDate, reportEndDate);
                 
                 const renderEditableCell = (row: AdminMonthlyReport, field: string, value: any, type: "number" | "text") => {
