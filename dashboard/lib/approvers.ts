@@ -16,6 +16,7 @@ export type ApprovalPermissions = {
   canViewInvoices: boolean; // Xem toàn bộ hoá đơn/HS thanh toán (trang Hành chính). Người
                             // không có cờ này chỉ thấy phiếu do CHÍNH họ tạo (RLS invoices).
   canViewDocuments: boolean; // Xem/xử lý Văn Thư (trang /document-control + RLS clerical_documents)
+  canViewCandidates: boolean; // Xem/xử lý Tuyển dụng (trang /recruitment + RLS candidates, recruitment_needs)
   canViewSalary: boolean; // Xem lương/HĐLĐ qua AI search + bảng contracts
   canViewAttendanceImports: boolean; // Xem thư mục lưu trữ bảng công máy chấm công (trang C&B)
   canViewAllTasks: boolean; // Thấy toàn bộ Kanban công việc (trang Quản lý công việc)
@@ -33,6 +34,7 @@ export const NO_APPROVAL_PERMISSIONS: ApprovalPermissions = {
   canManageEmployees: false,
   canViewInvoices: false,
   canViewDocuments: false,
+  canViewCandidates: false,
   canViewSalary: false,
   canViewAttendanceImports: false,
   canViewAllTasks: false,
@@ -290,6 +292,7 @@ export async function fetchApprovalPermissions(email?: string | null): Promise<A
       canManageEmployees: !!row.can_manage_employees,
       canViewInvoices: !!row.can_view_invoices,
       canViewDocuments: !!row.can_view_documents,
+      canViewCandidates: !!row.can_view_candidates,
       canViewSalary: !!row.can_view_salary,
       canViewAttendanceImports: !!row.can_view_attendance_imports,
       canViewAllTasks: !!row.can_view_all_tasks,
