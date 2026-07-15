@@ -614,38 +614,18 @@ export default function EmployeeManagementPage() {
 
     if (!currentUser) return false;
 
-    const isUserAdmin = currentUser.isAdmin || 
-                        currentUser.role.toLowerCase() === "admin" ||
-                        currentUser.role.toLowerCase().includes("trưởng phòng") || 
-                        currentUser.role.toLowerCase().includes("truong phong") ||
-                        currentUser.role.toLowerCase().includes("giám đốc") || 
-                        currentUser.role.toLowerCase().includes("giam doc") || 
-                        (currentUser.department && (
-                          currentUser.department.toLowerCase().includes("giám đốc") || 
-                          currentUser.department.toLowerCase().includes("giam doc")
-                        )) ||
-                        currentUser.name === "Lại Nguyễn Lan Phương" ||
-                        currentUser.name === "Dương Nhật Hoành Anh" ||
-                        currentUser.name === "Lê Thị Hoa Đào" ||
-                        currentUser.name === "Huỳnh Giáp Nhân" ||
-                        currentUser.name === "Nguyễn Duy Hưng" ||
-                        currentUser.email.toLowerCase().trim() === "lehoadao2706@gmail.com" ||
-                        perms.canManageEmployees ||
-                        currentUser.role === "CV Nhân sự" ||
-                        currentUser.role === "Tổ trưởng Nhân sự" ||
-                        (currentUser.role.toLowerCase().includes("nhân sự") && 
-                         (currentUser.department.toLowerCase().includes("hành chính") || currentUser.department.toLowerCase().includes("hcns"))) ||
-                        (currentUser.role.toLowerCase().includes("tổ trưởng") && 
-                         (currentUser.department.toLowerCase().includes("hành chính") || currentUser.department.toLowerCase().includes("hcns")));
+    // Xem FULL danh sách: CHỈ Admin + người có cờ (can_view_employees hoặc
+    // can_manage_employees trong bảng approval_permissions). Các check theo
+    // role/tên hardcode cũ (trưởng phòng, giám đốc, phó phòng thấy phòng mình,
+    // 5 tên cứng...) đã bỏ — cấp/thu quyền chỉ cần tick cờ trong Table Editor.
+    const canSeeAll = currentUser.isAdmin ||
+                      currentUser.role.toLowerCase() === "admin" ||
+                      perms.canViewEmployees ||
+                      perms.canManageEmployees;
 
-    const isUserDeputy = currentUser.role.toLowerCase().includes("phó phòng") || 
-                         currentUser.role.toLowerCase().includes("pho phong") ||
-                         currentUser.role.toLowerCase().includes("phó trưởng phòng") || 
-                         currentUser.role.toLowerCase().includes("pho truong phong");
+    if (canSeeAll) return true;
 
-    if (isUserAdmin) return true;
-    if (isUserDeputy) return emp.department === currentUser.department;
-
+    // Không có cờ -> chỉ thấy hồ sơ của chính mình
     return emp.email.toLowerCase().includes(currentUser.email.toLowerCase());
   }).sort((a, b) => {
     // Nhân viên đã nghỉ việc luôn nằm cuối danh sách (kể cả khi lọc phòng ban)
