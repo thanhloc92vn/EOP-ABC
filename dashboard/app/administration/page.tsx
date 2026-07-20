@@ -342,6 +342,19 @@ const staffColor = (name: string, staff: AdminStaff[]): string => {
   return STAFF_AVATAR_COLORS[(idx >= 0 ? idx : staff.length) % STAFF_AVATAR_COLORS.length];
 };
 
+// Đổi qua lại giữa "MM/YYYY" (định dạng lưu trong DB) và "YYYY-MM" (định dạng
+// bắt buộc của input type="month") để dùng được lịch chọn tháng có sẵn của trình duyệt.
+const monthToInputValue = (mmYYYY: string): string => {
+  const match = /^(\d{1,2})\/(\d{4})$/.exec(mmYYYY || "");
+  if (!match) return "";
+  return `${match[2]}-${match[1].padStart(2, "0")}`;
+};
+const inputValueToMonth = (yyyyMM: string): string => {
+  const match = /^(\d{4})-(\d{2})$/.exec(yyyyMM || "");
+  if (!match) return yyyyMM;
+  return `${match[2]}/${match[1]}`;
+};
+
 // ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
 export default function AdministrationPage() {
   // Danh sách phòng ban / BĐH đọc từ bảng departments
@@ -402,7 +415,14 @@ export default function AdministrationPage() {
   const [selectedSupplierId, setSelectedSupplierId] = useState("");
   const [payAmount, setPayAmount] = useState("");
   const [payContent, setPayContent] = useState("");
-  const [payMonth, setPayMonth] = useState("06/2026");
+  const [payMonth, setPayMonth] = useState(() => {
+    if (typeof window !== "undefined") {
+      const saved = window.localStorage.getItem("tnec_pay_month");
+      if (saved) return saved;
+    }
+    const now = new Date();
+    return `${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`;
+  });
 
   // Checklist Kanban States
   const [draggedOverCol, setDraggedOverCol] = useState<string | null>(null);
@@ -1107,6 +1127,13 @@ export default function AdministrationPage() {
       fetchUserRoleAndDept();
     }
   }, [fetchSuppliers]);
+
+  // Lưu tháng thanh toán đang xem để F5 không bị reset về tháng mặc định.
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("tnec_pay_month", payMonth);
+    }
+  }, [payMonth]);
 
   // Nhân viên không phải HCNS không được ở các tab chỉ dành cho HCNS (checklist/report/vpp)
   // — đưa họ về công cụ tạo & theo dõi thanh toán của chính họ.
@@ -6648,11 +6675,10 @@ export default function AdministrationPage() {
                           <div className="space-y-1">
                             <label className="text-[10px] font-black text-slate-400 uppercase block">Tháng thanh toán <span className="text-rose-500">*</span></label>
                             <input
-                              type="text"
+                              type="month"
                               required
-                              value={payMonth}
-                              onChange={(e) => setPayMonth(e.target.value)}
-                              placeholder="Ví dụ: 06/2026"
+                              value={monthToInputValue(payMonth)}
+                              onChange={(e) => setPayMonth(inputValueToMonth(e.target.value))}
                               className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 bg-white text-xs font-semibold text-slate-800"
                             />
                           </div>
@@ -7943,9 +7969,9 @@ CREATE POLICY "Allow public delete for invoices" ON public.invoices FOR DELETE U
                 {/* Form Details */}
                 <div className="space-y-1.5 text-xs mb-4">
                   <div>
-                    <span className="underline">Họ và tên người đề nghị</span>: <span className="font-bold">{employeeName}</span>
+                    <span className="underline">Họ và tên người đề nghị</span>: <span className="font-bold">{currentUser?.name || employeeName}</span>
                     &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-                    <span className="underline">Bộ phận</span>: <span className="font-bold">{employeeDept}</span>
+                    <span className="underline">Bộ phận</span>: <span className="font-bold">{currentUser?.department || employeeDept}</span>
                   </div>
                   <div>
                     <span className="underline">Lý do xin đề nghị chuyển tiền</span>: <span>{p.content}</span>
