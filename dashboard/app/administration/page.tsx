@@ -355,6 +355,19 @@ const inputValueToMonth = (yyyyMM: string): string => {
   return `${match[2]}/${match[1]}`;
 };
 
+// So sánh "MM/YYYY" theo thứ tự thời gian (YYYY*12+MM) để lọc khoảng tháng.
+const monthSortKey = (mmYYYY: string): number => {
+  const match = /^(\d{1,2})\/(\d{4})$/.exec(mmYYYY || "");
+  if (!match) return 0;
+  return Number(match[2]) * 12 + Number(match[1]);
+};
+const isMonthInRange = (month: string, from: string, to: string): boolean => {
+  const key = monthSortKey(month);
+  if (from && key < monthSortKey(from)) return false;
+  if (to && key > monthSortKey(to)) return false;
+  return true;
+};
+
 // ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
 export default function AdministrationPage() {
   // Danh sách phòng ban / BĐH đọc từ bảng departments
@@ -423,6 +436,18 @@ export default function AdministrationPage() {
     const now = new Date();
     return `${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`;
   });
+
+  // Bộ lọc xem bảng thanh toán theo khoảng tháng (từ tháng - đến tháng), độc lập
+  // với payMonth (tháng đang thêm mới/xuất phiếu). Rỗng = không giới hạn đầu/cuối.
+  const [payMonthFilterFrom, setPayMonthFilterFrom] = useState("");
+  const [payMonthFilterTo, setPayMonthFilterTo] = useState("");
+  const isPayMonthRangeActive = !!(payMonthFilterFrom || payMonthFilterTo);
+  // Danh sách hiển thị trong bảng: mặc định đúng 1 tháng đang chọn (payMonth,
+  // dùng chung với form thêm mới + xuất phiếu); khi có bộ lọc khoảng tháng thì
+  // hiện theo khoảng đó (chỉ ảnh hưởng xem bảng, không ảnh hưởng thêm mới/xuất phiếu).
+  const visiblePendingPayments = isPayMonthRangeActive
+    ? pendingPayments.filter(p => isMonthInRange(p.month, payMonthFilterFrom, payMonthFilterTo))
+    : pendingPayments.filter(p => p.month === payMonth);
 
   // Checklist Kanban States
   const [draggedOverCol, setDraggedOverCol] = useState<string | null>(null);
@@ -2573,8 +2598,8 @@ export default function AdministrationPage() {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          employeeName,
-          employeeDept,
+          employeeName: currentUser?.name || employeeName,
+          employeeDept: currentUser?.department || employeeDept,
           mission: p.content,
           projectName: p.project_name || "Văn phòng HCM",
           supplierName: p.supplierName,
@@ -6480,7 +6505,7 @@ export default function AdministrationPage() {
                             : "text-slate-500 hover:text-slate-800"
                         }`}
                       >
-                        ✍️ Bảng thanh toán tháng ({pendingPayments.filter(p => p.month === payMonth).length})
+                        ✍️ Bảng thanh toán tháng ({visiblePendingPayments.length})
                       </button>
                     </div>
                   </div>
@@ -6705,12 +6730,42 @@ export default function AdministrationPage() {
 
                       {/* Right list and export */}
                       <div className="md:col-span-2 space-y-4">
+                        {/* Bộ lọc khoảng tháng để xem — không ảnh hưởng tháng đang thêm mới/xuất phiếu */}
+                        <div className="flex flex-wrap items-center gap-2 bg-slate-50/50 p-3 border border-slate-200/65 rounded-2xl">
+                          <span className="text-[10px] font-black text-slate-400 uppercase">Xem theo khoảng tháng:</span>
+                          <input
+                            type="month"
+                            value={monthToInputValue(payMonthFilterFrom)}
+                            onChange={(e) => setPayMonthFilterFrom(inputValueToMonth(e.target.value))}
+                            className="border border-slate-200 rounded-lg px-2 py-1 text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/20"
+                          />
+                          <span className="text-slate-400 text-xs font-bold">đến</span>
+                          <input
+                            type="month"
+                            value={monthToInputValue(payMonthFilterTo)}
+                            onChange={(e) => setPayMonthFilterTo(inputValueToMonth(e.target.value))}
+                            className="border border-slate-200 rounded-lg px-2 py-1 text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/20"
+                          />
+                          {isPayMonthRangeActive && (
+                            <button
+                              type="button"
+                              onClick={() => { setPayMonthFilterFrom(""); setPayMonthFilterTo(""); }}
+                              className="text-[10px] font-bold text-slate-400 hover:text-rose-600 underline cursor-pointer"
+                            >
+                              Xoá bộ lọc
+                            </button>
+                          )}
+                        </div>
+
                         <div className="flex justify-between items-center bg-slate-50/50 p-4 border border-slate-200/65 rounded-2xl">
                           <div>
-                            <span className="text-[10px] font-black text-slate-400 uppercase block">Tổng cộng tháng {payMonth}</span>
+                            <span className="text-[10px] font-black text-slate-400 uppercase block">
+                              {isPayMonthRangeActive
+                                ? `Tổng cộng ${payMonthFilterFrom || "…"} → ${payMonthFilterTo || "…"}`
+                                : `Tổng cộng tháng ${payMonth}`}
+                            </span>
                             <span className="text-base font-black text-[#005BAC]">
-                              {pendingPayments
-                                .filter(p => p.month === payMonth)
+                              {visiblePendingPayments
                                 .reduce((sum, p) => sum + p.amount, 0)
                                 .toLocaleString("vi-VN")} đ
                             </span>
@@ -6767,8 +6822,7 @@ export default function AdministrationPage() {
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                              {pendingPayments
-                                .filter(p => p.month === payMonth)
+                              {visiblePendingPayments
                                 .map((p) => (
                                   <tr 
                                     key={p.id} 
@@ -6865,9 +6919,13 @@ export default function AdministrationPage() {
                                     </td>
                                   </tr>
                                 ))}
-                              {pendingPayments.filter(p => p.month === payMonth).length === 0 && (
+                              {visiblePendingPayments.length === 0 && (
                                 <tr>
-                                  <td colSpan={6} className="py-10 text-center text-slate-400 italic">Không có khoản thanh toán nào cho tháng {payMonth}.</td>
+                                  <td colSpan={6} className="py-10 text-center text-slate-400 italic">
+                                    {isPayMonthRangeActive
+                                      ? "Không có khoản thanh toán nào trong khoảng tháng đã chọn."
+                                      : `Không có khoản thanh toán nào cho tháng ${payMonth}.`}
+                                  </td>
                                 </tr>
                               )}
                             </tbody>
