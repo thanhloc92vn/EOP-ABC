@@ -1753,7 +1753,21 @@ export default function RecruitmentPage() {
   // Màn chặn truy cập (giống Văn Thư / Góp ý & Kiến nghị): tài khoản không có quyền
   // thấy thông báo từ chối, không thấy dữ liệu tuyển dụng nào. RLS trên bảng
   // candidates + recruitment_needs là lớp chặn thật ở database.
-  if (currentUser && !canView) {
+  if (!currentUser) {
+    return (
+      <div className="flex min-h-screen bg-[#F7F9FC]">
+        <Sidebar />
+        <div className="ml-60 flex-1 flex flex-col min-w-0">
+          <Header title="Quy trình Tuyển dụng" subtitle="Hệ thống quản lý quy trình ứng tuyển và chấm điểm CV bằng AI" />
+          <main className="flex-1 p-8 flex items-center justify-center">
+            <Loader2 className="animate-spin text-blue-600" size={32} />
+          </main>
+        </div>
+      </div>
+    );
+  }
+
+  if (!canView) {
     return (
       <div className="flex min-h-screen bg-[#F7F9FC]">
         <Sidebar />

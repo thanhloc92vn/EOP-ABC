@@ -283,7 +283,23 @@ export default function AdminSuggestions() {
     ? `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrUrl)}`
     : "";
 
-  if (currentUser && !canManage) {
+  // Chờ xác định quyền xong mới render nội dung hoặc màn chặn — tránh lộ dữ liệu
+  // thật trong lúc fetchCurrentUser (3 query nối tiếp) còn đang chạy.
+  if (!currentUser) {
+    return (
+      <div className="flex min-h-screen bg-[#F7F9FC]">
+        <Sidebar />
+        <div className="ml-60 flex-1 flex flex-col min-w-0">
+          <Header title="Góp ý & Kiến nghị" subtitle="Quản lý các đóng góp ý kiến xây dựng công ty từ khối văn phòng và các Ban điều hành" />
+          <main className="flex-1 p-8 flex items-center justify-center">
+            <Loader2 className="animate-spin text-blue-600" size={32} />
+          </main>
+        </div>
+      </div>
+    );
+  }
+
+  if (!canManage) {
     return (
       <div className="flex min-h-screen bg-[#F7F9FC]">
         <Sidebar />

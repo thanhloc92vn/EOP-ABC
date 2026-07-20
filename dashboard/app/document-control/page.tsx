@@ -23,7 +23,8 @@ import {
   CheckCircle,
   Eye,
   Download,
-  ShieldAlert
+  ShieldAlert,
+  Loader2
 } from "lucide-react";
 
 interface ClericalDoc {
@@ -870,7 +871,21 @@ export default function DocumentControlPage() {
   // Màn chặn truy cập (giống Góp ý & Kiến nghị): tài khoản không có quyền thấy
   // thông báo từ chối, không thấy bất kỳ dữ liệu công văn nào. RLS trên bảng
   // clerical_documents là lớp chặn thật ở database.
-  if (currentUser && !canView) {
+  if (!currentUser) {
+    return (
+      <div className="flex min-h-screen bg-[#F7F9FC]">
+        <Sidebar />
+        <div className="ml-60 flex-1 flex flex-col min-w-0">
+          <Header title="Văn Thư" subtitle="Quản lý và số hóa công văn đi/đến, tự động phân tích trích xuất dữ liệu bằng AI" />
+          <main className="flex-1 p-8 flex items-center justify-center">
+            <Loader2 className="animate-spin text-blue-600" size={32} />
+          </main>
+        </div>
+      </div>
+    );
+  }
+
+  if (!canView) {
     return (
       <div className="flex min-h-screen bg-[#F7F9FC]">
         <Sidebar />
