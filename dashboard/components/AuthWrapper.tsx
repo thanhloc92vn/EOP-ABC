@@ -80,7 +80,7 @@ export default function AuthWrapper({ children }: { children: React.ReactNode })
 
         // 2. Check employees table (If not in allowed_users or not Admin)
         const { data: empData, error: empError } = await supabase
-          .from("employees")
+          .from("employees_directory")
           .select("role, status")
           .like("email", `%${userEmail.trim()}%`)
           .maybeSingle();

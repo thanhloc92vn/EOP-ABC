@@ -197,7 +197,7 @@ function BookingContent() {
         const email = session?.user?.email || "";
         if (email) {
           const { data: empData } = await supabase
-            .from("employees")
+            .from("employees_directory")
             .select("name, department, email, role")
             .like("email", `%${email}%`)
             .maybeSingle();
@@ -222,7 +222,7 @@ function BookingContent() {
         }
 
         const { data: empList } = await supabase
-          .from("employees")
+          .from("employees_directory")
           .select("name, email, department, role")
           .order("name", { ascending: true });
         if (empList) setEmployees(empList.filter((e: any) => e.name));

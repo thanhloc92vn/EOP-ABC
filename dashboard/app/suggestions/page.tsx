@@ -125,7 +125,7 @@ export default function AdminSuggestions() {
 
       // 2. Check employees
       const { data: empData } = await supabase
-        .from("employees")
+        .from("employees_directory")
         .select("name, role, department")
         .like("email", `%${email}%`)
         .maybeSingle();

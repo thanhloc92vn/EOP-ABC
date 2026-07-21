@@ -160,7 +160,7 @@ export default function MeetingTeamPage() {
   const fetchEmployees = async () => {
     try {
       const { data, error } = await supabase
-        .from("employees")
+        .from("employees_directory")
         .select("name, role, department")
         .order("name", { ascending: true });
       if (error) throw error;
@@ -176,7 +176,7 @@ export default function MeetingTeamPage() {
       if (session?.user) {
         const email = session.user.email || "";
         const { data: empData } = await supabase
-          .from("employees")
+          .from("employees_directory")
           .select("name")
           .like("email", `%${email}%`)
           .maybeSingle();

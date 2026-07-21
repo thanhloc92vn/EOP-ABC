@@ -88,7 +88,7 @@ export async function POST(req: NextRequest) {
     // Tra cứu vai trò/phòng ban THẬT từ DB theo email đã xác minh.
     const [{ data: allowedData }, { data: empData }, { data: permData }] = await Promise.all([
       dbClient.from("allowed_users").select("role").ilike("email", verifiedEmail).maybeSingle(),
-      dbClient.from("employees").select("name, role, department").ilike("email", `%${verifiedEmail}%`).maybeSingle(),
+      dbClient.from("employees_directory").select("name, role, department").ilike("email", `%${verifiedEmail}%`).maybeSingle(),
       dbClient.from("approval_permissions").select("can_view_salary").ilike("email", `%${verifiedEmail}%`).maybeSingle()
     ]);
 
@@ -270,7 +270,12 @@ export async function POST(req: NextRequest) {
     // Builder riêng cho nhân viên — ưu tiên lọc sinh nhật theo tháng (date_of_birth).
     // Phủ cả 2 định dạng ngày: "YYYY-MM-DD" (chứa "-07-") và "DD/MM/YYYY" (chứa "/07/").
     const buildEmployees = (useFilter: boolean, isFallback: boolean) => {
-      const base = dbClient.from("employees").select(employeeFields as any).order("created_at", { ascending: false });
+      // Người KHÔNG có quyền xem PII đọc qua view danh bạ: bảng gốc `employees`
+      // đã siết RLS nên với họ nó chỉ trả về đúng hồ sơ của chính mình, khiến
+      // AI trả lời "không tìm thấy" cho cả những câu tra cứu vô hại (sinh nhật,
+      // ai thuộc phòng nào). View giữ nguyên khả năng tra cứu mà không lộ PII.
+      const empSource = hasPiiAccess ? "employees" : "employees_directory";
+      const base = dbClient.from(empSource).select(employeeFields as any).order("created_at", { ascending: false });
       if (isBirthdayQuery && birthdayMonth && !isFallback) {
         return base.or(`date_of_birth.ilike.%-${birthdayMonth}-%,date_of_birth.ilike.%/${birthdayMonth}/%`).limit(300);
       }
@@ -297,7 +302,7 @@ export async function POST(req: NextRequest) {
     // "Đang thử việc"/"HĐ chính thức" đếm theo LOẠI HĐ (không kèm số tiền lương
     // nên cấp cho mọi tài khoản — giống như Dashboard hiển thị cho mọi người).
     const kpiPromise = Promise.all([
-      dbClient.from("employees").select("*", { count: "exact", head: true }),
+      dbClient.from("employees_directory").select("*", { count: "exact", head: true }),
       dbClient.from("contracts").select("*", { count: "exact", head: true }).eq("type", "Thử việc"),
       dbClient.from("contracts").select("*", { count: "exact", head: true }).neq("type", "Thử việc").neq("type", ""),
       dbClient.from("candidates").select("*", { count: "exact", head: true }).ilike("probation_result", "%nhận%"),

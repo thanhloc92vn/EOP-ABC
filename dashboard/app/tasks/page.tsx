@@ -235,7 +235,7 @@ export default function TaskManagementPage() {
 
       // 2. Check employees
       const { data: empData } = await supabase
-        .from("employees")
+        .from("employees_directory")
         .select("name, role, department")
         .like("email", `%${email}%`)
         .maybeSingle();
@@ -258,7 +258,7 @@ export default function TaskManagementPage() {
 
       if (isUserDeputy) {
         const { data: deptEmps } = await supabase
-          .from("employees")
+          .from("employees_directory")
           .select("name")
           .eq("department", userInfo.department);
         if (deptEmps) {
@@ -273,7 +273,7 @@ export default function TaskManagementPage() {
   const fetchEmployeesList = async () => {
     try {
       const { data, error } = await supabase
-        .from("employees")
+        .from("employees_directory")
         .select("id, name")
         .order("name", { ascending: true });
       if (data) {

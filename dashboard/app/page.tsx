@@ -188,7 +188,9 @@ export default function DashboardPage() {
       try {
         setLoading(true);
         const [empRes, candRes, reportRes, contractRes] = await Promise.all([
-          supabase.from("employees").select("*"),
+          // Trang chủ chỉ đếm đầu người (headcount) -> dùng view danh bạ,
+          // không kéo PII của toàn công ty về trình duyệt.
+          supabase.from("employees_directory").select("*"),
           supabase.from("candidates").select("*"),
           supabase.from("admin_monthly_reports").select("*"),
           supabase.from("contracts").select("type"),

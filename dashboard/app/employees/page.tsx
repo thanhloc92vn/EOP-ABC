@@ -210,9 +210,10 @@ export default function EmployeeManagementPage() {
 
       const isAdmin = allowedData?.role === "Admin";
 
-      // 2. Check employees
+      // 2. Check employees — chỉ nhận diện người đăng nhập, không cần PII nên
+      //    đọc qua view danh bạ (bảng gốc đã siết về người có quyền xem PII).
       const { data: empData } = await supabase
-        .from("employees")
+        .from("employees_directory")
         .select("name, role, department")
         .like("email", `%${email}%`)
         .maybeSingle();

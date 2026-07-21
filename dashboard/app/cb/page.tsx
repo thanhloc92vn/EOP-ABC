@@ -937,9 +937,10 @@ export default function CBPage() {
             employeeMap[codeVal].push(row);
           }
 
-          // Fetch employees from database to map email
+          // Fetch employees from database to map email — chỉ cần cột danh bạ
+          // để đối chiếu bảng công, không cần PII.
           const { data: dbEmployees, error: empError } = await supabase
-            .from("employees")
+            .from("employees_directory")
             .select("employee_code, name, email, department");
           if (empError) throw empError;
 

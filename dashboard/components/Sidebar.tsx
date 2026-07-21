@@ -182,7 +182,7 @@ export default function Sidebar() {
 
         // Check Employees
         const { data: empData } = await supabase
-          .from("employees")
+          .from("employees_directory")
           .select("name, role")
           .like("email", `%${email}%`)
           .maybeSingle();

@@ -259,7 +259,7 @@ export default function Header({ title, subtitle }: Props) {
 
       // 1. Try searching in employees first (regular employee profiles)
       const { data: empData } = await supabase
-        .from("employees")
+        .from("employees_directory")
         .select("name, role, department")
         .like("email", `%${email}%`)
         .maybeSingle();

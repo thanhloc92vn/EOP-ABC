@@ -153,7 +153,7 @@ function SettingsContent() {
 
       // 2. Check employees
       const { data: empData } = await supabase
-        .from("employees")
+        .from("employees_directory")
         .select("name, role, department")
         .like("email", `%${email}%`)
         .maybeSingle();
@@ -215,7 +215,7 @@ function SettingsContent() {
   const fetchEmployeeDirectory = async () => {
     try {
       const { data, error } = await supabase
-        .from("employees")
+        .from("employees_directory")
         .select("name, email, department, role");
       if (error) throw error;
       if (data) {

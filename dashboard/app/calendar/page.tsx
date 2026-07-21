@@ -155,7 +155,7 @@ export default function CalendarPage() {
 
       // 2. Check employees
       const { data: empData } = await supabase
-        .from("employees")
+        .from("employees_directory")
         .select("name, role, department")
         .like("email", `%${email}%`)
         .maybeSingle();
@@ -240,7 +240,7 @@ export default function CalendarPage() {
 
       // Fetch Employees
       const { data: empsData, error: empsError } = await supabase
-        .from("employees")
+        .from("employees_directory")
         .select("id, name, avatar, role, email, department")
         .order("name", { ascending: true });
 
