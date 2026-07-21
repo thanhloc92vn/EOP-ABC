@@ -62,6 +62,7 @@ const FLAG_GROUPS: { title: string; flags: { key: string; label: string; desc: s
       { key: "can_view_salary", label: "Xem lương & HĐLĐ", desc: "C&B + tìm kiếm AI — dữ liệu nhạy cảm, chỉ cấp khi thật cần" },
       { key: "can_view_attendance_imports", label: "Kho bảng công chấm công", desc: "Thư mục lưu trữ bảng công máy chấm công (trang C&B)" },
       { key: "can_view_all_tasks", label: "Xem toàn bộ công việc", desc: "Thấy mọi thẻ Kanban thay vì chỉ việc của mình" },
+      { key: "can_manage_vpp", label: "Phụ trách VPP", desc: "Thấy mọi phiếu VPP của tất cả phòng ban" },
     ],
   },
 ];
