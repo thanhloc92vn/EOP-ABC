@@ -3,7 +3,8 @@
 import { useState, useEffect, useMemo, Suspense } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
-import { Settings, Database, Info, Key, CheckCircle, ShieldAlert, Check, X, Calendar, Briefcase, User, CarFront, DoorOpen, Mail, Package } from "lucide-react";
+import { Settings, Database, Info, Key, CheckCircle, ShieldAlert, ShieldCheck, Check, X, Calendar, Briefcase, User, CarFront, DoorOpen, Mail, Package, Users, CalendarClock, ChevronRight } from "lucide-react";
+import UserPermissionsModal, { type UserPermissionsTab } from "@/components/UserPermissionsModal";
 import { supabase } from "@/lib/supabase";
 import { usePlan } from "@/lib/plan";
 import { PLAN_LABELS, type Plan } from "@/lib/planShared";
@@ -87,6 +88,11 @@ function SettingsContent() {
   });
   const [showEmailConfigModal, setShowEmailConfigModal] = useState(false);
   const [modalProvider, setModalProvider] = useState("gmail");
+
+  // Modal phân quyền & luồng duyệt (approval_permissions / approval_groups /
+  // leave_exceptions) — chỉ Admin. Tab mở tuỳ nút bấm ở card Phân quyền.
+  const [showUserPermissionsModal, setShowUserPermissionsModal] = useState(false);
+  const [userPermissionsTab, setUserPermissionsTab] = useState<UserPermissionsTab>("flags");
 
   useEffect(() => {
     if (showEmailConfigModal) {
@@ -783,7 +789,7 @@ function SettingsContent() {
           subtitle={isApprovalsTab ? "Xem và phê duyệt các yêu cầu đi công tác, nghỉ phép của nhân sự" : "Cấu hình hệ thống, khoá bảo mật và kết nối Google Sheets"} 
         />
 
-        <main className="flex-1 p-8 space-y-6 overflow-y-auto max-w-4xl">
+        <main className="flex-1 p-8 space-y-6 overflow-y-auto max-w-7xl w-full">
           {/* Toast Alert */}
           {saved && (
             <div className="fixed bottom-6 right-6 z-50 animate-bounce">
@@ -795,7 +801,9 @@ function SettingsContent() {
           )}
 
           {!isApprovalsTab && (
-            <>
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+              {/* ═══ CỘT TRÁI: Gói dịch vụ + Bảo mật & Kết nối ═══ */}
+              <div className="space-y-6">
               {/* ─── GÓI DỊCH VỤ (chỉ Admin thấy và đổi được) ─── */}
               {currentUser?.isAdmin && (
               <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium">
@@ -899,10 +907,74 @@ function SettingsContent() {
             </form>
           </div>
 
+              </div>
+
+              {/* ═══ CỘT PHẢI: Phân quyền & Luồng duyệt + SMTP + Thông tin nền tảng ═══ */}
+              <div className="space-y-6">
+
+              {/* ─── PHÂN QUYỀN & LUỒNG DUYỆT (chỉ Admin — 3 cụm, mỗi cụm một màu) ─── */}
+              {currentUser?.isAdmin && (
+              <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium">
+                <h2 className="font-heading font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+                  <ShieldCheck size={18} className="text-indigo-600" /> Phân quyền &amp; Luồng duyệt
+                </h2>
+                <p className="text-[11px] text-slate-400 font-medium mb-4 leading-relaxed">
+                  Toàn bộ quyền và luồng duyệt cấu hình bằng dữ liệu — cấp / thu hồi ngay tại đây,
+                  không cần sửa code hay vào Supabase Table Editor.
+                </p>
+                <div className="space-y-2.5">
+                  <button
+                    type="button"
+                    onClick={() => { setUserPermissionsTab("flags"); setShowUserPermissionsModal(true); }}
+                    className="w-full flex items-center gap-3 p-3.5 rounded-xl border border-blue-100 bg-blue-50/50 hover:bg-blue-50 hover:border-blue-200 transition-all active:scale-[0.99] cursor-pointer text-left"
+                  >
+                    <div className="w-9 h-9 rounded-xl bg-[#005BAC] text-white flex items-center justify-center shadow-sm shrink-0">
+                      <ShieldCheck size={16} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-bold text-slate-800">Cờ quyền người dùng (User Permissions)</p>
+                      <p className="text-[10px] text-slate-400 font-medium">Duyệt công tác / nghỉ phép, xem lương, hồ sơ thanh toán, văn thư... cho từng nhân sự</p>
+                    </div>
+                    <ChevronRight size={15} className="text-blue-400 shrink-0" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => { setUserPermissionsTab("groups"); setShowUserPermissionsModal(true); }}
+                    className="w-full flex items-center gap-3 p-3.5 rounded-xl border border-amber-100 bg-amber-50/50 hover:bg-amber-50 hover:border-amber-200 transition-all active:scale-[0.99] cursor-pointer text-left"
+                  >
+                    <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-500 to-orange-400 text-white flex items-center justify-center shadow-sm shrink-0">
+                      <Users size={16} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-bold text-slate-800">Nhóm duyệt riêng (tổ)</p>
+                      <p className="text-[10px] text-slate-400 font-medium">Tổ trưởng duyệt cấp 1 mọi loại đơn thay Trưởng phòng ban — VD Tổ Marketing</p>
+                    </div>
+                    <ChevronRight size={15} className="text-amber-400 shrink-0" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => { setUserPermissionsTab("exceptions"); setShowUserPermissionsModal(true); }}
+                    className="w-full flex items-center gap-3 p-3.5 rounded-xl border border-rose-100 bg-rose-50/50 hover:bg-rose-50 hover:border-rose-200 transition-all active:scale-[0.99] cursor-pointer text-left"
+                  >
+                    <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-rose-500 to-pink-400 text-white flex items-center justify-center shadow-sm shrink-0">
+                      <CalendarClock size={16} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-bold text-slate-800">Đặc cách nghỉ 1 ngày</p>
+                      <p className="text-[10px] text-slate-400 font-medium">Cặp người duyệt thay cho đơn nghỉ đúng 1 ngày — VD Quỳnh duyệt Hằng</p>
+                    </div>
+                    <ChevronRight size={15} className="text-rose-400 shrink-0" />
+                  </button>
+                </div>
+              </div>
+              )}
+
           {/* Cấu hình Email gửi thông báo (SMTP) — dùng chung với C&B và Duyệt Đăng ký */}
           <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium">
             <h2 className="font-heading font-bold text-slate-800 text-sm flex items-center gap-2 mb-4">
-              <Mail size={18} className="text-blue-600" /> Cấu hình gửi Email hệ thống (SMTP)
+              <Mail size={18} className="text-emerald-600" /> Cấu hình gửi Email hệ thống (SMTP)
             </h2>
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="text-xs font-semibold text-slate-600 space-y-1">
@@ -933,7 +1005,21 @@ function SettingsContent() {
               </button>
             </div>
           </div>
-        </>
+
+              {/* Thông tin nền tảng */}
+              <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-sm space-y-4">
+                <h2 className="font-heading font-bold text-slate-800 text-sm flex items-center gap-2">
+                  <Info size={18} className="text-slate-500" /> Thông tin nền tảng
+                </h2>
+                <div className="text-xs font-semibold text-slate-600">
+                  <div className="bg-slate-50 rounded-xl p-4 space-y-0.5">
+                    <p className="text-slate-400 text-[10px]">Phiên bản</p>
+                    <p className="text-[#005BAC] font-bold">HRM Version 1.0</p>
+                  </div>
+                </div>
+              </div>
+              </div>
+            </div>
       )}
 
           {/* Nhóm Duyệt Yêu Cầu */}
@@ -1362,34 +1448,16 @@ function SettingsContent() {
             </div>
           )}
 
-          {!isApprovalsTab && (
-            <>
-              {/* System Info */}
-              <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-sm space-y-4">
-                <h2 className="font-heading font-bold text-slate-800 text-sm flex items-center gap-2">
-                  <Info size={18} className="text-blue-600" /> Thông tin nền tảng
-                </h2>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs font-semibold text-slate-600">
-                  <div className="bg-slate-50 rounded-xl p-4 space-y-0.5">
-                    <p className="text-slate-400 text-[10px]">Phiên bản</p>
-                    <p className="text-[#005BAC] font-bold">HRA Platform v2.5</p>
-                  </div>
-                  <div className="bg-slate-50 rounded-xl p-4 space-y-0.5">
-                    <p className="text-slate-400 text-[10px]">Phòng ban kết nối</p>
-                    <p className="text-emerald-600 font-bold">Hành Chính Nhân Sự</p>
-                  </div>
-                  <div className="bg-slate-50 rounded-xl p-4 space-y-0.5">
-                    <p className="text-slate-400 text-[10px]">Cơ sở dữ liệu</p>
-                    <p className="text-blue-600 font-bold">Google Sheets API</p>
-                  </div>
-                  <div className="bg-slate-50 rounded-xl p-4 space-y-0.5">
-                    <p className="text-slate-400 text-[10px]">Môi trường</p>
-                    <p className="text-emerald-600 font-bold">Online Production</p>
-                  </div>
-                </div>
-              </div>
-            </>
+          {/* ─── MODAL PHÂN QUYỀN & LUỒNG DUYỆT (chỉ Admin — RLS chặn ghi tầng DB) ─── */}
+          {currentUser?.isAdmin && (
+            <UserPermissionsModal
+              open={showUserPermissionsModal}
+              onClose={() => setShowUserPermissionsModal(false)}
+              employeeDirectory={employeeDirectory}
+              initialTab={userPermissionsTab}
+            />
           )}
+
           {/* ─── MODAL CẤU HÌNH SMTP GỬI THƯ (y hệt trang C&B, dùng chung localStorage) ─── */}
           {showEmailConfigModal && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
