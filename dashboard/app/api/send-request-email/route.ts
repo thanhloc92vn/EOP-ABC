@@ -1,3 +1,4 @@
+import { requireApiAuth } from "@/lib/apiAuth";
 import { NextRequest, NextResponse } from "next/server";
 import nodemailer from "nodemailer";
 import { getTenantConfigServer } from "@/lib/tenantConfigServer";
@@ -43,6 +44,9 @@ function extractTripInfo(notes: string) {
 }
 
 export async function POST(request: NextRequest) {
+  const auth = await requireApiAuth(request);
+  if (!auth.ok) return auth.response;
+
   try {
     const body = await request.json();
     const { smtpConfig, task, requestType, decision, rejectReason, deciderName, mode, approverEmails, stage, requesterEmail } = body;

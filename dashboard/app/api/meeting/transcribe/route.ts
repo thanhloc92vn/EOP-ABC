@@ -1,3 +1,4 @@
+import { requireApiAuth } from "@/lib/apiAuth";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
@@ -97,6 +98,9 @@ function findMostRepeatedSentence(sentences: string[]): string {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireApiAuth(req);
+  if (!auth.ok) return auth.response;
+
   let tempFilePath = "";
   try {
     const authHeader = req.headers.get("Authorization");

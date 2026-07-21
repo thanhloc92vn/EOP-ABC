@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/lib/apiClient";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
@@ -359,7 +360,7 @@ export default function DocumentControlPage() {
           formData.append("document_file", item.file);
         }
 
-        const res = await fetch("/api/analyze-document", {
+        const res = await apiFetch("/api/analyze-document", {
           method: "POST",
           headers,
           body: formData
@@ -602,7 +603,7 @@ export default function DocumentControlPage() {
 
       formData.append("doc_type", targetType === "incoming" ? "incoming" : "outgoing");
 
-      const res = await fetch("/api/analyze-document", {
+      const res = await apiFetch("/api/analyze-document", {
         method: "POST",
         headers,
         body: formData
@@ -770,7 +771,7 @@ export default function DocumentControlPage() {
       // Simplify to incoming/outgoing for AI prompt structure
       formData.append("doc_type", docType === "incoming" ? "incoming" : "outgoing");
 
-      const res = await fetch("/api/analyze-document", {
+      const res = await apiFetch("/api/analyze-document", {
         method: "POST",
         headers,
         body: formData

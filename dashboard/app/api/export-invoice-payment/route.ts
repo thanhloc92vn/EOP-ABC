@@ -1,3 +1,4 @@
+import { requireApiAuth } from "@/lib/apiAuth";
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
@@ -6,6 +7,9 @@ import Docxtemplater from "docxtemplater";
 import { docSoVietNam } from "@/lib/wordExporter";
 
 export async function POST(request: NextRequest) {
+  const auth = await requireApiAuth(request);
+  if (!auth.ok) return auth.response;
+
   try {
     const body = await request.json();
     const { 

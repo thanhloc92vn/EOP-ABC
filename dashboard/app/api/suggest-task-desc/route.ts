@@ -1,3 +1,4 @@
+import { requireApiAuth } from "@/lib/apiAuth";
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 import { getTenantConfigServer } from "@/lib/tenantConfigServer";
@@ -5,6 +6,9 @@ import { getTenantConfigServer } from "@/lib/tenantConfigServer";
 export const maxDuration = 60; // Allow enough time for AI response
 
 export async function POST(req: NextRequest) {
+  const auth = await requireApiAuth(req);
+  if (!auth.ok) return auth.response;
+
   try {
     const { title } = await req.json();
     if (!title) {

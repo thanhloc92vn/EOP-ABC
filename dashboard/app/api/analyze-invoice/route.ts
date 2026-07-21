@@ -1,3 +1,4 @@
+import { requireApiAuth } from "@/lib/apiAuth";
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 import { getTenantConfigServer } from "@/lib/tenantConfigServer";
@@ -100,6 +101,9 @@ async function analyzeWithChatCompletions(
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireApiAuth(req);
+  if (!auth.ok) return auth.response;
+
   try {
     const authHeader = req.headers.get("Authorization");
     const apiKey =

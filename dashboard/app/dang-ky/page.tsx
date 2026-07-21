@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/lib/apiClient";
 import { useState, useEffect, useMemo, useRef, Suspense } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
@@ -435,7 +436,7 @@ function BookingContent() {
         }
 
         if (approverEmails && inserted && inserted[0]) {
-          fetch("/api/send-booking-email", {
+          apiFetch("/api/send-booking-email", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -547,7 +548,7 @@ function BookingContent() {
           .map((p: any) => p.email)
           .join(", ");
         if (approverEmails) {
-          const res = await fetch("/api/send-booking-email", {
+          const res = await apiFetch("/api/send-booking-email", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -597,7 +598,7 @@ function BookingContent() {
 
       let emailMsg = "";
       try {
-        const res = await fetch("/api/send-booking-email", {
+        const res = await apiFetch("/api/send-booking-email", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -653,7 +654,7 @@ function BookingContent() {
 
       let emailMsg = "";
       try {
-        const res = await fetch("/api/send-booking-email", {
+        const res = await apiFetch("/api/send-booking-email", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -695,7 +696,7 @@ function BookingContent() {
 
       let emailMsg = "";
       try {
-        const res = await fetch("/api/send-booking-email", {
+        const res = await apiFetch("/api/send-booking-email", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

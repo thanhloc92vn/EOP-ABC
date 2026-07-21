@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/lib/apiClient";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
@@ -1242,7 +1243,7 @@ export default function RecruitmentPage() {
           headers["Authorization"] = `Bearer ${customKey}`;
         }
 
-        const res = await fetch("/api/score-cv", { 
+        const res = await apiFetch("/api/score-cv", { 
           method: "POST", 
           body: formData,
           headers
@@ -1302,7 +1303,7 @@ export default function RecruitmentPage() {
         headers["x-apps-script-url"] = customUrl;
       }
 
-      const res = await fetch("/api/submit-to-sheets", {
+      const res = await apiFetch("/api/submit-to-sheets", {
         method: "POST",
         headers,
         body: JSON.stringify({ extracted_info: result.extracted_info }),
@@ -1720,7 +1721,7 @@ export default function RecruitmentPage() {
   const handleExportReport = async () => {
     try {
       setExportingReport(true);
-      const res = await fetch("/api/export-recruitment-report", {
+      const res = await apiFetch("/api/export-recruitment-report", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

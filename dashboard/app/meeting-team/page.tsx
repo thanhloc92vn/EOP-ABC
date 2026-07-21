@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/lib/apiClient";
 import { useState, useEffect, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
@@ -321,7 +322,7 @@ export default function MeetingTeamPage() {
         setProcessingLog(prev => [...prev, `  🎙️ Đang gỡ băng file ${i + 1}/${uploadedPaths.length}...`]);
 
         const { data: { session: transcribeSession } } = await supabase.auth.getSession();
-        const transcribeRes = await fetch("/api/meeting/transcribe", {
+        const transcribeRes = await apiFetch("/api/meeting/transcribe", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -392,7 +393,7 @@ export default function MeetingTeamPage() {
 
       // 3. Call AI process API
       const { data: { session: processSession } } = await supabase.auth.getSession();
-      const processRes = await fetch("/api/meeting/process", {
+      const processRes = await apiFetch("/api/meeting/process", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -480,7 +481,7 @@ export default function MeetingTeamPage() {
     setIsReprocessing(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const processRes = await fetch("/api/meeting/process", {
+      const processRes = await apiFetch("/api/meeting/process", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -574,7 +575,7 @@ export default function MeetingTeamPage() {
 
       // Call backend to generate DOCX
       const { data: { session: docxSession } } = await supabase.auth.getSession();
-      const docxRes = await fetch("/api/meeting/export-docx", {
+      const docxRes = await apiFetch("/api/meeting/export-docx", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -651,7 +652,7 @@ export default function MeetingTeamPage() {
 
       // 2. Export Word document
       const { data: { session: docxSession } } = await supabase.auth.getSession();
-      const docxRes = await fetch("/api/meeting/export-docx", {
+      const docxRes = await apiFetch("/api/meeting/export-docx", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

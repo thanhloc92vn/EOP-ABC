@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
+import { apiFetch } from "@/lib/apiClient";
 import { useState, useEffect, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
@@ -260,7 +261,7 @@ export default function EmployeeManagementPage() {
           formData.append("original_filename", file.name);
 
           try {
-            const res = await fetch("/api/analyze-employee-file", {
+            const res = await apiFetch("/api/analyze-employee-file", {
               method: "POST",
               headers: {
                 "Authorization": customKey ? `Bearer ${customKey}` : "",

@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/lib/apiClient";
 import { useState, useEffect, useMemo } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
@@ -1467,7 +1468,7 @@ export default function CBPage() {
     ));
 
     try {
-      const response = await fetch("/api/send-attendance-email", {
+      const response = await apiFetch("/api/send-attendance-email", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -1721,7 +1722,7 @@ export default function CBPage() {
         template: "hieu_hy"
       };
 
-      const response = await fetch("/api/export-benefits-report", {
+      const response = await apiFetch("/api/export-benefits-report", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -1781,7 +1782,7 @@ export default function CBPage() {
         template: "che_do"
       };
 
-      const response = await fetch("/api/export-benefits-report", {
+      const response = await apiFetch("/api/export-benefits-report", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -1836,7 +1837,7 @@ export default function CBPage() {
         items: items
       };
 
-      const response = await fetch("/api/export-benefits-report", {
+      const response = await apiFetch("/api/export-benefits-report", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -1888,7 +1889,7 @@ export default function CBPage() {
       await new Promise(r => setTimeout(r, 400));
       setExcelImportStage("sending");
 
-      const fetchPromise = fetch("/api/analyze-contract-excel", {
+      const fetchPromise = apiFetch("/api/analyze-contract-excel", {
         method: "POST",
         headers,
         body: formData,
@@ -2091,7 +2092,7 @@ export default function CBPage() {
       }
       headers["x-openai-model"] = customModel;
 
-      const res = await fetch("/api/analyze-employee-contract", {
+      const res = await apiFetch("/api/analyze-employee-contract", {
         method: "POST",
         headers,
         body: formData,

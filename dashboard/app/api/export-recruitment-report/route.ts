@@ -1,3 +1,4 @@
+import { requireApiAuth } from "@/lib/apiAuth";
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
@@ -5,6 +6,9 @@ import { supabase } from "@/lib/supabase";
 import { fillWeeklyReport } from "../../../scratch/fill_weekly_report";
 
 export async function POST(request: NextRequest) {
+  const auth = await requireApiAuth(request);
+  if (!auth.ok) return auth.response;
+
   try {
     const data = await request.json();
     const { startDate, endDate, officeManualNeeds, projectManualNeeds } = data;

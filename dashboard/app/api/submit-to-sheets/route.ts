@@ -1,6 +1,10 @@
+import { requireApiAuth } from "@/lib/apiAuth";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(req: NextRequest) {
+  const auth = await requireApiAuth(req);
+  if (!auth.ok) return auth.response;
+
   try {
     const customUrl = req.headers.get("x-apps-script-url");
     const SCRIPT_URL = customUrl || process.env.NEXT_PUBLIC_APPS_SCRIPT_URL || "";

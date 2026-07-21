@@ -1,3 +1,4 @@
+import { requireApiAuth } from "@/lib/apiAuth";
 import { NextRequest, NextResponse } from "next/server";
 import nodemailer from "nodemailer";
 import { getTenantConfigServer } from "@/lib/tenantConfigServer";
@@ -9,6 +10,9 @@ import { getTenantConfigServer } from "@/lib/tenantConfigServer";
 // SMTP config ưu tiên lấy từ body (localStorage của người thao tác — cùng pattern C&B),
 // nếu không có thì fallback sang biến môi trường SMTP_USER / SMTP_PASS / SMTP_HOST / SMTP_PORT.
 export async function POST(request: NextRequest) {
+  const auth = await requireApiAuth(request);
+  if (!auth.ok) return auth.response;
+
   try {
     const body = await request.json();
     const { smtpConfig, booking, decision, rejectReason, approverName, mode, approverEmails, stage } = body;

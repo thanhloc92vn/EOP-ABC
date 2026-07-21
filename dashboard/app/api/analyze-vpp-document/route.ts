@@ -1,3 +1,4 @@
+import { requireApiAuth } from "@/lib/apiAuth";
 import { NextRequest, NextResponse } from "next/server";
 import { getDepartmentListsServer, type ServerDepartmentLists } from "@/lib/departmentsServer";
 import { getTenantConfigServer } from "@/lib/tenantConfigServer";
@@ -49,6 +50,9 @@ Nếu tài liệu Excel có nhiều sheet, bạn phải đối chiếu chéo đ�
 `.trim();
 
 export async function POST(req: NextRequest) {
+  const auth = await requireApiAuth(req);
+  if (!auth.ok) return auth.response;
+
   try {
     const deptLists = await getDepartmentListsServer();
     const SYSTEM_PROMPT = buildSystemPrompt(deptLists, (await getTenantConfigServer()).company_name);

@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/lib/apiClient";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import {
@@ -1643,7 +1644,7 @@ export default function AdministrationPage() {
       const expEmployeeDept = currentUser?.department || employeeDept;
 
       for (const p of currentMonthPayments) {
-        const response = await fetch("/api/export-invoice-payment", {
+        const response = await apiFetch("/api/export-invoice-payment", {
           method: "POST",
           headers: {
             "Content-Type": "application/json"
@@ -2516,7 +2517,7 @@ export default function AdministrationPage() {
             grandAnnualTotal: computedStats.grandAnnualTotal,
           };
 
-          const response = await fetch("/api/export-admin-report", {
+          const response = await apiFetch("/api/export-admin-report", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -2592,7 +2593,7 @@ export default function AdministrationPage() {
   const exportSingleRecurringPayment = async (p: SupplierPayment) => {
     setExportLoading(true);
     try {
-      const response = await fetch("/api/export-invoice-payment", {
+      const response = await apiFetch("/api/export-invoice-payment", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -2857,7 +2858,7 @@ export default function AdministrationPage() {
       });
 
       // 2. Post to the server API endpoint
-      const response = await fetch("/api/export-vpp-template", {
+      const response = await apiFetch("/api/export-vpp-template", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -3128,7 +3129,7 @@ export default function AdministrationPage() {
         headers["x-openai-model"] = customModel;
       }
 
-      const res = await fetch("/api/analyze-vpp-document", {
+      const res = await apiFetch("/api/analyze-vpp-document", {
         method: "POST",
         headers,
         body: formData,
@@ -3437,7 +3438,7 @@ export default function AdministrationPage() {
         }
         headers["x-openai-model"] = customModel;
 
-        const res = await fetch("/api/analyze-invoice", {
+        const res = await apiFetch("/api/analyze-invoice", {
           method: "POST",
           headers,
           body: formData
@@ -3557,7 +3558,7 @@ export default function AdministrationPage() {
 
     setExportLoading(true);
     try {
-      const response = await fetch("/api/export-invoice-payment", {
+      const response = await apiFetch("/api/export-invoice-payment", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"

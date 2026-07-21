@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/lib/apiClient";
 import { useState, useEffect, useMemo, Suspense } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
@@ -284,7 +285,7 @@ function SettingsContent() {
           .join(", ");
 
         if (approverEmails) {
-          const res = await fetch("/api/send-booking-email", {
+          const res = await apiFetch("/api/send-booking-email", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -343,7 +344,7 @@ function SettingsContent() {
       // server sẽ fallback sang biến môi trường nếu chưa cấu hình.
       let emailMsg = "";
       try {
-        const res = await fetch("/api/send-booking-email", {
+        const res = await apiFetch("/api/send-booking-email", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -399,7 +400,7 @@ function SettingsContent() {
           .join(", ");
 
         if (approverEmails) {
-          const res = await fetch("/api/send-request-email", {
+          const res = await apiFetch("/api/send-request-email", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -518,7 +519,7 @@ function SettingsContent() {
       try {
         const requesterEmail = employeeDirectory.find(e => e.name === task.assignee)?.email || "";
         if (requesterEmail) {
-          const res = await fetch("/api/send-request-email", {
+          const res = await apiFetch("/api/send-request-email", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({

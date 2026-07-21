@@ -1,3 +1,4 @@
+import { requireApiAuth } from "@/lib/apiAuth";
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
@@ -8,6 +9,9 @@ import { supabase } from "@/lib/supabase";
 import { docSoVietNam } from "@/lib/wordExporter";
 
 export async function GET(request: NextRequest) {
+  const auth = await requireApiAuth(request);
+  if (!auth.ok) return auth.response;
+
   try {
     const { searchParams } = new URL(request.url);
     const taskId = searchParams.get("taskId");

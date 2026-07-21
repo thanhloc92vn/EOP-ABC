@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/lib/apiClient";
 import { useEffect, useState } from "react";
 import { Bell, Search, Globe, ChevronDown, Menu, X, Sparkles, Loader2, Send, Copy, Trash2, LogOut } from "lucide-react";
 import { supabase } from "@/lib/supabase";
@@ -95,7 +96,7 @@ export default function Header({ title, subtitle }: Props) {
         headers["x-supabase-auth"] = supabaseToken;
       }
 
-      const response = await fetch("/api/ai-search", {
+      const response = await apiFetch("/api/ai-search", {
         method: "POST",
         headers,
         body: JSON.stringify({

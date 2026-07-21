@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/lib/apiClient";
 import { useState, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
@@ -297,7 +298,7 @@ export default function TaskManagementPage() {
         headers["Authorization"] = `Bearer ${key}`;
       }
       
-      const res = await fetch("/api/suggest-task-desc", {
+      const res = await apiFetch("/api/suggest-task-desc", {
         method: "POST",
         headers,
         body: JSON.stringify({ title: newTitle }),
@@ -496,7 +497,7 @@ export default function TaskManagementPage() {
         headers["Authorization"] = `Bearer ${key}`;
       }
       
-      const res = await fetch("/api/suggest-task-desc", {
+      const res = await apiFetch("/api/suggest-task-desc", {
         method: "POST",
         headers,
         body: JSON.stringify({ title: editTitle }),
@@ -522,6 +523,16 @@ export default function TaskManagementPage() {
     if (!matchesSearch) return false;
 
     if (!currentUser) return false;
+
+    // Đơn NGHỈ PHÉP / CÔNG TÁC không thuộc bảng Kanban này — chúng hiển thị ở
+    // trang Lịch công việc và được duyệt ở Lịch công việc / Duyệt yêu cầu.
+    // Chúng nằm chung bảng `tasks` chỉ vì lý do lưu trữ, nên trước đây lọt vào
+    // đây thành thẻ trùng lặp ở cột "Chờ phê duyệt" / "Cần chỉnh sửa", và kéo
+    // thả còn đổi nhầm trạng thái duyệt của đơn.
+    const titleLower = t.title.toLowerCase();
+    const isLeaveRequest = titleLower.startsWith("nghỉ phép") || titleLower.includes("nghi phep");
+    const isTripRequest = titleLower.startsWith("công tác") || titleLower.includes("cong tac");
+    if (isLeaveRequest || isTripRequest) return false;
 
     const userEmail = currentUser.email.toLowerCase().trim();
     const userName = currentUser.name;
@@ -553,9 +564,7 @@ export default function TaskManagementPage() {
       // 1. HR Department staff who handle VPP see all VPP tasks
       const userDept = currentUser.department ? currentUser.department.toLowerCase().trim() : "";
       const isUserInHr = userDept.includes("hành chính") || userDept.includes("nhân sự") ||
-                         userEmail === "nhuquynh.nguyenbich@gmail.com" ||
-                         userEmail === "thanhhangg25697@gmail.com" ||
-                         userEmail === "quyen.0408@gmail.com";
+                         perms.canManageVpp;
       if (isUserInHr) return true;
 
       // 2. The requester sees their own requested VPP tasks

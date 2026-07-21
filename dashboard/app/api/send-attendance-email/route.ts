@@ -1,9 +1,13 @@
+import { requireApiAuth } from "@/lib/apiAuth";
 import { NextRequest, NextResponse } from "next/server";
 import nodemailer from "nodemailer";
 import * as XLSX from "xlsx";
 import { getTenantConfigServer } from "@/lib/tenantConfigServer";
 
 export async function POST(request: NextRequest) {
+  const auth = await requireApiAuth(request);
+  if (!auth.ok) return auth.response;
+
   try {
     const body = await request.json();
     const { smtpConfig, recipient, summary, details, month } = body;

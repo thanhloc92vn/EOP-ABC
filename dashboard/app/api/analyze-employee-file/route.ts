@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-require-imports */
+import { requireApiAuth } from "@/lib/apiAuth";
 import { NextRequest, NextResponse } from "next/server";
 import { getDepartmentListsServer } from "@/lib/departmentsServer";
 import { getTenantConfigServer } from "@/lib/tenantConfigServer";
@@ -291,6 +292,9 @@ Mỗi nhân viên cần có các trường dữ liệu sau:
 
 
 export async function POST(req: NextRequest) {
+  const auth = await requireApiAuth(req);
+  if (!auth.ok) return auth.response;
+
   try {
     const tenantCfg = await getTenantConfigServer();
     const SYSTEM_PROMPT = buildSystemPrompt((await getDepartmentListsServer()).phongBan, tenantCfg.company_name, tenantCfg.company_short);

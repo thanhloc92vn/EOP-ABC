@@ -1,3 +1,4 @@
+import { requireApiAuth } from "@/lib/apiAuth";
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
@@ -64,6 +65,9 @@ function setParagraphText(paraXml: string, newText: string): string {
 type VppItem = { name?: string; unit?: string; qty?: number | string; notes?: string };
 
 export async function POST(request: NextRequest) {
+  const auth = await requireApiAuth(request);
+  if (!auth.ok) return auth.response;
+
   try {
     const data = await request.json();
     const { targetName, receiverName, items = [] } = data as {

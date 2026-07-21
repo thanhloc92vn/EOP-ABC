@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/lib/apiClient";
 import { useState, useEffect, useMemo, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
@@ -685,7 +686,7 @@ export default function CalendarPage() {
           .join(", ");
 
         if (approverEmails) {
-          const res = await fetch("/api/send-request-email", {
+          const res = await apiFetch("/api/send-request-email", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -742,7 +743,7 @@ export default function CalendarPage() {
         const requesterEmail = employeeDirectory.find(e => e.name === task.assignee)?.email || "";
         if (requesterEmail) {
           const isTrip = task.title.toLowerCase().startsWith("công tác") || task.title.toLowerCase().includes("cong tac");
-          const res = await fetch("/api/send-request-email", {
+          const res = await apiFetch("/api/send-request-email", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -825,7 +826,7 @@ export default function CalendarPage() {
           // Nửa ngày: tự động duyệt ngay, vẫn gửi email xác nhận cho người xin nghỉ
           const requesterEmail = employeeDirectory.find(e => e.name === modalName)?.email || "";
           if (requesterEmail) {
-            fetch("/api/send-request-email", {
+            apiFetch("/api/send-request-email", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -842,7 +843,7 @@ export default function CalendarPage() {
           // Báo email cho người được chọn duyệt cấp 1 (Trưởng/Phó phòng đã chọn trong form)
           const approverEmail = employeeDirectory.find(e => e.name === selectedApprover)?.email || "";
           if (approverEmail) {
-            fetch("/api/send-request-email", {
+            apiFetch("/api/send-request-email", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -979,7 +980,7 @@ ${tripRoutes.map((r, i) => `Chặng ${i + 1}:
         }
 
         if (approverEmails) {
-          fetch("/api/send-request-email", {
+          apiFetch("/api/send-request-email", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -1141,7 +1142,7 @@ ${tripRoutes.map((r, i) => `Chặng ${i + 1}:
       const headers: Record<string, string> = {};
       if (session?.access_token) headers["x-supabase-auth"] = session.access_token;
 
-      const response = await fetch(`/api/export-template?taskId=${task.id}&type=${type}&t=${Date.now()}`, { headers });
+      const response = await apiFetch(`/api/export-template?taskId=${task.id}&type=${type}&t=${Date.now()}`, { headers });
       
       if (response.ok) {
         const blob = await response.blob();
