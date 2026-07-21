@@ -36,6 +36,13 @@ yarn-error.log*
 # vercel
 .vercel
 
+# Script nháp / chạy một lần. Trước đây 19 script kiểu này nằm ở thư mục gốc
+# dashboard/ và 90 file trong scratch/ — trong đó có cả script XOÁ DỮ LIỆU
+# hàng loạt (delete-all-reports.js, cleanup-*.js) đọc thẳng .env.local và chạy
+# được ngay bằng `node`. Để lẫn trong repo là rủi ro chạy nhầm mất dữ liệu thật.
+# Cần thử nghiệm gì thì để trong scratch/ — nó không vào git nữa.
+/scratch/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
