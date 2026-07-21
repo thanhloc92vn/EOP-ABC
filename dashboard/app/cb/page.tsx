@@ -2570,8 +2570,10 @@ export default function CBPage() {
         .ilike("email", `%${email}%`);
       const allowedData = allowedList && allowedList.length > 0 ? allowedList[0] : null;
 
-      // Cờ quyền theo dữ liệu (approval_permissions) — nguồn chính để cấp full access
-      // C&B cho người ngoài các tên/vai trò cứng bên dưới (VD: IT hỗ trợ hệ thống).
+      // Cờ quyền theo dữ liệu (approval_permissions) — NGUỒN DUY NHẤT cấp full access
+      // C&B. Các check tên/chức danh cứng (5 tên, "giám đốc", "nhân sự + HCNS"...)
+      // đã bỏ hẳn: cấp/thu quyền chỉ cần bật/tắt cờ trong Cài đặt hệ thống >
+      // User Permissions — tắt cờ là mất quyền thật, không còn đường vòng.
       const perms = await fetchApprovalPermissions(email);
 
       const isAdmin = allowedData?.role === "Admin" ||
@@ -2579,51 +2581,14 @@ export default function CBPage() {
                       email.toLowerCase().includes("admin") ||
                       (session.user.user_metadata?.full_name || "").toLowerCase().includes("admin") ||
                       (session.user.user_metadata?.name || "").toLowerCase().includes("admin");
-      const isHRStaff = empData?.name === "Lại Nguyễn Lan Phương" || 
-                        empData?.name === "Dương Nhật Hoành Anh" ||
-                        session.user.user_metadata?.full_name === "Lại Nguyễn Lan Phương" || 
-                        session.user.user_metadata?.full_name === "Dương Nhật Hoành Anh" || 
-                        session.user.user_metadata?.name === "Lại Nguyễn Lan Phương" ||
-                        session.user.user_metadata?.name === "Dương Nhật Hoành Anh" ||
-                        empData?.role === "CV Nhân sự" ||
-                        empData?.role === "Tổ trưởng Nhân sự" ||
-                        (empData?.role?.toLowerCase()?.includes("nhân sự") && 
-                         (empData?.department?.toLowerCase()?.includes("hành chính") || empData?.department?.toLowerCase()?.includes("hcns"))) ||
-                        (empData?.role?.toLowerCase()?.includes("tổ trưởng") && 
-                         (empData?.department?.toLowerCase()?.includes("hành chính") || empData?.department?.toLowerCase()?.includes("hcns")));
-      const isTPHCNS = (empData?.role?.toLowerCase()?.includes("trưởng phòng") && 
-                        (empData?.department?.toLowerCase()?.includes("hành chính") || empData?.department?.toLowerCase()?.includes("hcns"))) ||
-                       empData?.name === "Lê Thị Hoa Đào" ||
-                       email.toLowerCase().trim() === "lehoadao2706@gmail.com" ||
-                       (session.user.user_metadata?.full_name || "").includes("Hoa Đào") ||
-                       (session.user.user_metadata?.name || "").includes("Hoa Đào");
-                       
-      const isBoardOrSpecific = (empData?.department && (
-        empData.department.toLowerCase().includes("giám đốc") ||
-        empData.department.toLowerCase().includes("giam doc")
-      )) || (empData?.role && (
-        empData.role.toLowerCase().includes("giám đốc") ||
-        empData.role.toLowerCase().includes("giam doc")
-      )) || 
-      empData?.name === "Huỳnh Giáp Nhân" ||
-      empData?.name === "Nguyễn Duy Hưng" ||
-      (session.user.user_metadata?.full_name || "").includes("Huỳnh Giáp Nhân") ||
-      (session.user.user_metadata?.name || "").includes("Huỳnh Giáp Nhân") ||
-      (session.user.user_metadata?.full_name || "").includes("Nguyễn Duy Hưng") ||
-      (session.user.user_metadata?.name || "").includes("Nguyễn Duy Hưng");
 
-      const fullAccess = !!(isAdmin || isHRStaff || isTPHCNS || isBoardOrSpecific || perms.canViewSalary);
+      // Xem toàn bộ dữ liệu C&B (lương, phép, công, HĐ...): Admin hoặc cờ can_view_salary
+      const fullAccess = !!(isAdmin || perms.canViewSalary);
       setHasFullAccess(fullAccess);
 
       // Xóa lịch trình công tác & xem bảng tổng hợp ngày công/thư mục lưu trữ chấm công:
-      // chỉ Admin, Phương HCNS (Lại Nguyễn Lan Phương) và Trưởng phòng Đào (Lê Thị Hoa Đào).
-      // perms.canViewAttendanceImports (bảng approval_permissions) là nguồn CHÍNH — cờ này
-      // tự động chuyển sang người tiếp nhận khi bàn giao & khóa tài khoản. isPhuongHCNS/tên
-      // cứng trong isTPHCNS giữ lại làm fallback, không còn là đường duy nhất cấp quyền.
-      const isPhuongHCNS = empData?.name === "Lại Nguyễn Lan Phương" ||
-                            session.user.user_metadata?.full_name === "Lại Nguyễn Lan Phương" ||
-                            session.user.user_metadata?.name === "Lại Nguyễn Lan Phương";
-      const hrLeadAccess = !!(isAdmin || isPhuongHCNS || isTPHCNS || perms.canViewAttendanceImports);
+      // Admin hoặc cờ can_view_attendance_imports
+      const hrLeadAccess = !!(isAdmin || perms.canViewAttendanceImports);
       setCanDeleteTravel(hrLeadAccess);
       setCanViewTimesheetSummary(hrLeadAccess);
 

@@ -538,14 +538,11 @@ export default function EmployeeManagementPage() {
     const isTargetAdmin = targetEmp.position.toLowerCase() === "admin" ||
                           targetEmp.email.toLowerCase() === "tnechcm@gmail.com";
 
+    // Cờ can_manage_employees (bảng approval_permissions) là nguồn duy nhất ngoài
+    // Admin — check tên cứng đã bỏ, cấp/thu quyền qua Cài đặt > User Permissions
     const isUserAdmin = currentUser.isAdmin ||
                         currentUser.role.toLowerCase() === "admin" ||
-                        perms.canManageEmployees || // cờ approval_permissions là nguồn chính
-                        // check tên giữ làm fallback trong giai đoạn chạy song song (bước 4)
-                        currentUser.name === "Lại Nguyễn Lan Phương" ||
-                        currentUser.name === "Dương Nhật Hoành Anh" ||
-                        currentUser.name === "Lê Thị Hoa Đào" ||
-                        currentUser.email.toLowerCase().trim() === "lehoadao2706@gmail.com";
+                        perms.canManageEmployees;
 
     // Trưởng phòng cannot delete Admin
     if (!isUserAdmin && isTargetAdmin) {
@@ -659,38 +656,17 @@ export default function EmployeeManagementPage() {
     }
   };
 
-  // "Lại Nguyễn Lan Phương" / "Dương Nhật Hoành Anh" / "Lê Thị Hoa Đào" từng được so
-  // khớp cứng theo tên/email ở đây — đã chuyển sang cờ perms.canManageEmployees
-  // (bảng approval_permissions) để khi bàn giao & khóa tài khoản, quyền tự động
-  // chuyển sang người tiếp nhận thay vì bị khóa cứng vào tên cũ.
+  // Sửa/xoá hồ sơ nhân sự: CHỈ Admin hoặc cờ can_manage_employees (bảng
+  // approval_permissions, cấp qua Cài đặt > User Permissions). Các nhánh tự cấp
+  // theo chức danh cũ (trưởng phòng, CV Nhân sự, tổ trưởng HCNS...) đã bỏ hẳn —
+  // tắt cờ là mất quyền thật, khi bàn giao & khóa tài khoản quyền tự chuyển theo cờ.
   const canEdit = !!(currentUser && (
     currentUser.isAdmin ||
     currentUser.role.toLowerCase() === "admin" ||
-    currentUser.role.toLowerCase().includes("trưởng phòng") ||
-    currentUser.role.toLowerCase().includes("truong phong") ||
-    perms.canManageEmployees ||
-    currentUser.role === "CV Nhân sự" ||
-    currentUser.role === "Tổ trưởng Nhân sự" ||
-    (currentUser.role.toLowerCase().includes("nhân sự") &&
-     (currentUser.department.toLowerCase().includes("hành chính") || currentUser.department.toLowerCase().includes("hcns"))) ||
-    (currentUser.role.toLowerCase().includes("tổ trưởng") &&
-     (currentUser.department.toLowerCase().includes("hành chính") || currentUser.department.toLowerCase().includes("hcns")))
+    perms.canManageEmployees
   ));
 
-  const canDelete = !!(currentUser && (
-    currentUser.isAdmin ||
-    currentUser.role.toLowerCase() === "admin" ||
-    perms.canManageEmployees ||
-    (
-      (currentUser.role.toLowerCase().includes("trưởng phòng") || currentUser.role.toLowerCase().includes("truong phong")) &&
-      (
-        currentUser.department.toLowerCase().includes("hành chính") ||
-        currentUser.department.toLowerCase().includes("hcns") ||
-        currentUser.role.toLowerCase().includes("nhân sự") ||
-        currentUser.role.toLowerCase().includes("nhan su")
-      )
-    )
-  ));
+  const canDelete = canEdit;
 
   const canDeleteAll = canDelete;
 

@@ -182,6 +182,26 @@ function activeLeaveExceptions(): LeaveException[] {
   return leaveExceptionsCache;
 }
 
+// Xoá cache nhóm duyệt + đặc cách — gọi sau khi Admin sửa 2 bảng này trong modal
+// User Permissions để lần đánh giá kế tiếp đọc dữ liệu mới, không phải F5.
+export function invalidateApproverCaches(): void {
+  groupsCache = null;
+  leaveExceptionsCache = null;
+}
+
+// Tên các người duyệt đặc cách cho đơn nghỉ 1 NGÀY của assignee này (đọc từ
+// bảng leave_exceptions qua cache). Rỗng = không có đặc cách, dùng luồng thường.
+export function getLeaveExceptionApproversForAssignee(assigneeName?: string | null): string[] {
+  const n = normalizeName(assigneeName || "");
+  if (!n) return [];
+  return activeLeaveExceptions()
+    .filter(ex => {
+      const a = normalizeName(ex.assignee_name);
+      return !!a && n.includes(a);
+    })
+    .map(ex => ex.approver_name);
+}
+
 // Bỏ dấu + thường hoá để so khớp tên kiểu "chứa" (giữ đúng hành vi cũ vốn
 // check cả "quỳnh"/"quynh"). Export cho các trang cần so tên cùng kiểu (cb).
 export function normalizeName(s: string): string {

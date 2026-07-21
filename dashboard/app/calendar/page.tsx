@@ -10,6 +10,8 @@ import {
   getGroupLeaderNameForMember,
   getRequestStage,
   isLeaveTripCap1Approver,
+  getLeaveExceptionApproversForAssignee,
+  normalizeName,
 } from "@/lib/approvers";
 import {
   Search,
@@ -480,16 +482,18 @@ export default function CalendarPage() {
     }
   }, [isSingleDay]);
 
-  // Danh sách người duyệt hợp lệ theo đúng quy tắc hiện có: đơn 1 ngày của Hằng/Quyên
-  // chỉ được chọn Phó phòng đặc cách (Quỳnh/Hoành Anh), còn lại là mọi Trưởng phòng/Admin.
+  // Danh sách người duyệt hợp lệ: đơn 1 ngày của người có đặc cách trong bảng
+  // leave_exceptions chỉ được chọn đúng người duyệt đặc cách đó (VD Hằng->Quỳnh,
+  // Quyên->Hoành Anh); còn lại là mọi Trưởng phòng/Admin. Tên cứng đã bỏ —
+  // thêm/bớt cặp đặc cách chỉ cần sửa bảng leave_exceptions.
   const approverOptions = useMemo(() => {
-    const nameLower = modalName.toLowerCase();
     if (leaveDaysCount === 1) {
-      if (nameLower.includes("hằng") || nameLower.includes("hang")) {
-        return deputiesList.filter(d => d.name.toLowerCase().includes("quỳnh") || d.name.toLowerCase().includes("quynh"));
-      }
-      if (nameLower.includes("quyên") || nameLower.includes("quyen")) {
-        return deputiesList.filter(d => d.name.toLowerCase().includes("hoành anh") || d.name.toLowerCase().includes("hoanh anh"));
+      const exceptionApprovers = getLeaveExceptionApproversForAssignee(modalName);
+      if (exceptionApprovers.length > 0) {
+        const matched = deputiesList.filter(d =>
+          exceptionApprovers.some(a => normalizeName(d.name).includes(normalizeName(a)))
+        );
+        if (matched.length > 0) return matched;
       }
     }
     return managersList;
@@ -627,11 +631,10 @@ export default function CalendarPage() {
   // để tránh 2 nơi cùng có quyền duyệt cuối và lỡ bỏ qua bước chuyển HCNS.
   const pendingApprovals = useMemo(() => {
     if (!currentUser) return [];
-    // Giữ lại ngoại lệ lịch sử: 2 tài khoản này được coi như Admin dù chưa gắn role "Admin"
+    // Ngoại lệ tên cứng (Giáp Nhân/Duy Hưng coi như Admin) đã bỏ — Ban giám đốc vẫn
+    // duyệt cấp 1 được qua isManagerRole("giám đốc") trong isLeaveTripCap1Approver
     const isUserAdmin = currentUser.isAdmin ||
-                        (currentUser.role || "").toLowerCase() === "admin" ||
-                        currentUser.name === "Huỳnh Giáp Nhân" ||
-                        currentUser.name === "Nguyễn Duy Hưng";
+                        (currentUser.role || "").toLowerCase() === "admin";
 
     return tasks.filter(t => {
       if (t.status !== "pending_approval") return false;
