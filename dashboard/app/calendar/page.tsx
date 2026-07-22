@@ -675,6 +675,25 @@ export default function CalendarPage() {
     });
   }, [tasks, currentUser]);
 
+  // Gửi email KHÔNG chặn giao diện — bắt tay SMTP với Gmail mất vài giây, nếu
+  // `await` thì nút duyệt/từ chối đứng im khiến người dùng tưởng bấm hụt.
+  // Ghi DB xong là phản hồi ngay; chỉ báo thêm khi email LỖI.
+  const sendRequestEmailInBackground = (payload: any, failPrefix: string) => {
+    void (async () => {
+      try {
+        const res = await apiFetch("/api/send-request-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const result = await res.json();
+        if (!res.ok) alert(`⚠️ ${failPrefix}: ${result.error}`);
+      } catch (mailErr: any) {
+        alert(`⚠️ ${failPrefix}: ${mailErr.message || "lỗi kết nối"}`);
+      }
+    })();
+  };
+
   // Cấp 1 xác nhận -> chuyển sang HCNS duyệt cuối + báo email cho người có quyền duyệt cuối
   const handleCap1Confirm = async (taskId: string) => {
     if (!currentUser) return;
@@ -694,21 +713,22 @@ export default function CalendarPage() {
 
       if (error) throw error;
 
-      let emailMsg = "";
-      try {
-        const { data: perms } = await supabase
-          .from("approval_permissions")
-          .select("email, can_approve_trip, can_approve_leave");
-        const approverEmails = (perms || [])
-          .filter((p: any) => (isTrip ? p.can_approve_trip : p.can_approve_leave) && p.email)
-          .map((p: any) => p.email)
-          .join(", ");
+      alert("Đã xác nhận! Yêu cầu được chuyển sang HCNS để duyệt cuối.\n📧 Email báo HCNS đang được gửi.");
+      fetchData();
 
-        if (approverEmails) {
-          const res = await apiFetch("/api/send-request-email", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
+      // Tra cứu người duyệt cấp 2 + gửi mail: chạy nền
+      void (async () => {
+        try {
+          const { data: perms } = await supabase
+            .from("approval_permissions")
+            .select("email, can_approve_trip, can_approve_leave");
+          const approverEmails = (perms || [])
+            .filter((p: any) => (isTrip ? p.can_approve_trip : p.can_approve_leave) && p.email)
+            .map((p: any) => p.email)
+            .join(", ");
+          if (!approverEmails) return;
+          sendRequestEmailInBackground(
+            {
               mode: "notify_approver",
               stage: "hcns",
               requestType: isTrip ? "trip" : "leave",
@@ -716,17 +736,13 @@ export default function CalendarPage() {
               task: { ...task, manager_approved_by: currentUser.name },
               approverEmails,
               siteUrl: window.location.origin,
-            }),
-          });
-          const result = await res.json();
-          emailMsg = res.ok ? `\n📧 ${result.message}` : `\n⚠️ Chưa gửi được email báo HCNS: ${result.error}`;
+            },
+            "Chưa gửi được email báo HCNS"
+          );
+        } catch (mailErr: any) {
+          alert(`⚠️ Chưa gửi được email báo HCNS: ${mailErr.message || "lỗi kết nối"}`);
         }
-      } catch (mailErr: any) {
-        emailMsg = `\n⚠️ Chưa gửi được email báo HCNS: ${mailErr.message || "lỗi kết nối"}`;
-      }
-
-      alert(`Đã xác nhận! Yêu cầu được chuyển sang HCNS để duyệt cuối.${emailMsg}`);
-      fetchData();
+      })();
     } catch (err) {
       console.error(err);
       alert("Lỗi khi xác nhận yêu cầu!");
@@ -757,33 +773,26 @@ export default function CalendarPage() {
 
       if (error) throw error;
 
-      let emailMsg = "";
-      try {
-        const requesterEmail = employeeDirectory.find(e => e.name === task.assignee)?.email || "";
-        if (requesterEmail) {
-          const isTrip = task.title.toLowerCase().startsWith("công tác") || task.title.toLowerCase().includes("cong tac");
-          const res = await apiFetch("/api/send-request-email", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              requestType: isTrip ? "trip" : "leave",
-              smtpConfig: readSmtpConfig(),
-              task,
-              requesterEmail,
-              decision: "rejected",
-              rejectReason: reason.trim(),
-              deciderName: currentUser.name,
-            }),
-          });
-          const result = await res.json();
-          emailMsg = res.ok ? `\n📧 ${result.message}` : `\n⚠️ Chưa gửi được email: ${result.error}`;
-        }
-      } catch (mailErr: any) {
-        emailMsg = `\n⚠️ Chưa gửi được email: ${mailErr.message || "lỗi kết nối"}`;
-      }
+      const requesterEmail = employeeDirectory.find(e => e.name === task.assignee)?.email || "";
 
-      alert(`Đã từ chối yêu cầu.${emailMsg}`);
+      alert(`Đã từ chối yêu cầu.${requesterEmail ? "\n📧 Email đang được gửi cho người làm đơn." : ""}`);
       fetchData();
+
+      if (requesterEmail) {
+        const isTrip = task.title.toLowerCase().startsWith("công tác") || task.title.toLowerCase().includes("cong tac");
+        sendRequestEmailInBackground(
+          {
+            requestType: isTrip ? "trip" : "leave",
+            smtpConfig: readSmtpConfig(),
+            task,
+            requesterEmail,
+            decision: "rejected",
+            rejectReason: reason.trim(),
+            deciderName: currentUser.name,
+          },
+          "Chưa gửi được email kết quả"
+        );
+      }
     } catch (err) {
       console.error(err);
       alert("Lỗi khi từ chối yêu cầu!");

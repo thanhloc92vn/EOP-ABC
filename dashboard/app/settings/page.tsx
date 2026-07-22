@@ -259,6 +259,50 @@ function SettingsContent() {
   });
 
   // Cấp 1: Trưởng phòng xác nhận -> chuyển sang HCNS duyệt cuối + email báo người duyệt cuối
+  // Gửi email KHÔNG chặn giao diện — bắt tay SMTP với Gmail mất vài giây, nếu
+  // `await` thì nút duyệt/từ chối đứng im khiến người dùng tưởng bấm hụt.
+  // Ghi DB xong là phản hồi ngay; chỉ báo thêm khi email LỖI.
+  const sendBookingEmailInBackground = (payload: any, failPrefix: string, onSent?: () => void) => {
+    void (async () => {
+      try {
+        const res = await apiFetch("/api/send-booking-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const result = await res.json();
+        if (res.ok) {
+          onSent?.();
+        } else {
+          alert(`⚠️ ${failPrefix}: ${result.error}`);
+        }
+      } catch (mailErr: any) {
+        alert(`⚠️ ${failPrefix}: ${mailErr.message || "lỗi kết nối"}`);
+      }
+    })();
+  };
+
+  // Bản cho luồng Nghỉ phép / Công tác (/api/send-request-email)
+  const sendRequestEmailInBackground = (payload: any, failPrefix: string, onSent?: () => void) => {
+    void (async () => {
+      try {
+        const res = await apiFetch("/api/send-request-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const result = await res.json();
+        if (res.ok) {
+          onSent?.();
+        } else {
+          alert(`⚠️ ${failPrefix}: ${result.error}`);
+        }
+      } catch (mailErr: any) {
+        alert(`⚠️ ${failPrefix}: ${mailErr.message || "lỗi kết nối"}`);
+      }
+    })();
+  };
+
   const handleManagerConfirmBooking = async (booking: any) => {
     if (!currentUser) return;
     try {
@@ -273,41 +317,35 @@ function SettingsContent() {
 
       if (error) throw error;
 
-      // Gửi email thông báo cho người duyệt cuối (HCNS - can_approve_booking, vd chị Quỳnh)
-      let emailMsg = "";
-      try {
-        const { data: perms } = await supabase
-          .from("approval_permissions")
-          .select("email, can_approve_booking");
-        const approverEmails = (perms || [])
-          .filter((p: any) => p.can_approve_booking && p.email)
-          .map((p: any) => p.email)
-          .join(", ");
+      alert("Đã xác nhận! Yêu cầu được chuyển sang Phòng HCNS (điều phối xe & phòng họp) để duyệt cuối.\n📧 Email báo người duyệt cuối đang được gửi.");
+      fetchResourceBookings();
 
-        if (approverEmails) {
-          const res = await apiFetch("/api/send-booking-email", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
+      // Tra cứu người duyệt cuối (HCNS - can_approve_booking) + gửi mail: chạy nền
+      void (async () => {
+        try {
+          const { data: perms } = await supabase
+            .from("approval_permissions")
+            .select("email, can_approve_booking");
+          const approverEmails = (perms || [])
+            .filter((p: any) => p.can_approve_booking && p.email)
+            .map((p: any) => p.email)
+            .join(", ");
+          if (!approverEmails) return;
+          sendBookingEmailInBackground(
+            {
               mode: "notify_approver",
               stage: "final",
               smtpConfig: readSmtpConfig(),
               booking: { ...booking, manager_approved_by: currentUser.name },
               approverEmails,
               siteUrl: window.location.origin,
-            }),
-          });
-          const result = await res.json();
-          emailMsg = res.ok
-            ? `\n📧 ${result.message}`
-            : `\n⚠️ Chưa gửi được email báo người duyệt cuối: ${result.error}`;
+            },
+            "Chưa gửi được email báo người duyệt cuối"
+          );
+        } catch (mailErr: any) {
+          alert(`⚠️ Chưa gửi được email báo người duyệt cuối: ${mailErr.message || "lỗi kết nối"}`);
         }
-      } catch (mailErr: any) {
-        emailMsg = `\n⚠️ Chưa gửi được email báo người duyệt cuối: ${mailErr.message || "lỗi kết nối"}`;
-      }
-
-      alert(`Đã xác nhận! Yêu cầu được chuyển sang Phòng HCNS (điều phối xe & phòng họp) để duyệt cuối.${emailMsg}`);
-      fetchResourceBookings();
+      })();
     } catch (err) {
       console.error("Error confirming booking (manager step):", err);
       alert("Lỗi khi xác nhận đăng ký!");
@@ -340,34 +378,23 @@ function SettingsContent() {
 
       if (error) throw error;
 
-      // Gửi email kết quả — SMTP dùng chung cấu hình đã lưu ở trang C&B (localStorage),
-      // server sẽ fallback sang biến môi trường nếu chưa cấu hình.
-      let emailMsg = "";
-      try {
-        const res = await apiFetch("/api/send-booking-email", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            smtpConfig: readSmtpConfig(),
-            booking: { ...booking, manager_approved_by: booking.manager_approved_by },
-            decision,
-            rejectReason: rejectReason.trim(),
-            approverName: currentUser.name,
-          }),
-        });
-        const result = await res.json();
-        if (res.ok) {
-          await supabase.from("resource_bookings").update({ email_sent: true }).eq("id", booking.id);
-          emailMsg = `\n📧 ${result.message}`;
-        } else {
-          emailMsg = `\n⚠️ Chưa gửi được email kết quả: ${result.error}`;
-        }
-      } catch (mailErr: any) {
-        emailMsg = `\n⚠️ Chưa gửi được email kết quả: ${mailErr.message || "lỗi kết nối"}`;
-      }
-
-      alert(`${approve ? "Đã DUYỆT" : "Đã TỪ CHỐI"} đăng ký ${booking.booking_type === "xe" ? "xe" : "phòng họp"} của ${booking.requester_name}.${emailMsg}`);
+      alert(`${approve ? "Đã DUYỆT" : "Đã TỪ CHỐI"} đăng ký ${booking.booking_type === "xe" ? "xe" : "phòng họp"} của ${booking.requester_name}.\n📧 Email kết quả đang được gửi cho người đăng ký.`);
       fetchResourceBookings();
+
+      // Gửi email kết quả chạy nền — SMTP dùng chung cấu hình đã lưu ở trang C&B
+      // (localStorage), server sẽ fallback sang biến môi trường nếu chưa cấu hình.
+      sendBookingEmailInBackground(
+        {
+          smtpConfig: readSmtpConfig(),
+          booking: { ...booking, manager_approved_by: booking.manager_approved_by },
+          decision,
+          rejectReason: rejectReason.trim(),
+          approverName: currentUser.name,
+        },
+        "Chưa gửi được email kết quả",
+        // Chỉ đánh dấu email_sent khi mail thật sự gửi được
+        () => { void supabase.from("resource_bookings").update({ email_sent: true }).eq("id", booking.id); }
+      );
     } catch (err) {
       console.error("Error making final booking decision:", err);
       alert("Lỗi khi xử lý duyệt đăng ký!");
@@ -389,21 +416,22 @@ function SettingsContent() {
 
       if (error) throw error;
 
-      let emailMsg = "";
-      try {
-        const { data: perms } = await supabase
-          .from("approval_permissions")
-          .select("email, can_approve_trip, can_approve_leave");
-        const approverEmails = (perms || [])
-          .filter((p: any) => (isTrip ? p.can_approve_trip : p.can_approve_leave) && p.email)
-          .map((p: any) => p.email)
-          .join(", ");
+      alert("Đã xác nhận! Yêu cầu được chuyển sang HCNS để duyệt cuối.\n📧 Email báo HCNS đang được gửi.");
+      fetchTasks();
 
-        if (approverEmails) {
-          const res = await apiFetch("/api/send-request-email", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
+      // Tra cứu người duyệt cấp 2 + gửi mail: chạy nền
+      void (async () => {
+        try {
+          const { data: perms } = await supabase
+            .from("approval_permissions")
+            .select("email, can_approve_trip, can_approve_leave");
+          const approverEmails = (perms || [])
+            .filter((p: any) => (isTrip ? p.can_approve_trip : p.can_approve_leave) && p.email)
+            .map((p: any) => p.email)
+            .join(", ");
+          if (!approverEmails) return;
+          sendRequestEmailInBackground(
+            {
               mode: "notify_approver",
               stage: "hcns",
               requestType: isTrip ? "trip" : "leave",
@@ -411,17 +439,13 @@ function SettingsContent() {
               task: { ...task, manager_approved_by: currentUser.name },
               approverEmails,
               siteUrl: window.location.origin,
-            }),
-          });
-          const result = await res.json();
-          emailMsg = res.ok ? `\n📧 ${result.message}` : `\n⚠️ Chưa gửi được email báo HCNS: ${result.error}`;
+            },
+            "Chưa gửi được email báo HCNS"
+          );
+        } catch (mailErr: any) {
+          alert(`⚠️ Chưa gửi được email báo HCNS: ${mailErr.message || "lỗi kết nối"}`);
         }
-      } catch (mailErr: any) {
-        emailMsg = `\n⚠️ Chưa gửi được email báo HCNS: ${mailErr.message || "lỗi kết nối"}`;
-      }
-
-      alert(`Đã xác nhận! Yêu cầu được chuyển sang HCNS để duyệt cuối.${emailMsg}`);
-      fetchTasks();
+      })();
     } catch (err) {
       console.error("Error confirming request (manager step):", err);
       alert("Lỗi khi xác nhận yêu cầu!");
@@ -515,32 +539,28 @@ function SettingsContent() {
 
       if (error) throw error;
 
-      let emailMsg = "";
-      try {
-        const requesterEmail = employeeDirectory.find(e => e.name === task.assignee)?.email || "";
-        if (requesterEmail) {
-          const res = await apiFetch("/api/send-request-email", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              requestType: isTrip ? "trip" : "leave",
-              smtpConfig: readSmtpConfig(),
-              task,
-              requesterEmail,
-              decision: approve ? "approved" : "rejected",
-              rejectReason: rejectReason.trim(),
-              deciderName: currentUser.name,
-            }),
-          });
-          const result = await res.json();
-          emailMsg = res.ok ? `\n📧 ${result.message}` : `\n⚠️ Chưa gửi được email: ${result.error}`;
-        }
-      } catch (mailErr: any) {
-        emailMsg = `\n⚠️ Chưa gửi được email: ${mailErr.message || "lỗi kết nối"}`;
-      }
+      const requesterEmail = employeeDirectory.find(e => e.name === task.assignee)?.email || "";
 
-      alert(`${approve ? "Đã phê duyệt" : "Đã từ chối"} yêu cầu ${isTrip ? "đi công tác" : "nghỉ phép"}.${emailMsg}`);
+      alert(
+        `${approve ? "Đã phê duyệt" : "Đã từ chối"} yêu cầu ${isTrip ? "đi công tác" : "nghỉ phép"}.` +
+        (requesterEmail ? "\n📧 Email kết quả đang được gửi cho người làm đơn." : "")
+      );
       fetchTasks();
+
+      if (requesterEmail) {
+        sendRequestEmailInBackground(
+          {
+            requestType: isTrip ? "trip" : "leave",
+            smtpConfig: readSmtpConfig(),
+            task,
+            requesterEmail,
+            decision: approve ? "approved" : "rejected",
+            rejectReason: rejectReason.trim(),
+            deciderName: currentUser.name,
+          },
+          "Chưa gửi được email kết quả"
+        );
+      }
     } catch (err) {
       console.error("Error finalizing request decision:", err);
       alert("Lỗi khi xử lý yêu cầu!");

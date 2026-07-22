@@ -538,38 +538,36 @@ function BookingContent() {
         .eq("id", b.id);
       if (error) throw error;
 
-      let emailMsg = "";
-      try {
-        const { data: perms } = await supabase
-          .from("approval_permissions")
-          .select("email, can_approve_booking");
-        const approverEmails = (perms || [])
-          .filter((p: any) => p.can_approve_booking && p.email)
-          .map((p: any) => p.email)
-          .join(", ");
-        if (approverEmails) {
-          const res = await apiFetch("/api/send-booking-email", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
+      showToast("success", "Đã phê duyệt! Yêu cầu chuyển sang Hành chính điều phối.");
+      closeBookingModal();
+      fetchBookings();
+
+      // Tra cứu người duyệt + gửi mail đều chạy nền, không giữ popup lại
+      void (async () => {
+        try {
+          const { data: perms } = await supabase
+            .from("approval_permissions")
+            .select("email, can_approve_booking");
+          const approverEmails = (perms || [])
+            .filter((p: any) => p.can_approve_booking && p.email)
+            .map((p: any) => p.email)
+            .join(", ");
+          if (!approverEmails) return;
+          sendBookingEmailInBackground(
+            {
               mode: "notify_approver",
               stage: "final",
               smtpConfig: readSmtpConfig(),
               booking: { ...b, resource_name: modalResourceName || b.resource_name, manager_approved_by: currentUser.name },
               approverEmails,
               siteUrl: window.location.origin,
-            }),
-          });
-          const result = await res.json();
-          emailMsg = res.ok ? result.message : `Chưa gửi được email báo Hành chính: ${result.error}`;
+            },
+            "Chưa gửi được email báo Hành chính"
+          );
+        } catch (mailErr: any) {
+          showToast("error", `Chưa gửi được email báo Hành chính: ${mailErr.message || "lỗi kết nối"}`);
         }
-      } catch (mailErr: any) {
-        emailMsg = `Chưa gửi được email báo Hành chính: ${mailErr.message || "lỗi kết nối"}`;
-      }
-
-      showToast("success", `Đã phê duyệt! Yêu cầu chuyển sang Hành chính điều phối.${emailMsg ? " " + emailMsg : ""}`);
-      closeBookingModal();
-      fetchBookings();
+      })();
     } catch (err: any) {
       console.error("Error manager-approving booking:", err);
       showToast("error", "Lỗi khi phê duyệt đăng ký!");
@@ -596,39 +594,52 @@ function BookingContent() {
         .eq("id", b.id);
       if (error) throw error;
 
-      let emailMsg = "";
-      try {
-        const res = await apiFetch("/api/send-booking-email", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            smtpConfig: readSmtpConfig(),
-            booking: { ...b, resource_name: finalResource },
-            decision: "approved",
-            rejectReason: "",
-            approverName: currentUser.name,
-          }),
-        });
-        const result = await res.json();
-        if (res.ok) {
-          await supabase.from("resource_bookings").update({ email_sent: true }).eq("id", b.id);
-          emailMsg = result.message;
-        } else {
-          emailMsg = `Chưa gửi được email kết quả: ${result.error}`;
-        }
-      } catch (mailErr: any) {
-        emailMsg = `Chưa gửi được email kết quả: ${mailErr.message || "lỗi kết nối"}`;
-      }
-
-      showToast("success", `Đã điều phối ${finalResource} cho ${b.host_name}.${emailMsg ? " " + emailMsg : ""}`);
+      showToast("success", `Đã điều phối ${finalResource} cho ${b.host_name}. Đang gửi email báo người đăng ký...`);
       closeBookingModal();
       fetchBookings();
+
+      sendBookingEmailInBackground(
+        {
+          smtpConfig: readSmtpConfig(),
+          booking: { ...b, resource_name: finalResource },
+          decision: "approved",
+          rejectReason: "",
+          approverName: currentUser.name,
+        },
+        "Chưa gửi được email kết quả",
+        // Chỉ đánh dấu email_sent khi mail thật sự gửi được
+        () => { void supabase.from("resource_bookings").update({ email_sent: true }).eq("id", b.id); }
+      );
     } catch (err: any) {
       console.error("Error dispatching booking:", err);
       showToast("error", "Lỗi khi điều phối đăng ký!");
     } finally {
       setProcessingAction(false);
     }
+  };
+
+  // Gửi email KHÔNG chặn giao diện.
+  // Trước đây mỗi nút duyệt/từ chối đều `await` lời gọi này, mà bắt tay SMTP với
+  // Gmail mất vài giây -> popup đứng im, người dùng tưởng bấm hụt rồi bấm lại.
+  // Nay: ghi DB xong là đóng popup ngay, email chạy nền; chỉ báo thêm khi LỖI.
+  const sendBookingEmailInBackground = (payload: any, failPrefix: string, onSent?: () => void) => {
+    void (async () => {
+      try {
+        const res = await apiFetch("/api/send-booking-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const result = await res.json();
+        if (res.ok) {
+          onSent?.();
+        } else {
+          showToast("error", `${failPrefix}: ${result.error}`);
+        }
+      } catch (mailErr: any) {
+        showToast("error", `${failPrefix}: ${mailErr.message || "lỗi kết nối"}`);
+      }
+    })();
   };
 
   // Từ chối — dùng chung cho cả Trưởng bộ phận (ở mọi giai đoạn) và Hành chính
@@ -652,28 +663,20 @@ function BookingContent() {
         .eq("id", b.id);
       if (error) throw error;
 
-      let emailMsg = "";
-      try {
-        const res = await apiFetch("/api/send-booking-email", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            smtpConfig: readSmtpConfig(),
-            booking: b,
-            decision: "rejected",
-            rejectReason: rejectReason.trim(),
-            approverName: currentUser.name,
-          }),
-        });
-        const result = await res.json();
-        emailMsg = res.ok ? result.message : `Chưa gửi được email kết quả: ${result.error}`;
-      } catch (mailErr: any) {
-        emailMsg = `Chưa gửi được email kết quả: ${mailErr.message || "lỗi kết nối"}`;
-      }
-
-      showToast("success", `Đã từ chối đăng ký của ${b.host_name}.${emailMsg ? " " + emailMsg : ""}`);
+      showToast("success", `Đã từ chối đăng ký của ${b.host_name}. Đang gửi email báo người đăng ký...`);
       closeBookingModal();
       fetchBookings();
+
+      sendBookingEmailInBackground(
+        {
+          smtpConfig: readSmtpConfig(),
+          booking: b,
+          decision: "rejected",
+          rejectReason: rejectReason.trim(),
+          approverName: currentUser.name,
+        },
+        "Chưa gửi được email kết quả"
+      );
     } catch (err: any) {
       console.error("Error rejecting booking:", err);
       showToast("error", "Lỗi khi từ chối đăng ký!");
@@ -694,28 +697,20 @@ function BookingContent() {
       const { error } = await supabase.from("resource_bookings").delete().eq("id", b.id);
       if (error) throw error;
 
-      let emailMsg = "";
-      try {
-        const res = await apiFetch("/api/send-booking-email", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            smtpConfig: readSmtpConfig(),
-            booking: b,
-            decision: "deleted",
-            rejectReason: note.trim(),
-            approverName: currentUser.name,
-          }),
-        });
-        const result = await res.json();
-        emailMsg = res.ok ? result.message : `Chưa gửi được email báo xoá lịch: ${result.error}`;
-      } catch (mailErr: any) {
-        emailMsg = `Chưa gửi được email báo xoá lịch: ${mailErr.message || "lỗi kết nối"}`;
-      }
-
-      showToast("success", `Đã xoá lịch book.${emailMsg ? " " + emailMsg : ""}`);
+      showToast("success", "Đã xoá lịch book. Đang gửi email báo người đăng ký...");
       closeBookingModal();
       fetchBookings();
+
+      sendBookingEmailInBackground(
+        {
+          smtpConfig: readSmtpConfig(),
+          booking: b,
+          decision: "deleted",
+          rejectReason: note.trim(),
+          approverName: currentUser.name,
+        },
+        "Chưa gửi được email báo xoá lịch"
+      );
     } catch (err: any) {
       console.error("Error deleting booking from modal:", err);
       showToast("error", "Lỗi khi xoá lịch book!");
