@@ -9,6 +9,7 @@ import {
   hasAnyApprovalPermission,
   isMarketingTeamMember,
   isMarketingTeamLeader,
+  isManagerRole,
   getRequestStage,
   isLeaveTripCap1Approver,
   isLeaveTripCap2Approver,
@@ -355,22 +356,12 @@ export default function Header({ title, subtitle }: Props) {
       }
 
       const isUserAdmin = userObj.isAdmin || (userObj.role || "").toLowerCase() === "admin";
-      const isUserManager = (userObj.role || "").toLowerCase().includes("trưởng phòng") || 
-                            (userObj.role || "").toLowerCase().includes("truong phong") ||
-                            (userObj.role || "").toLowerCase().includes("giám đốc") ||
-                            (userObj.role || "").toLowerCase().includes("giam doc") ||
-                            (userObj.role || "").toLowerCase().includes("quản lý") ||
-                            (userObj.role || "").toLowerCase().includes("quan ly") ||
-                            (userObj.role || "").toLowerCase().includes("quyền trưởng phòng") ||
-                            (userObj.role || "").toLowerCase().includes("quyen truong phong") ||
-                            (userObj.role || "").toLowerCase().startsWith("tp.") ||
-                            (userObj.role || "").toLowerCase().startsWith("tp ");
-
-      const isUserDeputy = (userObj.role || "").toLowerCase().includes("phó phòng") || 
-                           (userObj.role || "").toLowerCase().includes("pho phong") ||
-                           (userObj.role || "").toLowerCase().includes("phó trưởng phòng") || 
-                           (userObj.role || "").toLowerCase().includes("pho truong phong") ||
-                           (userObj.role || "").toLowerCase().includes("leader");
+      // Dùng chung isManagerRole() của lib/approvers.ts — trước đây Header giữ
+      // một bản chép riêng và nó thiếu "Kế toán trưởng"/"Chỉ huy trưởng", nên
+      // Kế toán trưởng không nhận được thông báo đăng ký xe của phòng mình
+      // trong khi trang /dang-ky (dùng hàm chuẩn) lại hiểu đúng.
+      // isManagerRole đã bao gồm cả cấp phó (phó phòng / chỉ huy phó / leader).
+      const isUserManager = isManagerRole(userObj.role);
 
       // HR by role only — per-person grants now live in the approval_permissions table
       const isUserHR = (userObj.role || "").toLowerCase().includes("nhân sự") ||
@@ -382,7 +373,7 @@ export default function Header({ title, subtitle }: Props) {
       // canApproveBenefit tính riêng: cờ này KHÔNG nằm trong hasAnyApprovalPermission()
       // (nó không mở menu "Duyệt yêu cầu" ở Cài đặt vì duyệt phúc lợi nằm ở trang C&B),
       // nhưng người chỉ có mỗi cờ này vẫn phải nhận được thông báo.
-      const hasApprovalPrivileges = isUserAdmin || isUserManager || isUserDeputy || isUserHR || hasAnyApprovalPermission(perms) || perms.canApproveBenefit || isMarketingTeamLeader(userObj.name);
+      const hasApprovalPrivileges = isUserAdmin || isUserManager || isUserHR || hasAnyApprovalPermission(perms) || perms.canApproveBenefit || isMarketingTeamLeader(userObj.name);
       if (!hasApprovalPrivileges) {
         setNotifications([]);
         return;
@@ -421,7 +412,7 @@ export default function Header({ title, subtitle }: Props) {
         if (userObj && e.approver === userObj.name) return true;
         
         // Department manager or deputy manager of the same department
-        const isManagerOfSameDept = (isUserManager || isUserDeputy) && userObj && userObj.department === e.department;
+        const isManagerOfSameDept = isUserManager && userObj && userObj.department === e.department;
         if (isManagerOfSameDept) return true;
 
         return false;
@@ -486,7 +477,7 @@ export default function Header({ title, subtitle }: Props) {
           if (isMarketingTeamMember(b.requester_name)) {
             return isMarketingTeamLeader(userObj.name);
           }
-          return (isUserManager || isUserDeputy) && userObj.department === b.department;
+          return isUserManager && userObj.department === b.department;
         }
         if (b.status === "pending_hcns") {
           return isUserAdmin || perms.canApproveBooking;

@@ -228,8 +228,15 @@ export function isManagerRole(role?: string | null): boolean {
     r.includes("giám đốc") || r.includes("giam doc") ||
     r.includes("quản lý") || r.includes("quan ly") ||
     r.includes("quyền trưởng phòng") || r.includes("quyen truong phong") ||
-    r.startsWith("tp.") || r.startsWith("tp ") ||
+    r.startsWith("tp.") || r.startsWith("tp ") || r === "tp" ||
     r.includes("tổ trưởng") || r.includes("to truong") ||
+    // Trưởng đơn vị KHÔNG mang chữ "trưởng phòng" — thiếu các dòng này thì
+    // Kế toán trưởng (Phòng TCKT) và Chỉ huy trưởng (các BĐH dự án) không
+    // nhận được thông báo duyệt cấp 1 cho nhân viên phòng/ban mình.
+    r.includes("kế toán trưởng") || r.includes("ke toan truong") ||
+    r.includes("trưởng bộ phận") || r.includes("truong bo phan") ||
+    r.includes("chỉ huy trưởng") || r.includes("chi huy truong") ||
+    r.includes("chỉ huy phó") || r.includes("chi huy pho") ||
     r.includes("leader")
   );
 }
