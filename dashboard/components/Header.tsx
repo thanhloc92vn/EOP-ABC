@@ -340,6 +340,20 @@ export default function Header({ title, subtitle }: Props) {
         console.warn("Could not fetch resource bookings for header:", err);
       }
 
+      // 4. Fetch phiếu chi phúc lợi (hiếu hỷ & biến cố) đang chờ duyệt
+      let benefitClaimsData: any[] = [];
+      try {
+        const { data, error } = await supabase
+          .from("benefit_claims")
+          .select("*")
+          .eq("status", "Chờ phê duyệt");
+        if (!error && data) {
+          benefitClaimsData = data;
+        }
+      } catch (err) {
+        console.warn("Could not fetch benefit claims for header:", err);
+      }
+
       const isUserAdmin = userObj.isAdmin || (userObj.role || "").toLowerCase() === "admin";
       const isUserManager = (userObj.role || "").toLowerCase().includes("trưởng phòng") || 
                             (userObj.role || "").toLowerCase().includes("truong phong") ||
@@ -365,7 +379,10 @@ export default function Header({ title, subtitle }: Props) {
       // Per-user approval grants from approval_permissions table
       const perms = await fetchApprovalPermissions(userObj.email);
 
-      const hasApprovalPrivileges = isUserAdmin || isUserManager || isUserDeputy || isUserHR || hasAnyApprovalPermission(perms) || isMarketingTeamLeader(userObj.name);
+      // canApproveBenefit tính riêng: cờ này KHÔNG nằm trong hasAnyApprovalPermission()
+      // (nó không mở menu "Duyệt yêu cầu" ở Cài đặt vì duyệt phúc lợi nằm ở trang C&B),
+      // nhưng người chỉ có mỗi cờ này vẫn phải nhận được thông báo.
+      const hasApprovalPrivileges = isUserAdmin || isUserManager || isUserDeputy || isUserHR || hasAnyApprovalPermission(perms) || perms.canApproveBenefit || isMarketingTeamLeader(userObj.name);
       if (!hasApprovalPrivileges) {
         setNotifications([]);
         return;
@@ -494,8 +511,26 @@ export default function Header({ title, subtitle }: Props) {
         };
       });
 
+      // Phiếu chi phúc lợi chờ duyệt: chỉ báo cho người có cờ can_approve_benefit
+      // (hoặc Admin) — đúng đối tượng bấm được nút Duyệt bên trang C&B.
+      const mappedBenefitClaims = (isUserAdmin || perms.canApproveBenefit)
+        ? benefitClaimsData.map(c => {
+            const amountStr = c.amount != null && !isNaN(Number(c.amount))
+              ? `${Number(c.amount).toLocaleString("vi-VN")}đ`
+              : (c.amount || "");
+            return {
+              id: c.id,
+              type: "benefit",
+              typeText: "Chi phúc lợi",
+              message: `${c.name} đề nghị trợ cấp ${c.category}${amountStr ? ` — ${amountStr}` : ""}`,
+              time: c.created_at ? new Date(c.created_at).toLocaleTimeString("vi-VN", { hour: '2-digit', minute: '2-digit' }) + " " + new Date(c.created_at).toLocaleDateString("vi-VN") : "",
+              timestamp: c.created_at ? new Date(c.created_at).getTime() : 0
+            };
+          })
+        : [];
+
       // Combine and sort by timestamp descending
-      const allNotifications = [...mappedTasks, ...mappedJustifications, ...mappedBookings].sort((a, b) => b.timestamp - a.timestamp);
+      const allNotifications = [...mappedTasks, ...mappedJustifications, ...mappedBookings, ...mappedBenefitClaims].sort((a, b) => b.timestamp - a.timestamp);
       setNotifications(allNotifications);
     } catch (err) {
       console.error("Error fetching notifications for header:", err);
@@ -543,6 +578,13 @@ export default function Header({ title, subtitle }: Props) {
         .on(
           "postgres_changes",
           { event: "*", schema: "public", table: "resource_bookings" },
+          () => {
+            fetchNotifications(currentUser);
+          }
+        )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "benefit_claims" },
           () => {
             fetchNotifications(currentUser);
           }
@@ -639,6 +681,9 @@ export default function Header({ title, subtitle }: Props) {
                           : notif.type === "booking"
                           // Mở thẳng lịch đăng ký xe/phòng họp + bật popup chi tiết của đúng đăng ký này
                           ? `/dang-ky?tab=${notif.bookingType || "phong_hop"}&bookingId=${notif.id}`
+                          : notif.type === "benefit"
+                          // Mở thẳng tab Phúc lợi > Hiếu hỷ & Trợ cấp bên trang C&B
+                          ? "/cb?subtab=funeral_wedding"
                           : notif.type === "leave"
                           ? "/settings?tab=approvals&subtab=leave"
                           : notif.type === "trip"
@@ -656,6 +701,8 @@ export default function Header({ title, subtitle }: Props) {
                             ? "bg-indigo-50 text-indigo-700"
                             : notif.type === "booking"
                             ? "bg-sky-50 text-sky-700"
+                            : notif.type === "benefit"
+                            ? "bg-rose-50 text-rose-700"
                             : "bg-amber-50 text-amber-700"
                         }`}>
                           {notif.typeText}

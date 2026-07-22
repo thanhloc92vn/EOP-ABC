@@ -502,6 +502,9 @@ export default function CBPage() {
   const [hasFullAccess, setHasFullAccess] = useState(false);
   // Cờ can_approve_benefit — người được giao duyệt chi phúc lợi (hiếu hỷ, thưởng lễ)
   const [canApproveBenefit, setCanApproveBenefit] = useState(false);
+  // Chứng từ đính kèm phiếu hiếu hỷ: id phiếu đang tải lên + file đang xem
+  const [uploadingClaimId, setUploadingClaimId] = useState<string | null>(null);
+  const [attachmentViewer, setAttachmentViewer] = useState<{ url: string; name: string; type: string } | null>(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
 
   // Attendance Justification (Explanation) states
@@ -1635,11 +1638,21 @@ export default function CBPage() {
   const handleDeleteClaim = async (claimId: string) => {
     if (!confirm("Bạn có chắc chắn muốn xóa yêu cầu trợ cấp này không?")) return;
     const prev = benefitClaims;
+    const target = benefitClaims.find(c => c.id === claimId);
     const updatedClaims = benefitClaims.filter(c => c.id !== claimId);
     setBenefitClaims(updatedClaims); // optimistic
     try {
       const { error } = await supabase.from("benefit_claims").delete().eq("id", claimId);
       if (error) throw error;
+
+      // Dọn chứng từ trong bucket cho khỏi rác. Người thường không có quyền xoá
+      // file (policy chỉ cho người duyệt) nên lỗi ở đây bỏ qua, không chặn luồng.
+      if (target?.attachment_path) {
+        const { error: rmError } = await supabase.storage
+          .from("benefit-attachments")
+          .remove([target.attachment_path]);
+        if (rmError) console.warn("Không xoá được chứng từ kèm theo:", rmError.message);
+      }
       if (typeof window !== "undefined") {
         localStorage.setItem("tnec_cb_benefit_claims", JSON.stringify(updatedClaims));
       }
@@ -1691,6 +1704,77 @@ export default function CBPage() {
       console.error("Lỗi cập nhật trạng thái trợ cấp:", err);
       alert("Không thể cập nhật phiếu: " + (err.message || "Lỗi không xác định"));
       setBenefitClaims(prev); // rollback
+    }
+  };
+
+  // ─── CHỨNG TỪ ĐÍNH KÈM PHIẾU HIẾU HỶ ───
+  // File nằm ở bucket private 'benefit-attachments'; bảng chỉ lưu đường dẫn,
+  // link xem được ký hạn giờ mỗi lần mở (migration 015).
+  const ALLOWED_CLAIM_FILE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic", "application/pdf"];
+  const MAX_CLAIM_FILE_MB = 5;
+
+  const handleUploadClaimAttachment = async (claimId: string, file: File) => {
+    if (!ALLOWED_CLAIM_FILE_TYPES.includes(file.type)) {
+      alert("Chỉ nhận ảnh (JPG, PNG, WEBP, HEIC) hoặc file PDF.");
+      return;
+    }
+    if (file.size > MAX_CLAIM_FILE_MB * 1024 * 1024) {
+      alert(`File quá lớn (tối đa ${MAX_CLAIM_FILE_MB}MB). Dung lượng file của bạn: ${(file.size / 1024 / 1024).toFixed(1)}MB.`);
+      return;
+    }
+
+    setUploadingClaimId(claimId);
+    try {
+      const cleanName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
+      const filePath = `${claimId}/${Date.now()}_${cleanName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("benefit-attachments")
+        .upload(filePath, file, { cacheControl: "3600", upsert: true });
+      if (uploadError) throw uploadError;
+
+      const patch = {
+        attachment_path: filePath,
+        attachment_name: file.name,
+        attachment_type: file.type,
+      };
+      const { data, error } = await supabase
+        .from("benefit_claims")
+        .update(patch)
+        .eq("id", claimId)
+        .select("*")
+        .single();
+      if (error) throw error;
+
+      const synced = benefitClaims.map(c => (c.id === claimId ? normalizeClaim(data) : c));
+      setBenefitClaims(synced);
+      if (typeof window !== "undefined") {
+        localStorage.setItem("tnec_cb_benefit_claims", JSON.stringify(synced));
+      }
+    } catch (err: any) {
+      console.error("Lỗi tải chứng từ lên:", err);
+      alert("Không tải được chứng từ lên hệ thống: " + (err.message || "Lỗi không xác định"));
+    } finally {
+      setUploadingClaimId(null);
+    }
+  };
+
+  const handleViewClaimAttachment = async (claim: any) => {
+    if (!claim.attachment_path) return;
+    try {
+      // Link ký hạn 5 phút — bucket private nên không dùng public URL được
+      const { data, error } = await supabase.storage
+        .from("benefit-attachments")
+        .createSignedUrl(claim.attachment_path, 300);
+      if (error) throw error;
+      setAttachmentViewer({
+        url: data.signedUrl,
+        name: claim.attachment_name || "Chứng từ",
+        type: claim.attachment_type || "",
+      });
+    } catch (err: any) {
+      console.error("Lỗi mở chứng từ:", err);
+      alert("Không mở được chứng từ: " + (err.message || "Lỗi không xác định"));
     }
   };
 
@@ -3505,8 +3589,12 @@ export default function CBPage() {
     );
     return benefitClaims
       .filter(c => !excludedNames.has(normalizeText(c.name || "")))
-      .filter(c => hasFullAccess || c.name === currentUser?.name);
-  }, [benefitClaims, employees, hasFullAccess, currentUser]);
+      // Người được giao duyệt phải thấy phiếu của MỌI người, nếu không sẽ không
+      // có gì để bấm duyệt. Trước đây chỉ dựa vào hasFullAccess (= Admin hoặc cờ
+      // "Xem lương & HĐLĐ") nên người chỉ có cờ duyệt phúc lợi chỉ thấy phiếu
+      // mang tên chính mình.
+      .filter(c => hasFullAccess || canApproveBenefit || c.name === currentUser?.name);
+  }, [benefitClaims, employees, hasFullAccess, canApproveBenefit, currentUser]);
 
   // --- HELPER FUNCTIONS FOR PREMIUM EMPLOYEE PROFILE VIEW ---
   const calculateTenure = (emp: Employee) => {
@@ -6160,13 +6248,14 @@ export default function CBPage() {
                           <th className="py-3 px-3 text-right">Mức hỗ trợ</th>
                           <th className="py-3 px-3 text-center">Ngày sự kiện</th>
                           <th className="py-3 px-3 text-center">Trạng thái</th>
+                          <th className="py-3 px-3 text-center">Chứng từ</th>
                           <th className="py-3 px-3 w-16 text-center">Thao tác</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
                         {filteredBenefitClaims.length === 0 ? (
                           <tr>
-                            <td colSpan={8} className="py-8 text-center text-slate-400 font-bold italic">Không có bản ghi yêu cầu trợ cấp nào</td>
+                            <td colSpan={9} className="py-8 text-center text-slate-400 font-bold italic">Không có bản ghi yêu cầu trợ cấp nào</td>
                           </tr>
                         ) : (
                           filteredBenefitClaims.map((claim) => (
@@ -6217,6 +6306,59 @@ export default function CBPage() {
                                     Lý do: {claim.rejection_reason}
                                   </div>
                                 )}
+                              </td>
+                              {/* Chứng từ đính kèm: ảnh/PDF giấy tờ chứng minh sự việc */}
+                              <td className="py-3.5 px-3 text-center">
+                                {(() => {
+                                  const isOwnPending =
+                                    claim.status === "Chờ phê duyệt" &&
+                                    (claim.created_by || "").toLowerCase() === (currentUser?.email || "").toLowerCase();
+                                  const canAttach = canApproveBenefit || isOwnPending;
+                                  const isUploading = uploadingClaimId === claim.id;
+
+                                  return (
+                                    <div className="flex items-center justify-center gap-1">
+                                      {claim.attachment_path && (
+                                        <button
+                                          onClick={() => handleViewClaimAttachment(claim)}
+                                          title={`Xem chứng từ: ${claim.attachment_name || ""}`}
+                                          className="text-blue-600 hover:text-blue-800 p-1.5 rounded-lg hover:bg-blue-50 transition-all cursor-pointer"
+                                        >
+                                          <Eye size={14} />
+                                        </button>
+                                      )}
+                                      {canAttach && (
+                                        <>
+                                          <input
+                                            type="file"
+                                            id={`claim-file-${claim.id}`}
+                                            accept="image/jpeg,image/png,image/webp,image/heic,application/pdf"
+                                            className="hidden"
+                                            onChange={(e) => {
+                                              const f = e.target.files?.[0];
+                                              if (f) handleUploadClaimAttachment(claim.id, f);
+                                              e.target.value = ""; // cho phép chọn lại đúng file vừa rồi
+                                            }}
+                                          />
+                                          <label
+                                            htmlFor={`claim-file-${claim.id}`}
+                                            title={claim.attachment_path ? "Thay chứng từ khác" : "Tải chứng từ lên (ảnh hoặc PDF)"}
+                                            className={`p-1.5 rounded-lg transition-all inline-flex ${
+                                              isUploading
+                                                ? "text-slate-300 cursor-wait"
+                                                : "text-slate-400 hover:text-[#005BAC] hover:bg-blue-50 cursor-pointer"
+                                            }`}
+                                          >
+                                            {isUploading ? <Loader2 size={14} className="animate-spin" /> : <UploadCloud size={14} />}
+                                          </label>
+                                        </>
+                                      )}
+                                      {!claim.attachment_path && !canAttach && (
+                                        <span className="text-slate-300 text-[10px] font-semibold">—</span>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
                               </td>
                               <td className="py-3.5 px-3 text-center">
                                 <div className="flex items-center justify-center gap-1">
@@ -6548,6 +6690,63 @@ export default function CBPage() {
                         </button>
                       </div>
                     </form>
+                  </div>
+                </div>
+              )}
+
+              {/* ─── XEM CHỨNG TỪ ĐÍNH KÈM (ảnh / PDF) ─── */}
+              {attachmentViewer && (
+                <div
+                  className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+                  onClick={() => setAttachmentViewer(null)}
+                >
+                  <div
+                    className="bg-white rounded-2xl shadow-premium w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="flex items-center justify-between px-5 py-3.5 bg-[#005BAC] text-white shrink-0">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <FileText size={16} className="shrink-0" />
+                        <h3 className="font-heading font-black text-sm truncate">{attachmentViewer.name}</h3>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <a
+                          href={attachmentViewer.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-white/15 hover:bg-white/25 border border-white/30 rounded-lg text-[11px] font-bold transition-all"
+                        >
+                          <Download size={12} /> Tải về
+                        </a>
+                        <button
+                          onClick={() => setAttachmentViewer(null)}
+                          className="p-1.5 hover:bg-white/20 rounded-lg transition-all cursor-pointer"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex-1 overflow-auto bg-slate-100 p-4 flex items-center justify-center">
+                      {attachmentViewer.type === "application/pdf" ? (
+                        <iframe
+                          src={attachmentViewer.url}
+                          title={attachmentViewer.name}
+                          className="w-full h-[70vh] rounded-lg bg-white border border-slate-200"
+                        />
+                      ) : (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={attachmentViewer.url}
+                          alt={attachmentViewer.name}
+                          className="max-w-full max-h-[70vh] object-contain rounded-lg shadow-md"
+                        />
+                      )}
+                    </div>
+                    <div className="px-5 py-2.5 bg-slate-50 border-t border-slate-200 shrink-0">
+                      <p className="text-[10px] text-slate-400 font-semibold">
+                        Chứng từ lưu trên hệ thống, không công khai — đường dẫn xem chỉ có hiệu lực 5 phút.
+                      </p>
+                    </div>
                   </div>
                 </div>
               )}
