@@ -859,15 +859,9 @@ export default function EmployeeManagementPage() {
                   className="text-xs text-slate-600 bg-transparent outline-none font-semibold cursor-pointer"
                 >
                   <option value="all">Tất cả phòng ban</option>
-                  <option value="Phòng Hành Chính Nhân Sự">Phòng Hành Chính Nhân Sự</option>
-                  <option value="Phòng Tài Chính Kế Toán">Phòng Tài Chính Kế Toán</option>
-                  <option value="Phòng Vật Tư Thiết Bị">Phòng Vật Tư Thiết Bị</option>
-                  <option value="Phòng Thị Trường">Phòng Thị Trường</option>
-                  <option value="Phòng Kế Hoạch Đấu Thầu">Phòng Kế Hoạch Đấu Thầu</option>
-                  <option value="Phòng Kỹ Thuật">Phòng Kỹ Thuật</option>
-                  <option value="Phòng An Toàn Lao Động">Phòng An Toàn Lao Động</option>
-                  <option value="Phòng Quản Lý Dự Án">Phòng Quản Lý Dự Án</option>
-                  <option value="Phòng Thư Ký, Trợ Lý">Phòng Thư Ký, Trợ Lý</option>
+                  {DEPARTMENTS.map(d => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
                 </select>
               </div>
 

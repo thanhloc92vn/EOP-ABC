@@ -23,6 +23,7 @@ export type Department = {
 
 // Fallback = danh sách hardcode nguyên bản (trước khi chuyển sang bảng)
 const DEFAULT_PHONG_BAN = [
+  "Ban Lãnh Đạo",
   "Phòng Hành Chính Nhân Sự",
   "Phòng Tài Chính Kế Toán",
   "Phòng Vật Tư Thiết Bị",

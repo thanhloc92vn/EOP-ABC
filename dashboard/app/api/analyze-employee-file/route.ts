@@ -114,6 +114,7 @@ function tryDirectExcelParse(sheet: XLSX.WorkSheet): ExtractedEmployee[] | null 
     if (!val) return "Phòng Hành Chính Nhân Sự";
     const clean = val.toLowerCase().replace(/[\s.]/g, ""); // Remove spaces and dots for matching
     
+    if (clean.includes("banlãnhđạo") || clean.includes("bangiámđốc") || clean === "blđ" || clean === "bld" || clean === "bgđ" || clean === "bgd") return "Ban Lãnh Đạo";
     if (clean.includes("hànhchính") || clean.includes("nhânsự") || clean.includes("hcns")) return "Phòng Hành Chính Nhân Sự";
     if (clean.includes("tàichính") || clean.includes("kếtoán") || clean.includes("tckt")) return "Phòng Tài Chính Kế Toán";
     if (clean.includes("vậttư") || clean.includes("thiếtbị") || clean.includes("vttb")) return "Phòng Vật Tư Thiết Bị";

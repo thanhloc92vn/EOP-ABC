@@ -417,6 +417,7 @@ Hãy trích xuất danh sách hợp đồng dạng JSON chứa mảng 'contracts
     const normalizeDepartment = (raw: string | undefined | null) => {
       if (!raw) return "";
       const lower = raw.toLowerCase();
+      if (lower.includes("ban lãnh đạo") || lower.includes("ban giám đốc") || lower === "blđ" || lower === "bld" || lower === "bgđ" || lower === "bgd") return "Ban Lãnh Đạo";
       if (lower.includes("hành chính") || lower.includes("nhân sự") || lower.includes("hcns")) return "Phòng Hành Chính Nhân Sự";
       if (lower.includes("tài chính") || lower.includes("kế toán") || lower.includes("tckt")) return "Phòng Tài Chính Kế Toán";
       if (lower.includes("vật tư") || lower.includes("thiết bị") || lower.includes("vttb")) return "Phòng Vật Tư Thiết Bị";

@@ -151,6 +151,16 @@ const normalizeDeptName = (name: string): string => {
   if (!name) return "";
   const cleaned = name.trim().toLowerCase();
   if (
+    cleaned === "ban lãnh đạo" ||
+    cleaned === "ban giám đốc" ||
+    cleaned === "blđ" ||
+    cleaned === "bld" ||
+    cleaned === "bgđ" ||
+    cleaned === "bgd"
+  ) {
+    return "Ban Lãnh Đạo";
+  }
+  if (
     cleaned === "phòng hcns" ||
     cleaned === "hcns" ||
     cleaned === "p.hcns" ||
@@ -218,7 +228,8 @@ const INITIAL_ALLOCATION_TARGETS: AllocationTarget[] = [
   { id: "CP-18", type: "duan", name: "BĐH ĐMT Trà Vinh 2", receiver: "Chỉ huy trưởng", notes: "Dự án ĐMT Trà Vinh 2" },
   { id: "CP-19", type: "duan", name: "BĐH Rạch Xuyên Tâm", receiver: "Chỉ huy trưởng", notes: "Dự án Rạch Xuyên Tâm" },
   { id: "CP-20", type: "duan", name: "BĐH Chống Hạn Ninh Thuận", receiver: "Chỉ huy trưởng", notes: "Dự án Chống Hạn Ninh Thuận" },
-  { id: "CP-21", type: "duan", name: "BĐH Hương Lộ 11", receiver: "Chỉ huy trưởng", notes: "Dự án Hương Lộ 11" }
+  { id: "CP-21", type: "duan", name: "BĐH Hương Lộ 11", receiver: "Chỉ huy trưởng", notes: "Dự án Hương Lộ 11" },
+  { id: "CP-22", type: "phongban", name: "Ban Lãnh Đạo", receiver: "Đại diện Ban Lãnh Đạo", notes: "Văn phòng công ty" }
 ];
 
 const KANBAN_COLUMNS = [

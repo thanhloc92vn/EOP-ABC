@@ -5,6 +5,7 @@ import { X, Sparkles } from "lucide-react";
 import { addCandidate } from "@/lib/api";
 
 const DEPARTMENTS = [
+    "Ban Lãnh Đạo",
     "Phòng Kỹ Thuật", "Phòng Dự Án", "Phòng Kế Hoạch", "Phòng Vật Tư Thiết Bị",
     "Phòng Hành Chính Nhân Sự", "Phòng Tài Chính Kế Toán", "Phòng Thư Ký, Trợ Lý", "Phòng QLCC", "Phòng ATLĐ"
 ];

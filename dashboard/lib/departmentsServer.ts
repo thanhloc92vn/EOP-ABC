@@ -15,6 +15,7 @@ export type ServerDepartmentLists = {
 
 export const SERVER_DEPARTMENT_DEFAULTS: ServerDepartmentLists = {
   phongBan: [
+    "Ban Lãnh Đạo",
     "Phòng Hành Chính Nhân Sự",
     "Phòng Tài Chính Kế Toán",
     "Phòng Vật Tư Thiết Bị",
