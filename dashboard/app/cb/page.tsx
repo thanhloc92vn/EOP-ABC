@@ -500,6 +500,8 @@ export default function CBPage() {
   // Authorization states
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [hasFullAccess, setHasFullAccess] = useState(false);
+  // Cờ can_approve_benefit — người được giao duyệt chi phúc lợi (hiếu hỷ, thưởng lễ)
+  const [canApproveBenefit, setCanApproveBenefit] = useState(false);
   const [loadingAuth, setLoadingAuth] = useState(true);
 
   // Attendance Justification (Explanation) states
@@ -536,13 +538,25 @@ export default function CBPage() {
   const [expFormApprover, setExpFormApprover] = useState("");
   const [isSubmittingExplanation, setIsSubmittingExplanation] = useState(false);
 
+  // NV kiêm nhiệm và NV nghỉ việc không nằm trong mọi danh sách chi phúc lợi
+  // (sinh nhật, hiếu hỷ, thưởng lễ). Quét cả cột Ghi chú lẫn Trạng thái vì
+  // nhiều hồ sơ chỉ đánh dấu ở Ghi chú — cùng quy ước với trang Danh sách nhân viên.
+  const isExcludedFromBenefits = (emp: { notes?: string; status?: string }) => {
+    const text = `${emp.notes || ""} ${emp.status || ""}`.toLowerCase();
+    return (
+      text.includes("kiêm nhiệm") || text.includes("kiem nhiem") ||
+      text.includes("nghỉ việc") || text.includes("nghi viec")
+    );
+  };
+
   // Filter employees for Women's Day (8/3 and 20/10)
   const holidayFilteredEmployees = useMemo(() => {
+    const eligible = employees.filter(emp => !isExcludedFromBenefits(emp));
     const isWomensDay = selectedHolidayId === "womens_day_2026" || selectedHolidayId === "vn_womens_day_2026";
     if (isWomensDay) {
-      return employees.filter(emp => emp.gender === "Nữ");
+      return eligible.filter(emp => emp.gender === "Nữ");
     }
-    return employees;
+    return eligible;
   }, [employees, selectedHolidayId]);
 
   // --- STATE FOR EXCEL TIMESHEET & EMAIL ROUTING ---
@@ -655,6 +669,30 @@ export default function CBPage() {
     fetchImportedTimesheets();
     fetchBenefitClaims();
   }, []);
+
+  // Nguồn thật cho mức duyệt thưởng lễ: bảng holiday_bonus_approvals. Nạp lại
+  // mỗi khi đổi đợt lễ vì mức duyệt lưu riêng theo từng đợt.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from("holiday_bonus_approvals")
+        .select("employee_id, amount")
+        .eq("holiday_id", selectedHolidayId);
+      if (cancelled) return;
+      if (error) {
+        console.warn("Không tải được holiday_bonus_approvals (đã chạy migration 013 chưa?):", error.message);
+        return; // giữ cache localStorage nếu có
+      }
+      const map: Record<string, number> = {};
+      (data || []).forEach(r => { map[r.employee_id] = Number(r.amount) || 0; });
+      setHolidayBonusAdjustments(map);
+      if (typeof window !== "undefined") {
+        localStorage.setItem("tnec_cb_holiday_bonus_adjustments", JSON.stringify(map));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedHolidayId]);
 
   // Nguồn thật cho trợ cấp hiếu hỷ: bảng Supabase `benefit_claims` (đồng bộ mọi tài khoản)
   const normalizeClaim = (row: any) => ({
@@ -1555,8 +1593,11 @@ export default function CBPage() {
       category: claimForm.category,
       amount: String(amount), // lưu text để giữ được "Theo phê duyệt"
       date: claimForm.date,
-      status: claimForm.status,
-      notes: claimForm.notes
+      // Phiếu mới LUÔN ở trạng thái chờ duyệt — người lập không tự duyệt phiếu
+      // của mình được nữa (RLS benefit_claims cũng chặn ở tầng DB).
+      status: "Chờ phê duyệt",
+      notes: claimForm.notes,
+      created_by: currentUser?.email || null
     };
 
     try {
@@ -1605,6 +1646,50 @@ export default function CBPage() {
     } catch (err: any) {
       console.error("Lỗi xóa trợ cấp trên Supabase:", err);
       alert("Không thể xóa yêu cầu trợ cấp: " + (err.message || "Lỗi không xác định"));
+      setBenefitClaims(prev); // rollback
+    }
+  };
+
+  // Duyệt / từ chối / đánh dấu đã chi một phiếu hiếu hỷ. Chỉ người có cờ
+  // can_approve_benefit (hoặc Admin) gọi được — RLS cũng chặn lại ở tầng DB
+  // nên kể cả gọi thẳng API cũng không qua được.
+  const handleDecideClaim = async (claimId: string, decision: "Đã duyệt" | "Từ chối" | "Đã chi") => {
+    let reason = "";
+    if (decision === "Từ chối") {
+      reason = (prompt("Nhập lý do từ chối (bắt buộc):") || "").trim();
+      if (!reason) return;
+    } else if (!confirm(`Xác nhận chuyển phiếu sang trạng thái "${decision}"?`)) {
+      return;
+    }
+
+    const patch: any = {
+      status: decision,
+      approved_by: currentUser?.name || currentUser?.email || null,
+      approved_at: new Date().toISOString(),
+      rejection_reason: decision === "Từ chối" ? reason : null,
+    };
+
+    const prev = benefitClaims;
+    const optimistic = benefitClaims.map(c => (c.id === claimId ? { ...c, ...patch } : c));
+    setBenefitClaims(optimistic);
+
+    try {
+      const { data, error } = await supabase
+        .from("benefit_claims")
+        .update(patch)
+        .eq("id", claimId)
+        .select("*")
+        .single();
+      if (error) throw error;
+
+      const synced = benefitClaims.map(c => (c.id === claimId ? normalizeClaim(data) : c));
+      setBenefitClaims(synced);
+      if (typeof window !== "undefined") {
+        localStorage.setItem("tnec_cb_benefit_claims", JSON.stringify(synced));
+      }
+    } catch (err: any) {
+      console.error("Lỗi cập nhật trạng thái trợ cấp:", err);
+      alert("Không thể cập nhật phiếu: " + (err.message || "Lỗi không xác định"));
       setBenefitClaims(prev); // rollback
     }
   };
@@ -1667,28 +1752,74 @@ export default function CBPage() {
     });
   };
 
-  const handleUpdateHolidayAdjustment = (empId: string, amount: number) => {
+  // Ghi mức duyệt thưởng lễ lên Supabase (bảng holiday_bonus_approvals) — trước
+  // đây chỉ nằm trong localStorage nên mỗi máy thấy một kết quả duyệt khác nhau.
+  // Khoá theo (holiday_id, employee_id) nên mỗi đợt lễ có mức duyệt riêng.
+  const persistHolidayBonuses = async (rows: { employee_id: string; employee_name?: string; amount: number }[]) => {
+    if (rows.length === 0) return;
+    const { error } = await supabase
+      .from("holiday_bonus_approvals")
+      .upsert(
+        rows.map(r => ({
+          holiday_id: selectedHolidayId,
+          employee_id: r.employee_id,
+          employee_name: r.employee_name || null,
+          amount: r.amount,
+          approved_by: currentUser?.name || currentUser?.email || null,
+          approved_at: new Date().toISOString(),
+        })),
+        { onConflict: "holiday_id,employee_id" }
+      );
+    if (error) throw error;
+  };
+
+  const handleUpdateHolidayAdjustment = async (empId: string, amount: number) => {
+    const prev = holidayBonusAdjustments;
     const updatedAdjustments = { ...holidayBonusAdjustments, [empId]: amount };
-    setHolidayBonusAdjustments(updatedAdjustments);
-    if (typeof window !== "undefined") {
-      localStorage.setItem("tnec_cb_holiday_bonus_adjustments", JSON.stringify(updatedAdjustments));
+    setHolidayBonusAdjustments(updatedAdjustments); // optimistic
+    try {
+      const emp = employees.find(e => e.id === empId);
+      await persistHolidayBonuses([{ employee_id: empId, employee_name: emp?.name, amount }]);
+      if (typeof window !== "undefined") {
+        localStorage.setItem("tnec_cb_holiday_bonus_adjustments", JSON.stringify(updatedAdjustments));
+      }
+    } catch (err: any) {
+      console.error("Lỗi lưu mức duyệt thưởng lễ:", err);
+      alert("Không lưu được mức duyệt lên hệ thống: " + (err.message || "Lỗi không xác định"));
+      setHolidayBonusAdjustments(prev); // rollback
     }
   };
 
-  const handleApproveAllHolidayBonuses = () => {
+  const handleApproveAllHolidayBonuses = async () => {
     if (!confirm("Bạn có chắc chắn muốn phê duyệt mức đề xuất cho toàn bộ nhân sự chưa được duyệt trong danh sách đang hiển thị?")) return;
+
+    const pending: { employee_id: string; employee_name?: string; amount: number }[] = [];
     const updatedAdjustments = { ...holidayBonusAdjustments };
     holidayFilteredEmployees.forEach(emp => {
       if (updatedAdjustments[emp.id] === undefined) {
-        const tenureYears = getEmployeeTenureYears(emp);
-        updatedAdjustments[emp.id] = getProposedHolidayBonus(tenureYears);
+        const amount = getProposedHolidayBonus(getEmployeeTenureYears(emp));
+        updatedAdjustments[emp.id] = amount;
+        pending.push({ employee_id: emp.id, employee_name: emp.name, amount });
       }
     });
-    setHolidayBonusAdjustments(updatedAdjustments);
-    if (typeof window !== "undefined") {
-      localStorage.setItem("tnec_cb_holiday_bonus_adjustments", JSON.stringify(updatedAdjustments));
+    if (pending.length === 0) {
+      alert("Toàn bộ nhân sự trong danh sách đã được duyệt mức thưởng.");
+      return;
     }
-    alert("Đã phê duyệt hàng loạt thành công!");
+
+    const prev = holidayBonusAdjustments;
+    setHolidayBonusAdjustments(updatedAdjustments); // optimistic
+    try {
+      await persistHolidayBonuses(pending);
+      if (typeof window !== "undefined") {
+        localStorage.setItem("tnec_cb_holiday_bonus_adjustments", JSON.stringify(updatedAdjustments));
+      }
+      alert(`Đã phê duyệt và lưu lên hệ thống cho ${pending.length} nhân sự.`);
+    } catch (err: any) {
+      console.error("Lỗi phê duyệt hàng loạt thưởng lễ:", err);
+      alert("Không lưu được lên hệ thống: " + (err.message || "Lỗi không xác định"));
+      setHolidayBonusAdjustments(prev); // rollback
+    }
   };
 
   const handleExportBenefitClaims = async () => {
@@ -2462,6 +2593,11 @@ export default function CBPage() {
       last_salary_adj_date: "",
       status: "Hiệu lực",
     };
+    // Dòng mới còn trống nên không khớp bất kỳ bộ lọc/từ khoá nào đang bật —
+    // xoá hết filter để người dùng thấy ngay dòng vừa chèn ở đầu bảng.
+    setContractsSearchQuery("");
+    setContractsDeptFilter("");
+    setContractsProjectFilter("");
     setTempContracts(prev => [newContract, ...prev]);
   };
 
@@ -2594,6 +2730,9 @@ export default function CBPage() {
       const hrLeadAccess = !!(isAdmin || perms.canViewAttendanceImports);
       setCanDeleteTravel(hrLeadAccess);
       setCanViewTimesheetSummary(hrLeadAccess);
+
+      // Duyệt chi phúc lợi (hiếu hỷ + thưởng lễ): Admin hoặc cờ can_approve_benefit
+      setCanApproveBenefit(!!(isAdmin || perms.canApproveBenefit));
 
       const userInfo = {
         email,
@@ -3321,6 +3460,7 @@ export default function CBPage() {
 
   const filteredBirthdays = useMemo(() => {
     return employees
+      .filter(emp => !isExcludedFromBenefits(emp))
       .map(emp => {
         const parsed = parseBirthdate(emp.date_of_birth || "");
         if (!parsed) return null;
@@ -3358,8 +3498,15 @@ export default function CBPage() {
   }, [selectedBirthdayMonth]);
 
   const filteredBenefitClaims = useMemo(() => {
-    return benefitClaims.filter(c => hasFullAccess || c.name === currentUser?.name);
-  }, [benefitClaims, hasFullAccess, currentUser]);
+    // Hồ sơ đã nghỉ việc / kiêm nhiệm thì ẩn luôn phiếu hiếu hỷ của họ.
+    // Phiếu chỉ lưu tên nên đối chiếu ngược về danh sách nhân viên theo tên.
+    const excludedNames = new Set(
+      employees.filter(isExcludedFromBenefits).map(e => normalizeText(e.name))
+    );
+    return benefitClaims
+      .filter(c => !excludedNames.has(normalizeText(c.name || "")))
+      .filter(c => hasFullAccess || c.name === currentUser?.name);
+  }, [benefitClaims, employees, hasFullAccess, currentUser]);
 
   // --- HELPER FUNCTIONS FOR PREMIUM EMPLOYEE PROFILE VIEW ---
   const calculateTenure = (emp: Employee) => {
@@ -6059,14 +6206,59 @@ export default function CBPage() {
                                     ? "bg-rose-100 text-rose-800"
                                     : "bg-amber-100 text-amber-800"
                                 }`}>{claim.status}</span>
+                                {claim.approved_by && claim.status !== "Chờ phê duyệt" && (
+                                  <div className="text-[9px] text-slate-400 font-semibold mt-1">
+                                    {claim.approved_by}
+                                    {claim.approved_at && ` · ${new Date(claim.approved_at).toLocaleDateString("vi-VN")}`}
+                                  </div>
+                                )}
+                                {claim.status === "Từ chối" && claim.rejection_reason && (
+                                  <div className="text-[9px] text-rose-500 font-semibold mt-0.5 max-w-[150px] mx-auto">
+                                    Lý do: {claim.rejection_reason}
+                                  </div>
+                                )}
                               </td>
                               <td className="py-3.5 px-3 text-center">
-                                <button
-                                  onClick={() => handleDeleteClaim(claim.id)}
-                                  className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition-all cursor-pointer inline-block"
-                                >
-                                  <Trash2 size={13} />
-                                </button>
+                                <div className="flex items-center justify-center gap-1">
+                                  {canApproveBenefit && claim.status === "Chờ phê duyệt" && (
+                                    <>
+                                      <button
+                                        onClick={() => handleDecideClaim(claim.id, "Đã duyệt")}
+                                        title="Duyệt chi"
+                                        className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[9px] font-bold transition-all cursor-pointer active:scale-95"
+                                      >
+                                        Duyệt
+                                      </button>
+                                      <button
+                                        onClick={() => handleDecideClaim(claim.id, "Từ chối")}
+                                        title="Từ chối chi"
+                                        className="px-2 py-1 bg-white border border-rose-200 hover:bg-rose-50 text-rose-600 rounded-lg text-[9px] font-bold transition-all cursor-pointer active:scale-95"
+                                      >
+                                        Từ chối
+                                      </button>
+                                    </>
+                                  )}
+                                  {canApproveBenefit && claim.status === "Đã duyệt" && (
+                                    <button
+                                      onClick={() => handleDecideClaim(claim.id, "Đã chi")}
+                                      title="Đánh dấu đã chi trả"
+                                      className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[9px] font-bold transition-all cursor-pointer active:scale-95"
+                                    >
+                                      Đã chi
+                                    </button>
+                                  )}
+                                  {(canApproveBenefit ||
+                                    (claim.status === "Chờ phê duyệt" &&
+                                      (claim.created_by || "").toLowerCase() === (currentUser?.email || "").toLowerCase())) && (
+                                    <button
+                                      onClick={() => handleDeleteClaim(claim.id)}
+                                      title={canApproveBenefit ? "Xoá phiếu" : "Rút lại phiếu"}
+                                      className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition-all cursor-pointer"
+                                    >
+                                      <Trash2 size={13} />
+                                    </button>
+                                  )}
+                                </div>
                               </td>
                             </tr>
                           ))
@@ -6103,12 +6295,14 @@ export default function CBPage() {
                             ))}
                           </select>
                         </div>
-                        <button
-                          onClick={handleApproveAllHolidayBonuses}
-                          className="px-4 py-2 bg-white/95 hover:bg-white text-emerald-700 font-bold rounded-xl cursor-pointer text-xs transition-all shadow-md active:scale-95"
-                        >
-                          Phê duyệt hàng loạt
-                        </button>
+                        {canApproveBenefit && (
+                          <button
+                            onClick={handleApproveAllHolidayBonuses}
+                            className="px-4 py-2 bg-white/95 hover:bg-white text-emerald-700 font-bold rounded-xl cursor-pointer text-xs transition-all shadow-md active:scale-95"
+                          >
+                            Phê duyệt hàng loạt
+                          </button>
+                        )}
                         <button
                           onClick={() => {
                             const hol = TNEC_HOLIDAYS.find(h => h.id === selectedHolidayId);
@@ -6199,14 +6393,17 @@ export default function CBPage() {
                                   <input
                                     type="number"
                                     value={approved}
+                                    disabled={!canApproveBenefit}
+                                    title={canApproveBenefit ? "" : "Chỉ người được cấp quyền duyệt chi phúc lợi mới sửa được"}
                                     onChange={(e) => handleUpdateHolidayAdjustment(emp.id, Number(e.target.value) || 0)}
                                     placeholder="Nhập số tiền..."
-                                    className="w-28 px-2 py-1 border border-slate-200 rounded-lg text-right font-mono font-bold text-blue-700 focus:border-blue-500 outline-none text-xs"
+                                    className="w-28 px-2 py-1 border border-slate-200 rounded-lg text-right font-mono font-bold text-blue-700 focus:border-blue-500 outline-none text-xs disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed"
                                   />
-                                  
+
                                   {/* Dropdown để chọn nhanh 4 mức */}
                                   <select
                                     value={approved}
+                                    disabled={!canApproveBenefit}
                                     onChange={(e) => handleUpdateHolidayAdjustment(emp.id, Number(e.target.value))}
                                     className="px-1.5 py-1 border border-slate-200 rounded-lg bg-slate-50 text-[10px] font-bold text-slate-600 outline-none cursor-pointer"
                                   >
@@ -6311,32 +6508,16 @@ export default function CBPage() {
                         </div>
                       </div>
 
-                      {/* Số tiền tùy chỉnh & Trạng thái */}
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="space-y-1.5">
-                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Số tiền tùy chỉnh (nếu có)</label>
-                          <input
-                            type="text"
-                            value={claimForm.customAmount}
-                            onChange={(e) => setClaimForm(prev => ({ ...prev, customAmount: e.target.value }))}
-                            placeholder="Nhập số tiền khác nếu có..."
-                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none transition-all"
-                          />
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Trạng thái phê duyệt</label>
-                          <select
-                            value={claimForm.status}
-                            onChange={(e) => setClaimForm(prev => ({ ...prev, status: e.target.value }))}
-                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none transition-all cursor-pointer"
-                          >
-                            <option value="Chờ phê duyệt">Chờ phê duyệt</option>
-                            <option value="Đã duyệt">Đã duyệt (Chờ chi)</option>
-                            <option value="Đã chi">Đã chi trả hoàn tất</option>
-                            <option value="Từ chối">Từ chối chi</option>
-                          </select>
-                        </div>
+                      {/* Số tiền tùy chỉnh — trạng thái do người duyệt quyết, không tự chọn */}
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Số tiền tùy chỉnh (nếu có)</label>
+                        <input
+                          type="text"
+                          value={claimForm.customAmount}
+                          onChange={(e) => setClaimForm(prev => ({ ...prev, customAmount: e.target.value }))}
+                          placeholder="Nhập số tiền khác nếu có..."
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none transition-all"
+                        />
                       </div>
 
                       {/* Ghi chú */}
@@ -6532,6 +6713,9 @@ export default function CBPage() {
                         (() => {
                           const query = contractsSearchQuery.trim().toLowerCase();
                           const filtered = myVisibleContracts.filter(c => {
+                            // Dòng vừa thêm tay (chưa lưu) luôn hiện, không bao giờ
+                            // bị bộ lọc/tìm kiếm ẩn mất khiến người dùng tưởng nút hỏng.
+                            if (c.id.startsWith("new-")) return true;
                             const name = (c.employee_name || "").toLowerCase();
                             const code = (c.employee_code || "").toLowerCase();
                             const num = (c.contract_number || "").toLowerCase();
@@ -6563,6 +6747,17 @@ export default function CBPage() {
                                 </td>
                                 {/* Họ và tên */}
                                 <td className="py-1 px-1 border-r border-slate-100 font-bold text-slate-800">
+                                  {c.id.startsWith("new-") ? (
+                                    // Dòng thêm tay: chỉ 1 ô gõ tên cho gọn. Lúc lưu,
+                                    // handleBulkSaveContracts tự dò nhân viên theo tên/mã NV.
+                                    <input
+                                      type="text"
+                                      value={c.employee_name || ""}
+                                      onChange={(e) => handleContractCellChange(actualIdx, "employee_name", e.target.value)}
+                                      placeholder="Nhập họ và tên..."
+                                      className="w-full bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 px-1 font-bold text-slate-800"
+                                    />
+                                  ) : (
                                   <div className="flex flex-col gap-1 w-full">
                                     <select
                                       value={c.employee_id || ""}
@@ -6586,6 +6781,7 @@ export default function CBPage() {
                                       />
                                     )}
                                   </div>
+                                  )}
                                 </td>
                                 {/* Phòng ban */}
                                 <td className="py-1 px-1 border-r border-slate-100 font-semibold text-slate-500 text-[10px] text-center whitespace-normal break-words">

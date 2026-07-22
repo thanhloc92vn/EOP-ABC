@@ -5,6 +5,8 @@ export type ApprovalPermissions = {
   canApproveLeave: boolean;
   canApproveJustification: boolean;
   canApproveBooking: boolean;
+  // Duyệt chi phúc lợi: hiếu hỷ/biến cố và thưởng lễ (trang C&B > Phúc lợi).
+  canApproveBenefit: boolean;
   // Xem/quản lý Góp ý & Kiến nghị — không phải quyền "duyệt", tách riêng khỏi
   // hasAnyApprovalPermission() để không ảnh hưởng hiển thị menu "Duyệt yêu cầu".
   canViewSuggestions: boolean;
@@ -37,6 +39,7 @@ export const NO_APPROVAL_PERMISSIONS: ApprovalPermissions = {
   canApproveLeave: false,
   canApproveJustification: false,
   canApproveBooking: false,
+  canApproveBenefit: false,
   canViewSuggestions: false,
   canManageEmployees: false,
   canViewInvoices: false,
@@ -317,6 +320,7 @@ export async function fetchApprovalPermissions(email?: string | null): Promise<A
       canApproveLeave: !!row.can_approve_leave,
       canApproveJustification: !!row.can_approve_justification,
       canApproveBooking: !!row.can_approve_booking,
+      canApproveBenefit: !!row.can_approve_benefit,
       canViewSuggestions: !!row.can_view_suggestions,
       canManageEmployees: !!row.can_manage_employees,
       canViewInvoices: !!row.can_view_invoices,

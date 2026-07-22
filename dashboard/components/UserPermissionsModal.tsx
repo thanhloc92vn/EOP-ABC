@@ -48,6 +48,7 @@ const FLAG_GROUPS: { title: string; flags: { key: string; label: string; desc: s
       { key: "can_approve_leave", label: "Duyệt nghỉ phép", desc: "Duyệt cuối đơn nghỉ phép (cấp 2 — HCNS)" },
       { key: "can_approve_justification", label: "Duyệt giải trình công", desc: "Duyệt giải trình chấm công của nhân sự" },
       { key: "can_approve_booking", label: "Duyệt đăng ký xe / phòng họp", desc: "Duyệt cuối đăng ký xe & phòng họp (HCNS điều phối)" },
+      { key: "can_approve_benefit", label: "Duyệt chi phúc lợi", desc: "Duyệt hiếu hỷ, biến cố & thưởng lễ (C&B > Phúc lợi)" },
     ],
   },
   {
