@@ -101,6 +101,31 @@ function SettingsContent() {
     setDeptPlansEnabled(true);
   };
 
+  // 1 dòng phòng ban: tên + bộ chọn gói dạng segmented (Basic/Pro/Enter).
+  const renderDeptPlanRow = (key: string, label: string, muted = false) => {
+    const cur: Plan = deptPlansDraft[key] || (key === "_default" ? "basic" : deptPlansDraft["_default"] || "basic");
+    return (
+      <div key={key} className="flex items-center justify-between gap-2 bg-white border border-slate-200/70 rounded-xl pl-3.5 pr-1.5 py-2 hover:border-slate-300 transition-all shadow-sm">
+        <span className={`text-[11px] font-bold truncate ${muted ? "text-slate-400 italic" : "text-slate-700"}`} title={label}>{label}</span>
+        <div className="flex gap-0.5 shrink-0 bg-slate-100 p-0.5 rounded-lg">
+          {(["basic", "professional", "enterprise"] as Plan[]).map(pl => {
+            const active = cur === pl;
+            const activeCls = pl === "basic" ? "bg-slate-600 text-white" : pl === "professional" ? "bg-[#005BAC] text-white" : "bg-indigo-600 text-white";
+            return (
+              <button
+                key={pl}
+                onClick={() => setDeptPlan(key, pl)}
+                className={`text-[9px] font-extrabold px-2 py-1 rounded-md uppercase tracking-wide transition-all cursor-pointer ${active ? `${activeCls} shadow-sm` : "text-slate-400 hover:text-slate-600"}`}
+              >
+                {pl === "basic" ? "Basic" : pl === "professional" ? "Pro" : "Enter"}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   const [apiKey, setApiKey] = useState("");
   const [webhookUrl, setWebhookUrl] = useState("");
   const [model, setModel] = useState("gpt-4o-mini");
@@ -800,7 +825,7 @@ function SettingsContent() {
           subtitle={isApprovalsTab ? "Xem và phê duyệt các yêu cầu đi công tác, nghỉ phép của nhân sự" : "Cấu hình hệ thống, khoá bảo mật và kết nối Google Sheets"} 
         />
 
-        <main className="flex-1 p-8 space-y-6 overflow-y-auto max-w-7xl w-full">
+        <main className="flex-1 p-8 space-y-6 overflow-y-auto w-full">
           {/* Toast Alert */}
           {saved && (
             <div className="fixed bottom-6 right-6 z-50 animate-bounce">
@@ -812,6 +837,8 @@ function SettingsContent() {
           )}
 
           {!isApprovalsTab && (
+            <div className="flex flex-col 2xl:flex-row gap-6 items-start">
+            <div className="flex-1 min-w-0 w-full">
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
               {/* ═══ CỘT TRÁI: Gói dịch vụ + Bảo mật & Kết nối ═══ */}
               <div className="space-y-6">
@@ -858,80 +885,6 @@ function SettingsContent() {
                     );
                   })}
                 </div>
-              </div>
-              )}
-
-              {/* ─── PHÂN GÓI THEO PHÒNG BAN (chỉ Admin) ─── */}
-              {currentUser?.isAdmin && (
-              <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium">
-                <h2 className="font-heading font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
-                  <Users size={18} className="text-blue-600" /> Phân gói theo phòng ban
-                </h2>
-                <p className="text-[11px] text-slate-400 font-medium mb-5">
-                  Gán gói riêng cho từng phòng (quyền nội bộ). Gói hiệu lực của mỗi người =
-                  thấp hơn giữa gói hệ thống và gói phòng của họ. Trường hợp ngoại lệ cho một
-                  cá nhân (VD Trưởng phòng QLDA xem Văn thư) cấp qua nút <strong>User Permissions</strong>.
-                </p>
-
-                {!deptPlansEnabled ? (
-                  <div className="flex flex-col items-start gap-3">
-                    <p className="text-[11px] text-slate-500 font-medium">
-                      Chưa bật — hiện mọi phòng dùng chung gói hệ thống (<strong>{PLAN_LABELS[activePlan]}</strong>).
-                    </p>
-                    <button
-                      onClick={handleEnableDeptPlans}
-                      className="text-[11px] font-bold text-white bg-[#005BAC] hover:bg-blue-700 px-4 py-2 rounded-xl transition-all cursor-pointer"
-                    >
-                      Bật phân gói theo phòng
-                    </button>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {[
-                      { key: "_default", label: "Phòng chưa gán (mặc định)", muted: true },
-                      ...deptLists.all.map(d => ({ key: d, label: d, muted: false })),
-                    ].map(row => {
-                      const cur = deptPlansDraft[row.key] || (row.key === "_default" ? "basic" : deptPlansDraft["_default"] || "basic");
-                      return (
-                        <div key={row.key} className="flex items-center justify-between gap-3 py-1.5 border-b border-slate-50 last:border-0">
-                          <span className={`text-[11px] font-semibold ${row.muted ? "text-slate-400 italic" : "text-slate-700"}`}>{row.label}</span>
-                          <div className="flex gap-1 shrink-0">
-                            {(["basic", "professional", "enterprise"] as Plan[]).map(pl => (
-                              <button
-                                key={pl}
-                                onClick={() => setDeptPlan(row.key, pl)}
-                                className={`text-[9px] font-extrabold px-2 py-1 rounded-lg uppercase tracking-wide transition-all cursor-pointer ${
-                                  cur === pl
-                                    ? "bg-[#005BAC] text-white shadow-sm"
-                                    : "bg-slate-50 text-slate-400 hover:bg-slate-100"
-                                }`}
-                              >
-                                {pl === "basic" ? "Basic" : pl === "professional" ? "Pro" : "Enter"}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    })}
-
-                    <div className="flex items-center justify-between gap-3 pt-4">
-                      <button
-                        onClick={() => { if (confirm("Tắt phân gói theo phòng? Mọi người sẽ dùng chung gói hệ thống.")) saveDeptPlans(null); }}
-                        disabled={savingDeptPlans}
-                        className="text-[11px] font-bold text-rose-500 hover:text-rose-600 disabled:opacity-50 cursor-pointer"
-                      >
-                        Tắt phân gói theo phòng
-                      </button>
-                      <button
-                        onClick={() => saveDeptPlans(deptPlansDraft)}
-                        disabled={savingDeptPlans}
-                        className="text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 px-4 py-2 rounded-xl transition-all cursor-pointer"
-                      >
-                        {savingDeptPlans ? "Đang lưu…" : "Lưu & áp dụng"}
-                      </button>
-                    </div>
-                  </div>
-                )}
               </div>
               )}
 
@@ -1105,7 +1058,94 @@ function SettingsContent() {
               </div>
               </div>
             </div>
-      )}
+            </div>
+
+            {/* ═══ PHÂN GÓI THEO PHÒNG BAN (cột phải, chỉ Admin) ═══ */}
+            {currentUser?.isAdmin && (
+            <div className="w-full 2xl:w-[640px] 2xl:shrink-0">
+            <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium">
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-5">
+                <div>
+                  <h2 className="font-heading font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+                    <Users size={18} className="text-blue-600" /> Phân gói theo phòng ban
+                  </h2>
+                  <p className="text-[11px] text-slate-400 font-medium max-w-3xl leading-relaxed">
+                    Gán gói riêng cho từng phòng (quyền nội bộ). Gói hiệu lực của mỗi người = thấp hơn
+                    giữa gói hệ thống và gói phòng của họ. Ngoại lệ cho một cá nhân (VD Trưởng phòng QLDA
+                    xem Văn thư) cấp qua nút <strong>User Permissions</strong>.
+                  </p>
+                </div>
+                {deptPlansEnabled && (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => { if (confirm("Tắt phân gói theo phòng? Mọi người sẽ dùng chung gói hệ thống.")) saveDeptPlans(null); }}
+                      disabled={savingDeptPlans}
+                      className="text-[11px] font-bold text-rose-500 hover:text-rose-600 hover:bg-rose-50 disabled:opacity-50 px-3 py-2 rounded-xl transition-all cursor-pointer"
+                    >
+                      Tắt
+                    </button>
+                    <button
+                      onClick={() => saveDeptPlans(deptPlansDraft)}
+                      disabled={savingDeptPlans}
+                      className="text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 px-4 py-2 rounded-xl transition-all cursor-pointer shadow-sm flex items-center gap-1.5"
+                    >
+                      {savingDeptPlans ? "Đang lưu…" : "Lưu & áp dụng"}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {!deptPlansEnabled ? (
+                <div className="flex flex-col items-center justify-center gap-3 py-10 text-center bg-slate-50/60 rounded-2xl border border-dashed border-slate-200">
+                  <div className="w-12 h-12 rounded-2xl bg-blue-50 flex items-center justify-center text-blue-500">
+                    <Users size={22} />
+                  </div>
+                  <p className="text-[11px] text-slate-500 font-medium max-w-md leading-relaxed">
+                    Chưa bật — hiện mọi phòng dùng chung gói hệ thống (<strong>{PLAN_LABELS[activePlan]}</strong>).
+                    Bật để gán gói riêng cho từng phòng.
+                  </p>
+                  <button
+                    onClick={handleEnableDeptPlans}
+                    className="text-[11px] font-bold text-white bg-[#005BAC] hover:bg-blue-700 px-5 py-2.5 rounded-xl transition-all cursor-pointer shadow-md shadow-blue-500/10"
+                  >
+                    Bật phân gói theo phòng
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* Mặc định — phòng chưa gán */}
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
+                    {renderDeptPlanRow("_default", "Phòng chưa gán (mặc định)", true)}
+                  </div>
+
+                  {/* Phòng ban chức năng */}
+                  <div className="rounded-2xl border border-indigo-100 bg-indigo-50/30 p-4 space-y-3">
+                    <p className="flex items-center gap-1.5 text-[10px] font-black text-indigo-500 uppercase tracking-wider">
+                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" /> Phòng ban chức năng
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-2 gap-2.5">
+                      {deptLists.phongBan.map(d => renderDeptPlanRow(d, d))}
+                    </div>
+                  </div>
+
+                  {/* Ban điều hành dự án */}
+                  {deptLists.bdh.length > 0 && (
+                    <div className="rounded-2xl border border-amber-100 bg-amber-50/30 p-4 space-y-3">
+                      <p className="flex items-center gap-1.5 text-[10px] font-black text-amber-600 uppercase tracking-wider">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500" /> Ban điều hành dự án
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-2 gap-2.5">
+                        {deptLists.bdh.map(d => renderDeptPlanRow(d, d))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            </div>
+            )}
+            </div>
+          )}
 
           {/* Nhóm Duyệt Yêu Cầu */}
           {isApprovalsTab && isApprover && (
