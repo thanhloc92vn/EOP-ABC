@@ -32,10 +32,8 @@ import {
   isMarketingTeamMember,
   isMarketingTeamLeader,
   isManagerRole,
-  fetchApprovalPermissions,
-  NO_APPROVAL_PERMISSIONS,
-  type ApprovalPermissions,
 } from "@/lib/approvers";
+import { useCurrentUser } from "@/lib/useCurrentUser";
 
 type BookingType = "xe" | "phong_hop";
 
@@ -140,8 +138,11 @@ function BookingContent() {
   // email: email đăng nhập Google (nhận diện người dùng); contactEmail: email trong hồ sơ
   // nhân viên (thường gồm email công ty, cách nhau dấu phẩy) — dùng để nhận mail kết quả.
   // role/isAdmin dùng để xác định quyền Trưởng bộ phận / Hành chính (HCNS) trong modal duyệt nhanh.
-  const [currentUser, setCurrentUser] = useState<{ email: string; name: string; department: string; contactEmail: string; role: string; isAdmin: boolean } | null>(null);
-  const [approvalPerms, setApprovalPerms] = useState<ApprovalPermissions>(NO_APPROVAL_PERMISSIONS);
+  // Danh tính người dùng — hook chung (email đăng nhập, contactEmail = email danh bạ
+  // để nhận mail kết quả, role/isAdmin cho quyền duyệt nhanh, perms cho HCNS).
+  const user = useCurrentUser();
+  const currentUser = user.authenticated ? user : null;
+  const approvalPerms = user.perms;
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [bookings, setBookings] = useState<BookingRow[]>([]);
   const [loadingList, setLoadingList] = useState(false);
@@ -190,37 +191,16 @@ function BookingContent() {
     setResourceName(isVehicle ? VEHICLES[0] : ROOMS[0]);
   }, [bookingType, isVehicle]);
 
+  // Điền sẵn người chủ trì + phòng ban theo danh tính (hook) khi đã tải xong.
+  useEffect(() => {
+    if (!currentUser) return;
+    setDepartment((prev) => prev || currentUser.department);
+    setHostName((prev) => prev || currentUser.name);
+  }, [currentUser]);
+
   useEffect(() => {
     const init = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        const email = session?.user?.email || "";
-        if (email) {
-          const { data: empData } = await supabase
-            .from("employees_directory")
-            .select("name, department, email, role")
-            .like("email", `%${email}%`)
-            .maybeSingle();
-          const { data: allowedData } = await supabase
-            .from("allowed_users")
-            .select("role")
-            .ilike("email", email)
-            .maybeSingle();
-          const isAdmin = allowedData?.role === "Admin";
-          const me = {
-            email,
-            name: empData?.name || session?.user?.user_metadata?.full_name || "Người dùng",
-            department: empData?.department || "Chưa xếp phòng",
-            contactEmail: empData?.email || email,
-            role: empData?.role || (isAdmin ? "Admin" : "Nhân viên"),
-            isAdmin,
-          };
-          setCurrentUser(me);
-          setDepartment((prev) => prev || me.department);
-          setHostName((prev) => prev || me.name);
-          setApprovalPerms(await fetchApprovalPermissions(email));
-        }
-
         const { data: empList } = await supabase
           .from("employees_directory")
           .select("name, email, department, role")

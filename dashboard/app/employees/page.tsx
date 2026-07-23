@@ -6,7 +6,8 @@ import { useState, useEffect, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
-import { fetchApprovalPermissions, NO_APPROVAL_PERMISSIONS, type ApprovalPermissions } from "@/lib/approvers";
+import { isManagerRole } from "@/lib/approvers";
+import { useCurrentUser } from "@/lib/useCurrentUser";
 import { useDepartments } from "@/lib/departments";
 import {
   Search,
@@ -184,56 +185,13 @@ export default function EmployeeManagementPage() {
     }
   };
 
-  const [currentUser, setCurrentUser] = useState<{
-    email: string;
-    name: string;
-    role: string;
-    department: string;
-    isAdmin: boolean;
-  } | null>(null);
-  const [perms, setPerms] = useState<ApprovalPermissions>(NO_APPROVAL_PERMISSIONS);
-
-  const fetchCurrentUser = async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session || !session.user) return;
-
-      const user = session.user;
-      const email = user.email || "";
-
-      // 1. Check allowed_users for Admin
-      const { data: allowedData } = await supabase
-        .from("allowed_users")
-        .select("role")
-        .ilike("email", email)
-        .maybeSingle();
-
-      const isAdmin = allowedData?.role === "Admin";
-
-      // 2. Check employees — chỉ nhận diện người đăng nhập, không cần PII nên
-      //    đọc qua view danh bạ (bảng gốc đã siết về người có quyền xem PII).
-      const { data: empData } = await supabase
-        .from("employees_directory")
-        .select("name, role, department")
-        .like("email", `%${email}%`)
-        .maybeSingle();
-
-      setCurrentUser({
-        email,
-        name: empData?.name || user.user_metadata?.full_name || user.user_metadata?.name || "Người dùng",
-        role: empData?.role || (isAdmin ? "Admin" : "Nhân viên"),
-        department: empData?.department || "Chưa xếp phòng",
-        isAdmin
-      });
-
-      setPerms(await fetchApprovalPermissions(email));
-    } catch (err) {
-      console.error("Error fetching current user info:", err);
-    }
-  };
+  // Danh tính người dùng — hook chung (thay khối allowed_users + employees +
+  // fetchApprovalPermissions từng copy-paste ở mỗi trang).
+  const user = useCurrentUser();
+  const currentUser = user.authenticated ? user : null;
+  const perms = user.perms;
 
   useEffect(() => {
-    fetchCurrentUser();
     fetchEmployees();
   }, []);
 
@@ -930,14 +888,9 @@ export default function EmployeeManagementPage() {
               >
                 <Settings size={14} />
               </button>
-              {currentUser && (currentUser.isAdmin || 
+              {currentUser && (currentUser.isAdmin ||
                                currentUser.role.toLowerCase() === "admin" ||
-                               currentUser.role.toLowerCase().includes("trưởng phòng") || 
-                               currentUser.role.toLowerCase().includes("truong phong") ||
-                               currentUser.role.toLowerCase().includes("phó phòng") || 
-                               currentUser.role.toLowerCase().includes("pho phong") ||
-                               currentUser.role.toLowerCase().includes("phó trưởng phòng") || 
-                               currentUser.role.toLowerCase().includes("pho truong phong")) && (
+                               isManagerRole(currentUser.role)) && (
                 <button
                   onClick={() => setShowAddModal(true)}
                   className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2.5 rounded-xl shadow-md shadow-blue-500/10 hover:shadow-blue-500/20 hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer"

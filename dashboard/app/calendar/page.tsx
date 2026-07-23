@@ -11,8 +11,10 @@ import {
   getRequestStage,
   isLeaveTripCap1Approver,
   getLeaveExceptionApproversForAssignee,
+  isManagerRole,
   normalizeName,
 } from "@/lib/approvers";
+import { useCurrentUser } from "@/lib/useCurrentUser";
 import {
   Search,
   ChevronLeft,
@@ -88,14 +90,9 @@ export default function CalendarPage() {
   // Right sidebar tab state: 'nodate' | 'leave' | 'trip'
   const [activeTab, setActiveTab] = useState<'nodate' | 'leave' | 'trip'>('nodate');
 
-  // User info
-  const [currentUser, setCurrentUser] = useState<{
-    email: string;
-    name: string;
-    role: string;
-    department: string;
-    isAdmin: boolean;
-  } | null>(null);
+  // User info — hook chung (thay khối allowed_users + employees copy-paste).
+  const user = useCurrentUser();
+  const currentUser = user.authenticated ? user : null;
 
   // Modal State for Request Leave / Business Trip
   const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
@@ -135,54 +132,15 @@ export default function CalendarPage() {
   const selectedMonth = currentDate.getMonth();
   const selectedYear = currentDate.getFullYear();
 
-  const fetchCurrentUser = async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session || !session.user) return;
-
-      const user = session.user;
-      const email = user.email || "";
-
-      // 1. Check allowed_users
-      const { data: allowedData } = await supabase
-        .from("allowed_users")
-        .select("role")
-        .ilike("email", email)
-        .maybeSingle();
-
-      const isAdmin = allowedData?.role === "Admin";
-
-      // 2. Check employees
-      const { data: empData } = await supabase
-        .from("employees_directory")
-        .select("name, role, department")
-        .like("email", `%${email}%`)
-        .maybeSingle();
-
-      const displayName = empData?.name || user.user_metadata?.full_name || user.user_metadata?.name || "Người dùng";
-      setCurrentUser({
-        email,
-        name: displayName,
-        role: empData?.role || (isAdmin ? "Admin" : "Nhân viên"),
-        department: empData?.department || "Chưa xếp phòng",
-        isAdmin
-      });
-
-      setModalName(displayName);
-    } catch (err) {
-      console.error("Error fetching current user info:", err);
-    }
-  };
+  // Điền sẵn tên người xin nghỉ/công tác theo danh tính khi đã tải xong.
+  useEffect(() => {
+    if (currentUser) setModalName((prev) => prev || currentUser.name);
+  }, [currentUser]);
 
   const isManager = useMemo(() => {
     if (!currentUser) return false;
-    if (currentUser.isAdmin) return true;
-    const roleLower = (currentUser.role || "").toLowerCase();
-    return (
-      roleLower.includes("trưởng phòng") ||
-      roleLower.includes("phó phòng") ||
-      roleLower.includes("giám đốc")
-    );
+    // Dùng nhận diện quản lý trung tâm (đồng bộ với luồng duyệt cấp 1).
+    return currentUser.isAdmin || isManagerRole(currentUser.role);
   }, [currentUser]);
 
   const handleDeleteTripTask = async (taskId: string) => {
@@ -293,7 +251,6 @@ export default function CalendarPage() {
   };
 
   useEffect(() => {
-    fetchCurrentUser();
     fetchData();
 
     if (typeof window !== "undefined") {

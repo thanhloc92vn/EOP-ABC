@@ -5,7 +5,9 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
-import { fetchApprovalPermissions, ApprovalPermissions, NO_APPROVAL_PERMISSIONS } from "@/lib/approvers";
+import { isManagerRole, normalizeName } from "@/lib/approvers";
+import { useCurrentUser } from "@/lib/useCurrentUser";
+import { isHrDept } from "@/lib/access";
 import {
   FileDown,
   FileUp,
@@ -182,76 +184,28 @@ export default function DocumentControlPage() {
   const [model, setModel] = useState("gpt-4o-mini");
   const [settingsSaved, setSettingsSaved] = useState(false);
 
-  // Current logged in user state
-  const [currentUser, setCurrentUser] = useState<{
-    email: string;
-    name: string;
-    role: string;
-    department: string;
-    isAdmin: boolean;
-  } | null>(null);
-  const [approvalPerms, setApprovalPerms] = useState<ApprovalPermissions>(NO_APPROVAL_PERMISSIONS);
+  // Danh tính người dùng — hook chung (thay khối allowed_users + employees +
+  // fetchApprovalPermissions từng copy-paste ở mỗi trang).
+  const user = useCurrentUser();
+  const currentUser = user.authenticated ? user : null;
+  const approvalPerms = user.perms;
 
-  const fetchCurrentUser = useCallback(async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
-
-      const user = session.user;
-      const email = user.email || "";
-
-      // 1. Check allowed_users
-      const { data: allowedData } = await supabase
-        .from("allowed_users")
-        .select("role")
-        .ilike("email", email)
-        .maybeSingle();
-
-      const isAdmin = allowedData?.role === "Admin";
-
-      // 2. Check employees
-      const { data: empData } = await supabase
-        .from("employees_directory")
-        .select("name, role, department")
-        .like("email", `%${email}%`)
-        .maybeSingle();
-
-      setCurrentUser({
-        email,
-        name: empData?.name || user.user_metadata?.full_name || user.user_metadata?.name || "Người dùng",
-        role: empData?.role || (isAdmin ? "Admin" : "Nhân viên"),
-        department: empData?.department || "Chưa xếp phòng",
-        isAdmin
-      });
-
-      // Per-user grant xem Văn Thư (cờ can_view_documents trong approval_permissions)
-      setApprovalPerms(await fetchApprovalPermissions(email));
-    } catch (err) {
-      console.error("Error fetching current user info:", err);
-    }
-  }, []);
-
-  // Chỉ Admin hoặc người được cấp cờ can_view_documents (bảng approval_permissions —
-  // cấp/thu quyền trong Supabase Table Editor, không cần sửa code) mới được vào trang
-  // Văn Thư. Khớp đúng RLS trên bảng clerical_documents.
+  // Tầng (b) — kiểm soát mịn: chỉ Admin hoặc người được cấp cờ can_view_documents
+  // mới XEM được nội dung Văn Thư (khớp RLS clerical_documents). GIỮ nguyên, KHÔNG
+  // nới theo gói — người cùng gói Professional vẫn không thấy nếu chưa có cờ.
   const canView = !!(currentUser && (currentUser.isAdmin || approvalPerms.canViewDocuments));
 
   const canManage = useMemo(() => {
     if (!currentUser) return false;
-    if (currentUser.isAdmin) return true;
-    if (approvalPerms.canViewDocuments) return true;
-
-    const roleLower = (currentUser.role || "").toLowerCase();
-    const deptLower = (currentUser.department || "").toLowerCase();
-
+    if (currentUser.isAdmin || approvalPerms.canViewDocuments) return true;
+    const role = currentUser.role || "";
+    const dept = currentUser.department || "";
+    // Nhận diện HCNS / quản lý / văn thư qua helper trung tâm (thay 5 dòng so chuỗi).
     return (
-      deptLower.includes("hành chính") ||
-      deptLower.includes("nhân sự") ||
-      deptLower.includes("văn thư") ||
-      roleLower.includes("văn thư") ||
-      roleLower.includes("trưởng phòng") ||
-      roleLower.includes("phó phòng") ||
-      roleLower.includes("giám đốc")
+      isHrDept(dept) ||
+      isManagerRole(role) ||
+      normalizeName(dept).includes("van thu") ||
+      normalizeName(role).includes("van thu")
     );
   }, [currentUser, approvalPerms]);
 
@@ -267,8 +221,7 @@ export default function DocumentControlPage() {
         setActiveTab(tabParam);
       }
     }
-    fetchCurrentUser();
-  }, [fetchCurrentUser]);
+  }, []);
 
   const saveSettings = (e: React.FormEvent) => {
     e.preventDefault();

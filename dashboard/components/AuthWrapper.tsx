@@ -6,7 +6,9 @@ import { Loader2, ShieldAlert, Lock } from "lucide-react";
 import { SidebarProvider } from "./SidebarContext";
 import { usePathname } from "next/navigation";
 import { useTenantConfig } from "@/lib/tenantConfig";
-import { normalizePlan, isPathAllowed, getMinPlanForPath, PLAN_LABELS } from "@/lib/planShared";
+import { normalizePlan, getMinPlanForPath, PLAN_LABELS } from "@/lib/planShared";
+import { canAccessPath, resolveEffectivePlan } from "@/lib/access";
+import { fetchApprovalPermissions, NO_APPROVAL_PERMISSIONS, type ApprovalPermissions } from "@/lib/approvers";
 
 export default function AuthWrapper({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -19,6 +21,11 @@ export default function AuthWrapper({ children }: { children: React.ReactNode })
   const [checkingAdmin, setCheckingAdmin] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
+  // Cho GATE GÓI (theo phòng + cấp phép riêng): admin thực sự bỏ qua gate;
+  // người khác gate theo gói hiệu lực của phòng + cờ approval_permissions.
+  const [strictAdmin, setStrictAdmin] = useState(false);
+  const [userDept, setUserDept] = useState<string>("");
+  const [userPerms, setUserPerms] = useState<ApprovalPermissions>(NO_APPROVAL_PERMISSIONS);
   
   const lastCheckedEmail = useRef<string | null>(null);
 
@@ -73,6 +80,7 @@ export default function AuthWrapper({ children }: { children: React.ReactNode })
 
         if (allowedData && allowedData.role === "Admin") {
           setIsAdmin(true);
+          setStrictAdmin(true); // admin thực sự -> bỏ qua gate gói
           setAuthError(null);
           lastCheckedEmail.current = userEmail;
           return;
@@ -81,7 +89,7 @@ export default function AuthWrapper({ children }: { children: React.ReactNode })
         // 2. Check employees table (If not in allowed_users or not Admin)
         const { data: empData, error: empError } = await supabase
           .from("employees_directory")
-          .select("role, status")
+          .select("role, status, department")
           .like("email", `%${userEmail.trim()}%`)
           .maybeSingle();
 
@@ -102,6 +110,9 @@ export default function AuthWrapper({ children }: { children: React.ReactNode })
 
           // Active employee -> allow login
           setIsAdmin(true);
+          setStrictAdmin(false);
+          setUserDept(empData.department || "");
+          setUserPerms(await fetchApprovalPermissions(userEmail.trim()));
           setAuthError(null);
           lastCheckedEmail.current = userEmail;
         } else {
@@ -260,10 +271,13 @@ export default function AuthWrapper({ children }: { children: React.ReactNode })
   }
 
   // 4. Kiểm tra GÓI DỊCH VỤ: module ngoài gói -> màn hình nâng cấp
-  // (chặn cả truy cập thẳng URL, không chỉ ẩn menu). Tính theo tenant_config.plan;
-  // fallback enterprise nên không bao giờ khoá nhầm khi config lỗi.
+  // (chặn cả truy cập thẳng URL, không chỉ ẩn menu). Gói hiệu lực tính theo
+  // PHÒNG của user (min với trần tenant) + cấp phép riêng qua approval_permissions.
+  // department_plans null -> effectivePlan = tenant.plan (hành vi cũ, không khoá nhầm).
   const activePlan = normalizePlan(tenant.plan);
-  if (!isPathAllowed(activePlan, pathname)) {
+  const effectivePlan = resolveEffectivePlan(activePlan, userDept, tenant.department_plans);
+  const accessUser = { isAdmin: strictAdmin, tenantPlan: activePlan, effectivePlan, perms: userPerms };
+  if (!canAccessPath(accessUser, pathname)) {
     const minPlan = getMinPlanForPath(pathname);
     return (
       <SidebarProvider>
@@ -277,9 +291,9 @@ export default function AuthWrapper({ children }: { children: React.ReactNode })
                 Tính năng thuộc gói {PLAN_LABELS[minPlan]}
               </h2>
               <p className="text-slate-500 text-xs leading-relaxed font-medium">
-                Hệ thống của bạn đang dùng gói <strong>{PLAN_LABELS[activePlan]}</strong>.
+                Phòng của bạn đang ở gói <strong>{PLAN_LABELS[effectivePlan]}</strong>.
                 Module này chỉ khả dụng từ gói <strong>{PLAN_LABELS[minPlan]}</strong> trở lên —
-                vui lòng liên hệ Quản trị viên để nâng cấp gói dịch vụ.
+                vui lòng liên hệ Quản trị viên để được cấp quyền.
               </p>
             </div>
             <a

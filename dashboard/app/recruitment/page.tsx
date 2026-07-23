@@ -5,7 +5,9 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
-import { fetchApprovalPermissions, ApprovalPermissions, NO_APPROVAL_PERMISSIONS } from "@/lib/approvers";
+import { isManagerRole, normalizeName } from "@/lib/approvers";
+import { useCurrentUser } from "@/lib/useCurrentUser";
+import { isHrDept } from "@/lib/access";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import {
   ShieldAlert,
@@ -895,85 +897,28 @@ export default function RecruitmentPage() {
     setNewProjectDept("");
   };
 
-  // Current logged in user state
-  const [currentUser, setCurrentUser] = useState<{
-    email: string;
-    name: string;
-    role: string;
-    department: string;
-    isAdmin: boolean;
-  } | null>(null);
-  const [approvalPerms, setApprovalPerms] = useState<ApprovalPermissions>(NO_APPROVAL_PERMISSIONS);
+  // Danh tính người dùng — hook chung (thay khối allowed_users + employees +
+  // fetchApprovalPermissions từng copy-paste ở mỗi trang).
+  const user = useCurrentUser();
+  const currentUser = user.authenticated ? user : null;
+  const approvalPerms = user.perms;
 
-  const fetchCurrentUser = useCallback(async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
-
-      const user = session.user;
-      const email = user.email || "";
-
-      // 1. Check allowed_users
-      const { data: allowedData } = await supabase
-        .from("allowed_users")
-        .select("role")
-        .ilike("email", email)
-        .maybeSingle();
-
-      const isAdmin = allowedData?.role === "Admin";
-
-      // 2. Check employees
-      const { data: empData } = await supabase
-        .from("employees_directory")
-        .select("name, role, department")
-        .like("email", `%${email}%`)
-        .maybeSingle();
-
-      setCurrentUser({
-        email,
-        name: empData?.name || user.user_metadata?.full_name || user.user_metadata?.name || "Người dùng",
-        role: empData?.role || (isAdmin ? "Admin" : "Nhân viên"),
-        department: empData?.department || "Chưa xếp phòng",
-        isAdmin
-      });
-
-      // Per-user grant xem Tuyển dụng (cờ can_view_candidates trong approval_permissions)
-      setApprovalPerms(await fetchApprovalPermissions(email));
-    } catch (err) {
-      console.error("Error fetching current user info:", err);
-    }
-  }, []);
-
-  // Chỉ Admin hoặc người được cấp cờ can_view_candidates (bảng approval_permissions —
-  // cấp/thu quyền trong Supabase Table Editor, không cần sửa code) mới được vào trang
-  // Tuyển dụng. Khớp đúng RLS trên bảng candidates + recruitment_needs.
+  // Tầng (b) — kiểm soát mịn: chỉ Admin hoặc người được cấp cờ can_view_candidates
+  // mới XEM nội dung Tuyển dụng (khớp RLS candidates + recruitment_needs). GIỮ nguyên,
+  // KHÔNG nới theo gói.
   const canView = !!(currentUser && (currentUser.isAdmin || approvalPerms.canViewCandidates));
 
   const canManage = useMemo(() => {
     if (!currentUser) return false;
-    if (currentUser.isAdmin) return true;
-    if (approvalPerms.canViewCandidates) return true;
-
-    const emailLower = (currentUser.email || "").toLowerCase().trim();
-    const roleLower = (currentUser.role || "").toLowerCase();
-    const deptLower = (currentUser.department || "").toLowerCase();
-    const nameLower = (currentUser.name || "").toLowerCase();
-
+    if (currentUser.isAdmin || approvalPerms.canViewCandidates) return true;
+    const role = currentUser.role || "";
+    const dept = currentUser.department || "";
+    // Thay danh sách email/tên hardcode + so chuỗi phòng ban bằng helper trung tâm.
+    // Người phụ trách tuyển dụng cấp quyền bằng cờ can_view_candidates (User Permissions).
     return (
-      emailLower === "quyen.0408@gmail.com" ||
-      emailLower === "duongnhathoanhanh@gmail.com" ||
-      emailLower === "anhdnh@trungnamgroup.com.vn" ||
-      emailLower === "phuonglnl@trungnamgroup.com.vn" ||
-      emailLower === "lanphuonghcns1611@gmail.com" ||
-      nameLower.includes("hoành anh") ||
-      nameLower.includes("lan phương") ||
-      deptLower.includes("hành chính") ||
-      deptLower.includes("nhân sự") ||
-      roleLower.includes("tuyển dụng") ||
-      roleLower.includes("nhân sự") ||
-      roleLower.includes("trưởng phòng") ||
-      roleLower.includes("phó phòng") ||
-      roleLower.includes("giám đốc")
+      isHrDept(dept) ||
+      isManagerRole(role) ||
+      normalizeName(role).includes("tuyen dung")
     );
   }, [currentUser, approvalPerms]);
 
@@ -1153,8 +1098,7 @@ export default function RecruitmentPage() {
 
   useEffect(() => {
     fetchCandidates();
-    fetchCurrentUser();
-  }, [fetchCurrentUser]);
+  }, []);
 
   useEffect(() => {
     if (typeof window !== "undefined") {

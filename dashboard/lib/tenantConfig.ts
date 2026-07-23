@@ -39,6 +39,11 @@ export type TenantConfig = {
   // khớp tên kiểu "chứa, không phân biệt dấu"
   saturday_exempt_names: string[];
   plan: "basic" | "professional" | "enterprise";
+  // Phân gói THEO PHÒNG BAN (quyền nội bộ) — { "_default": Plan, "<Tên phòng>": Plan }.
+  // null = chưa bật: mọi người dùng chung `plan` của tenant (hành vi cũ). Khi có
+  // giá trị, gói hiệu lực của mỗi user = min(plan tenant, gói phòng của user).
+  // Xem resolveEffectivePlan trong lib/access.ts.
+  department_plans: Record<string, "basic" | "professional" | "enterprise"> | null;
 };
 
 export const TENANT_DEFAULTS: TenantConfig = {
@@ -59,6 +64,7 @@ export const TENANT_DEFAULTS: TenantConfig = {
   ],
   saturday_exempt_names: ["Phạm Thành Lộc"],
   plan: "enterprise",
+  department_plans: null, // chưa bật phân gói theo phòng -> dùng chung `plan`
 };
 
 let cached: TenantConfig | null = null;

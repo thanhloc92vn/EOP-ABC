@@ -5,7 +5,8 @@ import { useState, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
-import { fetchApprovalPermissions, NO_APPROVAL_PERMISSIONS, type ApprovalPermissions } from "@/lib/approvers";
+import { useCurrentUser } from "@/lib/useCurrentUser";
+import { isHrDept } from "@/lib/access";
 import {
   Calendar,
   Paperclip,
@@ -91,15 +92,12 @@ export default function TaskManagementPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  const [currentUser, setCurrentUser] = useState<{
-    email: string;
-    name: string;
-    role: string;
-    department: string;
-    isAdmin: boolean;
-  } | null>(null);
+  // Danh tính người dùng — hook chung (thay khối allowed_users + employees +
+  // fetchApprovalPermissions từng copy-paste ở mỗi trang).
+  const user = useCurrentUser();
+  const currentUser = user.authenticated ? user : null;
+  const perms = user.perms;
   const [userDeptEmployees, setUserDeptEmployees] = useState<string[]>([]);
-  const [perms, setPerms] = useState<ApprovalPermissions>(NO_APPROVAL_PERMISSIONS);
   
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -216,59 +214,20 @@ export default function TaskManagementPage() {
     }
   };
 
-  const fetchUserRoleAndDept = async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session || !session.user) return;
-
-      const user = session.user;
-      const email = user.email || "";
-
-      // 1. Check allowed_users
-      const { data: allowedData } = await supabase
-        .from("allowed_users")
-        .select("role")
-        .ilike("email", email)
-        .maybeSingle();
-
-      const isAdmin = allowedData?.role === "Admin";
-
-      // 2. Check employees
-      const { data: empData } = await supabase
-        .from("employees_directory")
-        .select("name, role, department")
-        .like("email", `%${email}%`)
-        .maybeSingle();
-
-      const userInfo = {
-        email,
-        name: empData?.name || user.user_metadata?.full_name || user.user_metadata?.name || "Người dùng",
-        role: empData?.role || (isAdmin ? "Admin" : "Nhân viên"),
-        department: empData?.department || "Chưa xếp phòng",
-        isAdmin
-      };
-      
-      setCurrentUser(userInfo);
-      setPerms(await fetchApprovalPermissions(email));
-
-      const isUserDeputy = userInfo.role.toLowerCase().includes("phó phòng") || 
-                           userInfo.role.toLowerCase().includes("pho phong") ||
-                           userInfo.role.toLowerCase().includes("phó trưởng phòng") || 
-                           userInfo.role.toLowerCase().includes("pho truong phong");
-
-      if (isUserDeputy) {
-        const { data: deptEmps } = await supabase
-          .from("employees_directory")
-          .select("name")
-          .eq("department", userInfo.department);
-        if (deptEmps) {
-          setUserDeptEmployees(deptEmps.map(e => e.name));
-        }
-      }
-    } catch (err) {
-      console.error("Error fetching user permissions in tasks:", err);
-    }
-  };
+  // Phó phòng thấy task của cả phòng -> nạp danh sách NV cùng phòng khi đã biết
+  // danh tính (lấy từ hook useCurrentUser thay vì tự query lại).
+  useEffect(() => {
+    if (user.loading || !user.authenticated) return;
+    const r = user.role.toLowerCase();
+    const isDeputy = r.includes("phó phòng") || r.includes("pho phong") ||
+                     r.includes("phó trưởng phòng") || r.includes("pho truong phong");
+    if (!isDeputy) return;
+    supabase
+      .from("employees_directory")
+      .select("name")
+      .eq("department", user.department)
+      .then(({ data }) => { if (data) setUserDeptEmployees(data.map(e => e.name)); });
+  }, [user.loading, user.authenticated, user.role, user.department]);
 
   const fetchEmployeesList = async () => {
     try {
@@ -319,7 +278,6 @@ export default function TaskManagementPage() {
   };
 
   useEffect(() => {
-    fetchUserRoleAndDept();
     fetchTasks();
     fetchEmployeesList();
   }, []);
@@ -563,8 +521,8 @@ export default function TaskManagementPage() {
     if (isVppTask) {
       // 1. HR Department staff who handle VPP see all VPP tasks
       const userDept = currentUser.department ? currentUser.department.toLowerCase().trim() : "";
-      const isUserInHr = userDept.includes("hành chính") || userDept.includes("nhân sự") ||
-                         perms.canManageVpp;
+      // Nhận diện phòng HCNS qua helper trung tâm (thay so chuỗi rời rạc).
+      const isUserInHr = isHrDept(currentUser.department) || perms.canManageVpp;
       if (isUserInHr) return true;
 
       // 2. The requester sees their own requested VPP tasks

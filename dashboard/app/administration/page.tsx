@@ -39,7 +39,9 @@ import { docSoVietNam, exportDeNghiChuyenTien, downloadDocFile } from "@/lib/wor
 import { supabase } from "@/lib/supabase";
 import { useDepartments } from "@/lib/departments";
 import { useTenantConfig, TENANT_DEFAULTS, AdminStaff } from "@/lib/tenantConfig";
-import { fetchApprovalPermissions } from "@/lib/approvers";
+import { isManagerRole } from "@/lib/approvers";
+import { useCurrentUser } from "@/lib/useCurrentUser";
+import { isHrDept } from "@/lib/access";
 import * as XLSX from "xlsx";
 
 // ─── TYPES & INTERFACES ──────────────────────────────────────────────────────
@@ -407,13 +409,10 @@ export default function AdministrationPage() {
     }
     return INITIAL_SUPPLIES;
   });
-  const [currentUser, setCurrentUser] = useState<{
-    email: string;
-    name: string;
-    role: string;
-    department: string;
-    isAdmin: boolean;
-  } | null>(null);
+  // Danh tính người dùng — hook chung (thay khối allowed_users + employees +
+  // fetchApprovalPermissions từng copy-paste ở mỗi trang).
+  const user = useCurrentUser();
+  const currentUser = user.authenticated ? user : null;
   // HCNS/Admin (Admin HOẶC cờ can_view_invoices) => thấy toàn bộ trang Hành chính.
   // Nhân viên phòng ban khác => chế độ rút gọn: chỉ tạo phiếu + xem phiếu của chính họ.
   const [isHcnsViewer, setIsHcnsViewer] = useState(false);
@@ -1161,9 +1160,16 @@ export default function AdministrationPage() {
       fetchReportRows();
       fetchChecklist();
 
-      fetchUserRoleAndDept();
     }
   }, [fetchSuppliers]);
+
+  // Quyền xem toàn bộ trang Hành chính (Admin hoặc cờ can_view_invoices) — lấy từ
+  // hook chung khi danh tính đã sẵn sàng.
+  useEffect(() => {
+    if (user.loading) return;
+    setIsHcnsViewer(user.isAdmin || user.perms.canViewInvoices);
+    setPermsLoaded(true);
+  }, [user.loading, user.isAdmin, user.perms]);
 
   // Lưu tháng thanh toán đang xem để F5 không bị reset về tháng mặc định.
   useEffect(() => {
@@ -1181,75 +1187,18 @@ export default function AdministrationPage() {
     }
   }, [permsLoaded, isHcnsViewer, activeTab]);
 
-  const fetchUserRoleAndDept = async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session || !session.user) return;
-
-      const user = session.user;
-      const email = user.email || "";
-
-      // 1. Check allowed_users
-      const { data: allowedData } = await supabase
-        .from("allowed_users")
-        .select("role")
-        .ilike("email", email)
-        .maybeSingle();
-
-      const isAdmin = allowedData?.role === "Admin";
-
-      // 2. Check employees
-      const { data: empData } = await supabase
-        .from("employees_directory")
-        .select("name, role, department")
-        .like("email", `%${email}%`)
-        .maybeSingle();
-
-      const userInfo = {
-        email,
-        name: empData?.name || user.user_metadata?.full_name || user.user_metadata?.name || "Người dùng",
-        role: empData?.role || (isAdmin ? "Admin" : "Nhân viên"),
-        department: empData?.department || "Chưa xếp phòng",
-        isAdmin
-      };
-
-      setCurrentUser(userInfo);
-
-      // Ai được xem toàn bộ dữ liệu Hành chính: Admin hoặc người có cờ can_view_invoices
-      // (khớp đúng RLS trên bảng invoices). Người khác chỉ được chế độ rút gọn.
-      const perms = await fetchApprovalPermissions(email);
-      setIsHcnsViewer(isAdmin || perms.canViewInvoices);
-      setPermsLoaded(true);
-    } catch (err) {
-      console.error("Error fetching user permissions in admin:", err);
-      setPermsLoaded(true);
-    }
-  };
-
   const canDeleteSupplies = !!(currentUser && (
-    currentUser.isAdmin || 
+    currentUser.isAdmin ||
     currentUser.role.toLowerCase() === "admin" ||
-    currentUser.role.toLowerCase().includes("trưởng phòng") || 
-    currentUser.role.toLowerCase().includes("truong phong") ||
-    currentUser.role.toLowerCase().includes("phó phòng") || 
-    currentUser.role.toLowerCase().includes("pho phong") ||
-    currentUser.role.toLowerCase().includes("phó trưởng phòng") || 
-    currentUser.role.toLowerCase().includes("pho truong phong")
+    isManagerRole(currentUser.role)
   ));
 
   const canApproveRequests = !!(currentUser && (
-    currentUser.isAdmin || 
+    currentUser.isAdmin ||
     currentUser.role.toLowerCase() === "admin" ||
-    currentUser.role.toLowerCase().includes("trưởng phòng") || 
-    currentUser.role.toLowerCase().includes("truong phong") ||
-    currentUser.role.toLowerCase().includes("phó phòng") || 
-    currentUser.role.toLowerCase().includes("pho phong") ||
-    currentUser.role.toLowerCase().includes("phó trưởng phòng") || 
-    currentUser.role.toLowerCase().includes("pho truong phong") ||
-    currentUser.role.toLowerCase().includes("hành chính") ||
-    currentUser.role.toLowerCase().includes("hanh chinh") ||
-    currentUser.department.toLowerCase().includes("hành chính") ||
-    currentUser.department.toLowerCase().includes("hanh chinh")
+    isManagerRole(currentUser.role) ||
+    isHrDept(currentUser.role) ||
+    isHrDept(currentUser.department)
   ));
 
   // Sync supplies to Supabase and localStorage when changed

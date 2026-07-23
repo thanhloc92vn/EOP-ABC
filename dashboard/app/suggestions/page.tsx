@@ -25,7 +25,7 @@ import {
   Trash2,
   ShieldAlert
 } from "lucide-react";
-import { fetchApprovalPermissions, NO_APPROVAL_PERMISSIONS, type ApprovalPermissions } from "@/lib/approvers";
+import { useCurrentUser } from "@/lib/useCurrentUser";
 
 interface Suggestion {
   id: string;
@@ -67,14 +67,11 @@ export default function AdminSuggestions() {
   const [qrUrl, setQrUrl] = useState("");
 
   // User auth state
-  const [currentUser, setCurrentUser] = useState<{
-    email: string;
-    name: string;
-    role: string;
-    department: string;
-    isAdmin: boolean;
-  } | null>(null);
-  const [approvalPerms, setApprovalPerms] = useState<ApprovalPermissions>(NO_APPROVAL_PERMISSIONS);
+  // Danh tính người dùng — hook chung (thay khối allowed_users + employees +
+  // fetchApprovalPermissions từng copy-paste ở mỗi trang).
+  const user = useCurrentUser();
+  const currentUser = user.authenticated ? user : null;
+  const approvalPerms = user.perms;
 
   const selectedSuggestion = suggestions.find(s => s.id === selectedId) || null;
 
@@ -106,49 +103,9 @@ export default function AdminSuggestions() {
     }
   };
 
-  const fetchCurrentUser = async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session || !session.user) return;
-
-      const user = session.user;
-      const email = user.email || "";
-
-      // 1. Check allowed_users for Admin
-      const { data: allowedData } = await supabase
-        .from("allowed_users")
-        .select("role")
-        .ilike("email", email)
-        .maybeSingle();
-
-      const isAdmin = allowedData?.role === "Admin";
-
-      // 2. Check employees
-      const { data: empData } = await supabase
-        .from("employees_directory")
-        .select("name, role, department")
-        .like("email", `%${email}%`)
-        .maybeSingle();
-
-      // 3. Per-user grant for xem Góp ý & Kiến nghị (bảng approval_permissions)
-      setApprovalPerms(await fetchApprovalPermissions(email));
-
-      setCurrentUser({
-        email,
-        name: empData?.name || user.user_metadata?.full_name || user.user_metadata?.name || "Người dùng",
-        role: empData?.role || (isAdmin ? "Admin" : "Nhân viên"),
-        department: empData?.department || "Chưa xếp phòng",
-        isAdmin
-      });
-    } catch (err) {
-      console.error("Error fetching current user info:", err);
-    }
-  };
-
   useEffect(() => {
     fetchSuggestions();
-    fetchCurrentUser();
-    
+
     // Set public QR link based on environment
     if (typeof window !== "undefined") {
       setQrUrl(`${window.location.origin}/gop-y`);

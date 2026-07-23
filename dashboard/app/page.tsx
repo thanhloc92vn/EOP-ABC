@@ -5,7 +5,7 @@ import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
 import { useTenantConfig } from "@/lib/tenantConfig";
-import { fetchApprovalPermissions } from "@/lib/approvers";
+import { useCurrentUser } from "@/lib/useCurrentUser";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 import {
   Users,
@@ -167,6 +167,7 @@ export default function DashboardPage() {
   // phiếu của họ). isHcnsViewer = Admin/HCNS thì vẫn thấy khối chi phí tổng hợp.
   const [isHcnsViewer, setIsHcnsViewer] = useState(false);
   const [myInvoices, setMyInvoices] = useState<any[]>([]);
+  const user = useCurrentUser();
 
   // Bộ lọc thời gian khối Tuyển dụng — mặc định tháng hiện tại, cho phép chỉnh từ ngày/đến ngày.
   const nowD = new Date();
@@ -212,21 +213,14 @@ export default function DashboardPage() {
   // user tạo. RLS trên bảng invoices đảm bảo nhân viên thường chỉ nhận về phiếu của
   // họ; với Admin/HCNS ta lọc thêm theo created_by để ra đúng "chi phí của tôi".
   useEffect(() => {
+    if (user.loading) return;
+    const email = user.email;
+    if (!email) return;
+    // Quyền xem tổng hợp lấy từ hook chung (Admin hoặc cờ can_view_invoices).
+    setIsHcnsViewer(user.isAdmin || user.perms.canViewInvoices);
+
     const fetchMine = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        const email = session?.user?.email || "";
-        if (!email) return;
-
-        const { data: allowed } = await supabase
-          .from("allowed_users")
-          .select("role")
-          .ilike("email", email)
-          .maybeSingle();
-        const isAdmin = allowed?.role === "Admin";
-        const perms = await fetchApprovalPermissions(email);
-        setIsHcnsViewer(isAdmin || perms.canViewInvoices);
-
         const { data: inv } = await supabase
           .from("invoices")
           .select("amount, date, number, created_by");
@@ -241,7 +235,7 @@ export default function DashboardPage() {
       }
     };
     fetchMine();
-  }, []);
+  }, [user.loading, user.email, user.isAdmin, user.perms]);
 
   // Nhu cầu tuyển dụng theo THÁNG đang lọc (đồng bộ trang Tuyển dụng).
   // Tháng hiện tại chưa có bản ghi theo tháng → dùng bản ghi cũ (di trú mềm).

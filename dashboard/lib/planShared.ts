@@ -31,29 +31,28 @@ export function isPlanAtLeast(current: Plan, min: Plan): boolean {
 
 // ─── PHÂN GÓI THEO ROUTE ───
 // Khớp theo prefix dài nhất; route không liệt kê = basic (luôn mở).
-// Basic:        Dashboard, Hồ sơ nhân viên, C&B/Hợp đồng, Phòng ban, Cài đặt, Góp ý
-// Professional: + Công việc, Lịch, Đăng ký xe/phòng họp, Tuyển dụng, Hành chính,
-//                 Văn thư, Tổng hợp
-// Enterprise:   + Biên bản họp AI, Tìm kiếm AI
+// Basic:        Dashboard, Công việc, Lịch, Đăng ký xe/phòng họp, Hành chính & Tài sản,
+//                 Biên bản họp, Phòng ban, Cài đặt
+// Professional: + Danh sách nhân viên, C&B/Hợp đồng, Góp ý & Kiến nghị, Tuyển dụng,
+//                 Văn thư, Tổng hợp (= tất cả, trừ Tìm kiếm AI)
+// Enterprise:   + Tìm kiếm AI thông minh
 export const ROUTE_MIN_PLAN: { prefix: string; min: Plan }[] = [
-  { prefix: "/tasks", min: "professional" },
-  { prefix: "/calendar", min: "professional" },
-  { prefix: "/dang-ky", min: "professional" },
+  { prefix: "/employees", min: "professional" },
+  { prefix: "/cb", min: "professional" },
+  { prefix: "/suggestions", min: "professional" },
   { prefix: "/recruitment", min: "professional" },
   { prefix: "/vong-1", min: "professional" },
   { prefix: "/vong-2", min: "professional" },
   { prefix: "/thu-viec", min: "professional" },
-  { prefix: "/administration", min: "professional" },
   { prefix: "/document-control", min: "professional" },
   { prefix: "/van-thu", min: "professional" },
   { prefix: "/tong-hop", min: "professional" },
-  { prefix: "/meeting-team", min: "enterprise" },
 ];
 
 // ─── PHÂN GÓI THEO TÍNH NĂNG (không gắn với route riêng) ───
 export const FEATURE_MIN_PLAN = {
-  ai_search: "enterprise" as Plan,       // Trợ lý tìm kiếm AI (Ctrl+K, Header)
-  meeting_ai: "enterprise" as Plan,      // Transcribe + xử lý biên bản họp AI
+  ai_search: "enterprise" as Plan,       // Trợ lý tìm kiếm AI (Ctrl+K, Header) — chỉ Enterprise
+  meeting_ai: "basic" as Plan,           // Transcribe + xử lý biên bản họp AI — theo module Biên bản họp (Basic)
 };
 
 export function getMinPlanForPath(pathname: string): Plan {

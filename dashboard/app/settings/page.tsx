@@ -9,8 +9,9 @@ import UserPermissionsModal, { type UserPermissionsTab } from "@/components/User
 import { supabase } from "@/lib/supabase";
 import { usePlan } from "@/lib/plan";
 import { PLAN_LABELS, type Plan } from "@/lib/planShared";
+import { useDepartments } from "@/lib/departments";
+import { useTenantConfig } from "@/lib/tenantConfig";
 import {
-  fetchApprovalPermissions,
   hasAnyApprovalPermission,
   isMarketingTeamMember,
   isMarketingTeamLeader,
@@ -18,9 +19,9 @@ import {
   getRequestStage,
   isLeaveTripCap1Approver,
   isLeaveTripCap2Approver,
-  NO_APPROVAL_PERMISSIONS,
-  type ApprovalPermissions,
 } from "@/lib/approvers";
+import { useCurrentUser } from "@/lib/useCurrentUser";
+import { isHrDept, isDirectorRole } from "@/lib/access";
 import { useSearchParams } from "next/navigation";
 
 function SettingsContent() {
@@ -49,20 +50,68 @@ function SettingsContent() {
     }
   };
 
+  // ─── PHÂN GÓI THEO PHÒNG BAN (quyền nội bộ) ───
+  // Ghi vào tenant_config.department_plans (jsonb). null/rỗng = chưa bật, mọi
+  // người dùng chung `plan`. Có giá trị -> gói mỗi user = min(plan, gói phòng).
+  const deptLists = useDepartments();
+  const tenantCfg = useTenantConfig();
+  const [deptPlansDraft, setDeptPlansDraft] = useState<Record<string, Plan>>({});
+  const [deptPlansEnabled, setDeptPlansEnabled] = useState(false);
+  const [savingDeptPlans, setSavingDeptPlans] = useState(false);
+
+  useEffect(() => {
+    const dp = tenantCfg.department_plans;
+    if (dp && Object.keys(dp).length > 0) {
+      setDeptPlansEnabled(true);
+      setDeptPlansDraft({ ...(dp as Record<string, Plan>) });
+    } else {
+      setDeptPlansEnabled(false);
+      setDeptPlansDraft({});
+    }
+  }, [tenantCfg.department_plans]);
+
+  const setDeptPlan = (key: string, plan: Plan) => {
+    setDeptPlansDraft(prev => ({ ...prev, [key]: plan }));
+  };
+
+  const saveDeptPlans = async (payload: Record<string, Plan> | null) => {
+    try {
+      setSavingDeptPlans(true);
+      const { error } = await supabase
+        .from("tenant_config")
+        .upsert({ key: "department_plans", value: payload }, { onConflict: "key" });
+      if (error) throw error;
+      window.location.reload();
+    } catch (err: any) {
+      alert("Không lưu được phân gói theo phòng: " + (err.message || err) + "\n(Chỉ Admin mới có quyền này.)");
+      setSavingDeptPlans(false);
+    }
+  };
+
+  // Mặc định khi bật lần đầu: Ban Lãnh Đạo -> enterprise, HCNS -> professional,
+  // còn lại (_default) -> basic. Admin chỉnh tiếp trước khi lưu.
+  const handleEnableDeptPlans = () => {
+    const seed: Record<string, Plan> = { _default: "basic" };
+    for (const d of deptLists.all) {
+      const dl = d.toLowerCase();
+      if (dl.includes("lãnh đạo") || dl.includes("giám đốc")) seed[d] = "enterprise";
+      else if (dl.includes("hành chính") || dl.includes("nhân sự")) seed[d] = "professional";
+    }
+    setDeptPlansDraft(seed);
+    setDeptPlansEnabled(true);
+  };
+
   const [apiKey, setApiKey] = useState("");
   const [webhookUrl, setWebhookUrl] = useState("");
   const [model, setModel] = useState("gpt-4o-mini");
   const [saved, setSaved] = useState(false);
 
   // Approvals States
-  const [currentUser, setCurrentUser] = useState<{
-    email: string;
-    name: string;
-    role: string;
-    department: string;
-    isAdmin: boolean;
-  } | null>(null);
-  const [approvalPerms, setApprovalPerms] = useState<ApprovalPermissions>(NO_APPROVAL_PERMISSIONS);
+  // Danh tính người dùng — hook chung (thay khối allowed_users + employees +
+  // fetchApprovalPermissions từng copy-paste ở mỗi trang).
+  const user = useCurrentUser();
+  const currentUser = user.authenticated ? user : null;
+  const approvalPerms = user.perms;
   const [tasks, setTasks] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeApprovalTab, setActiveApprovalTab] = useState<"trip" | "leave" | "explanation" | "booking">("trip");
@@ -118,7 +167,6 @@ function SettingsContent() {
         secure: localStorage.getItem("tnec_cb_smtp_secure") !== "false",
       });
 
-      fetchUserRoleAndDept();
       fetchTasks();
       fetchExplanations();
       fetchResourceBookings();
@@ -134,44 +182,6 @@ function SettingsContent() {
     }
   }, [subtabParam]);
 
-  const fetchUserRoleAndDept = async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session || !session.user) return;
-
-      const user = session.user;
-      const email = user.email || "";
-
-      // 1. Check allowed_users for Admin
-      const { data: allowedData } = await supabase
-        .from("allowed_users")
-        .select("role")
-        .ilike("email", email)
-        .maybeSingle();
-
-      const isAdmin = allowedData?.role === "Admin";
-
-      // 2. Check employees
-      const { data: empData } = await supabase
-        .from("employees_directory")
-        .select("name, role, department")
-        .like("email", `%${email}%`)
-        .maybeSingle();
-
-      // 3. Per-user approval grants from approval_permissions table
-      setApprovalPerms(await fetchApprovalPermissions(email));
-
-      setCurrentUser({
-        email,
-        name: empData?.name || user.user_metadata?.full_name || user.user_metadata?.name || "Người dùng",
-        role: empData?.role || (isAdmin ? "Admin" : "Nhân viên"),
-        department: empData?.department || "Chưa xếp phòng",
-        isAdmin
-      });
-    } catch (err) {
-      console.error("Error fetching current user info in settings:", err);
-    }
-  };
 
   const fetchTasks = async () => {
     try {
@@ -678,36 +688,16 @@ function SettingsContent() {
   const pendingExplanations = useMemo(() => {
     if (!currentUser || !isApprover) return [];
     
+    // Nhận diện qua helper trung tâm (thay các danh sách so chuỗi vai trò rời rạc).
     const isUserAdmin = currentUser.isAdmin || (currentUser.role || "").toLowerCase() === "admin";
-    // HR by role only — per-person grants now live in the approval_permissions table
-    const isUserHR = (currentUser.role || "").toLowerCase().includes("nhân sự") ||
-                     (currentUser.role || "").toLowerCase().includes("nhan su");
-    const isDirector = (currentUser.role || "").toLowerCase().includes("giám đốc") ||
-                       (currentUser.role || "").toLowerCase().includes("giam doc");
-
-    const isUserManager = (currentUser.role || "").toLowerCase().includes("trưởng phòng") || 
-                          (currentUser.role || "").toLowerCase().includes("truong phong") ||
-                          (currentUser.role || "").toLowerCase().includes("quản lý") ||
-                          (currentUser.role || "").toLowerCase().includes("quan ly") ||
-                          (currentUser.role || "").toLowerCase().includes("quyền trưởng phòng") ||
-                          (currentUser.role || "").toLowerCase().includes("quyen truong phong") ||
-                          (currentUser.role || "").toLowerCase().startsWith("tp.") ||
-                          (currentUser.role || "").toLowerCase().startsWith("tp ");
-
-    const isUserDeputy = (currentUser.role || "").toLowerCase().includes("phó phòng") || 
-                         (currentUser.role || "").toLowerCase().includes("pho phong") ||
-                         (currentUser.role || "").toLowerCase().includes("phó trưởng phòng") || 
-                         (currentUser.role || "").toLowerCase().includes("pho truong phong") ||
-                         (currentUser.role || "").toLowerCase().includes("leader");
+    const isUserHR = isHrDept(currentUser.role);        // HR theo vai trò (Nhân sự/HCNS)
+    const isDirector = isDirectorRole(currentUser.role); // Giám đốc
 
     return explanations.filter(e => {
       if (isUserAdmin || isUserHR || isDirector || approvalPerms.canApproveJustification) return true;
       if (e.approver === currentUser.name) return true;
-      
-      // Department manager or deputy manager of the same department
-      const isManagerOfSameDept = (isUserManager || isUserDeputy) && currentUser.department === e.department;
-      if (isManagerOfSameDept) return true;
-
+      // Trưởng/Phó phòng (quản lý) cùng phòng ban với người giải trình
+      if (isManagerRole(currentUser.role) && currentUser.department === e.department) return true;
       return false;
     });
   }, [explanations, currentUser, isApprover, approvalPerms]);
@@ -837,9 +827,9 @@ function SettingsContent() {
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   {([
-                    { key: "basic" as Plan, desc: "Hồ sơ nhân viên, Hợp đồng & C&B, Phòng ban, Góp ý", accent: "border-slate-300", badge: "bg-slate-100 text-slate-600" },
-                    { key: "professional" as Plan, desc: "+ Công việc, Lịch, Đăng ký xe/phòng họp, Tuyển dụng, Hành chính, Văn thư", accent: "border-blue-300", badge: "bg-blue-50 text-blue-600" },
-                    { key: "enterprise" as Plan, desc: "+ Biên bản họp AI, Tìm kiếm AI thông minh", accent: "border-indigo-300", badge: "bg-indigo-50 text-indigo-600" },
+                    { key: "basic" as Plan, desc: "Dashboard, Công việc, Lịch, Đăng ký xe/phòng họp, Hành chính & Tài sản, Biên bản họp, Phòng ban, Cài đặt", accent: "border-slate-300", badge: "bg-slate-100 text-slate-600" },
+                    { key: "professional" as Plan, desc: "+ Danh sách nhân viên, C&B, Góp ý & Kiến nghị, Tuyển dụng, Văn thư, Tổng hợp", accent: "border-blue-300", badge: "bg-blue-50 text-blue-600" },
+                    { key: "enterprise" as Plan, desc: "+ Tìm kiếm AI thông minh", accent: "border-indigo-300", badge: "bg-indigo-50 text-indigo-600" },
                   ]).map(p => {
                     const isActive = activePlan === p.key;
                     return (
@@ -868,6 +858,80 @@ function SettingsContent() {
                     );
                   })}
                 </div>
+              </div>
+              )}
+
+              {/* ─── PHÂN GÓI THEO PHÒNG BAN (chỉ Admin) ─── */}
+              {currentUser?.isAdmin && (
+              <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium">
+                <h2 className="font-heading font-bold text-slate-800 text-sm flex items-center gap-2 mb-1">
+                  <Users size={18} className="text-blue-600" /> Phân gói theo phòng ban
+                </h2>
+                <p className="text-[11px] text-slate-400 font-medium mb-5">
+                  Gán gói riêng cho từng phòng (quyền nội bộ). Gói hiệu lực của mỗi người =
+                  thấp hơn giữa gói hệ thống và gói phòng của họ. Trường hợp ngoại lệ cho một
+                  cá nhân (VD Trưởng phòng QLDA xem Văn thư) cấp qua nút <strong>User Permissions</strong>.
+                </p>
+
+                {!deptPlansEnabled ? (
+                  <div className="flex flex-col items-start gap-3">
+                    <p className="text-[11px] text-slate-500 font-medium">
+                      Chưa bật — hiện mọi phòng dùng chung gói hệ thống (<strong>{PLAN_LABELS[activePlan]}</strong>).
+                    </p>
+                    <button
+                      onClick={handleEnableDeptPlans}
+                      className="text-[11px] font-bold text-white bg-[#005BAC] hover:bg-blue-700 px-4 py-2 rounded-xl transition-all cursor-pointer"
+                    >
+                      Bật phân gói theo phòng
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {[
+                      { key: "_default", label: "Phòng chưa gán (mặc định)", muted: true },
+                      ...deptLists.all.map(d => ({ key: d, label: d, muted: false })),
+                    ].map(row => {
+                      const cur = deptPlansDraft[row.key] || (row.key === "_default" ? "basic" : deptPlansDraft["_default"] || "basic");
+                      return (
+                        <div key={row.key} className="flex items-center justify-between gap-3 py-1.5 border-b border-slate-50 last:border-0">
+                          <span className={`text-[11px] font-semibold ${row.muted ? "text-slate-400 italic" : "text-slate-700"}`}>{row.label}</span>
+                          <div className="flex gap-1 shrink-0">
+                            {(["basic", "professional", "enterprise"] as Plan[]).map(pl => (
+                              <button
+                                key={pl}
+                                onClick={() => setDeptPlan(row.key, pl)}
+                                className={`text-[9px] font-extrabold px-2 py-1 rounded-lg uppercase tracking-wide transition-all cursor-pointer ${
+                                  cur === pl
+                                    ? "bg-[#005BAC] text-white shadow-sm"
+                                    : "bg-slate-50 text-slate-400 hover:bg-slate-100"
+                                }`}
+                              >
+                                {pl === "basic" ? "Basic" : pl === "professional" ? "Pro" : "Enter"}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    <div className="flex items-center justify-between gap-3 pt-4">
+                      <button
+                        onClick={() => { if (confirm("Tắt phân gói theo phòng? Mọi người sẽ dùng chung gói hệ thống.")) saveDeptPlans(null); }}
+                        disabled={savingDeptPlans}
+                        className="text-[11px] font-bold text-rose-500 hover:text-rose-600 disabled:opacity-50 cursor-pointer"
+                      >
+                        Tắt phân gói theo phòng
+                      </button>
+                      <button
+                        onClick={() => saveDeptPlans(deptPlansDraft)}
+                        disabled={savingDeptPlans}
+                        className="text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 px-4 py-2 rounded-xl transition-all cursor-pointer"
+                      >
+                        {savingDeptPlans ? "Đang lưu…" : "Lưu & áp dụng"}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
               )}
 

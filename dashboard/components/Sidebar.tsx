@@ -28,13 +28,17 @@ import { supabase } from "@/lib/supabase";
 import { fetchApprovalPermissions, hasAnyApprovalPermission, isMarketingTeamLeader } from "@/lib/approvers";
 import { useTenantConfig } from "@/lib/tenantConfig";
 import { usePlan } from "@/lib/plan";
+import { useCurrentUser } from "@/lib/useCurrentUser";
 
 function SidebarLinks({ isApprover, pathname, setSidebarOpen }: { isApprover: boolean; pathname: string; setSidebarOpen: (o: boolean) => void }) {
   const searchParams = useSearchParams();
   const currentTab = searchParams.get("tab");
   const isBookingSection = pathname.startsWith("/dang-ky");
   const [bookingGroupOpen, setBookingGroupOpen] = useState(isBookingSection);
-  const { isPathAllowed } = usePlan();
+  // Ẩn menu theo GÓI HIỆU LỰC CỦA PHÒNG + cấp phép riêng (không chỉ gói toàn cục).
+  // Đang tải danh tính -> hiện tạm (tránh nháy menu trống), narrow lại khi có dữ liệu.
+  const currentUser = useCurrentUser();
+  const isPathAllowed = (p: string) => (currentUser.loading ? true : currentUser.canPath(p));
 
   const navItems = [
     { label: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -54,7 +58,7 @@ function SidebarLinks({ isApprover, pathname, setSidebarOpen }: { isApprover: bo
     navItems.push({ label: "Duyệt yêu cầu", href: "/settings?tab=approvals", icon: CheckSquare });
   }
 
-  // Nhóm "Quản lý Đăng ký" (/dang-ky) thuộc gói Professional trở lên
+  // Nhóm "Quản lý Đăng ký" (/dang-ky) — gate theo gói (hiện thuộc Basic)
   const bookingAllowed = isPathAllowed("/dang-ky");
 
   const bookingChildren = [
