@@ -29,6 +29,9 @@ export type ApprovalPermissions = {
                          // Thay 3 email viết cứng từng nằm trong tasks/page.tsx —
                          // để khi bàn giao, quyền theo người tiếp nhận chứ không
                          // khoá chết vào địa chỉ gmail của người cũ.
+  canManageProjectLocations: boolean; // Quản lý vị trí dự án trên bản đồ (/vi-tri-du-an):
+                                      // thấy nút "Quản lý vị trí" + ghi được project_locations
+                                      // (RLS migration 017). Không có cờ -> chỉ xem bản đồ.
   // Quan hệ giám sát: tên hiển thị (khớp cột `assignee` dạng text) của người mà chủ
   // dòng này được thấy task, ngoài task của chính họ. VD: Như Quỳnh -> "Thanh Hằng".
   supervisesName: string | null;
@@ -50,6 +53,7 @@ export const NO_APPROVAL_PERMISSIONS: ApprovalPermissions = {
   canViewAttendanceImports: false,
   canViewAllTasks: false,
   canManageVpp: false,
+  canManageProjectLocations: false,
   supervisesName: null,
 };
 
@@ -338,6 +342,7 @@ export async function fetchApprovalPermissions(email?: string | null): Promise<A
       canViewAttendanceImports: !!row.can_view_attendance_imports,
       canViewAllTasks: !!row.can_view_all_tasks,
       canManageVpp: !!row.can_manage_vpp,
+      canManageProjectLocations: !!row.can_manage_project_locations,
       supervisesName: row.supervises_name || null,
     };
   } catch {

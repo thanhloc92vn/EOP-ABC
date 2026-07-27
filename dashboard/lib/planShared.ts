@@ -37,6 +37,7 @@ export function isPlanAtLeast(current: Plan, min: Plan): boolean {
 //                 Văn thư, Tổng hợp (= tất cả, trừ Tìm kiếm AI)
 // Enterprise:   + Tìm kiếm AI thông minh
 export const ROUTE_MIN_PLAN: { prefix: string; min: Plan }[] = [
+  { prefix: "/vi-tri-du-an", min: "professional" },
   { prefix: "/employees", min: "professional" },
   { prefix: "/cb", min: "professional" },
   { prefix: "/suggestions", min: "professional" },

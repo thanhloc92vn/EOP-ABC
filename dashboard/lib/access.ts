@@ -54,6 +54,7 @@ export function isDirectorRole(role?: string | null): boolean {
 //               không gắn route riêng (ai_search).
 export type ModuleKey =
   | "dashboard"
+  | "project_locations"
   | "tasks"
   | "calendar"
   | "booking"
@@ -82,6 +83,7 @@ export const MODULE_REGISTRY: Record<ModuleKey, ModuleDef> = {
   administration: { minPlan: "basic", route: "/administration", grantFlag: "canViewInvoices" },
   meeting:        { minPlan: "basic", route: "/meeting-team" },
   // ── Professional ──
+  project_locations: { minPlan: "professional", route: "/vi-tri-du-an" },
   employees:      { minPlan: "professional", route: "/employees", grantFlag: "canViewEmployees" },
   cb:             { minPlan: "professional", route: "/cb", grantFlag: "canViewSalary" },
   suggestions:    { minPlan: "professional", route: "/suggestions", grantFlag: "canViewSuggestions" },
