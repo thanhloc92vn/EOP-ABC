@@ -6,7 +6,7 @@
 //   3. Đặc cách nghỉ 1 ngày (bảng leave_exceptions) — hồng
 // Tầng DB đã chặn ghi với người không phải Admin (migration 003/004/005).
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { X, ShieldCheck, UserPlus, Trash2, Save, Info, Users, CalendarClock, Plus, Search } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { invalidateApproverCaches, normalizeName } from "@/lib/approvers";
@@ -70,6 +70,14 @@ const FLAG_GROUPS: { title: string; flags: { key: string; label: string; desc: s
 ];
 
 const ALL_FLAG_KEYS = FLAG_GROUPS.flatMap(g => g.flags.map(f => f.key));
+
+// Chuẩn hoá chuỗi nhiều email: bỏ khoảng trắng thừa, bỏ token rỗng, nối lại bằng ", ".
+// Dùng khi lưu vào approval_permissions.email — cột này phải chứa MỌI email đăng nhập
+// của người dùng (email công ty + gmail…) để khớp đúng lúc đọc cờ (approvers.ts so
+// "email đã lưu CHỨA email đăng nhập"). Trước đây chỉ lưu email đầu -> ai đăng nhập
+// bằng gmail (không phải email đầu) sẽ không nhận được cờ nào.
+const normalizeEmailList = (raw: string | null | undefined) =>
+  (raw || "").split(",").map(s => s.trim()).filter(Boolean).join(", ");
 
 // Ô tìm kiếm nhân viên có gợi ý — thay cho <select> dài khó tra. Gõ tên (có/không
 // dấu đều khớp nhờ normalizeName) -> hiện danh sách lọc kèm phòng ban, bấm để chọn.
@@ -148,7 +156,7 @@ export default function UserPermissionsModal({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [newEmployeeEmail, setNewEmployeeEmail] = useState("");
+  const addNameRef = useRef<HTMLInputElement>(null); // ô "Cấp quyền cho nhân sự mới"
 
   // ─── Tab 2: nhóm duyệt riêng ───
   const [groups, setGroups] = useState<GroupRow[]>([]);
@@ -243,7 +251,7 @@ export default function UserPermissionsModal({
       fetchGroups();
       fetchExceptions();
       setSelectedId(null);
-      setNewEmployeeEmail("");
+      if (addNameRef.current) addNameRef.current.value = "";
       setNewGroupName("");
       setNewGroupLeader("");
       setNewExApprover("");
@@ -255,13 +263,27 @@ export default function UserPermissionsModal({
 
   const selectedRow = useMemo(() => rows.find(r => r.id === selectedId) || null, [rows, selectedId]);
 
-  // Nhân viên chưa có dòng phân quyền (email đầu tiên chưa nằm trong bảng)
-  const availableEmployees = useMemo(() => {
-    return employeeDirectory.filter(e => {
-      const first = (e.email || "").split(",")[0].trim().toLowerCase();
-      if (!first) return false;
-      return !rows.some(r => (r.email || "").toLowerCase().includes(first));
-    });
+  // ─── Nguồn cho ô "Cấp quyền cho nhân sự mới" = TOÀN BỘ Danh sách nhân viên ───
+  // Gợi ý bằng <datalist> (giống ô "Đặc cách" & "Giám sát công việc" phía dưới):
+  // TRÌNH DUYỆT tự lọc theo chữ đang gõ, không qua state React -> gõ tiếng Việt bằng
+  // bộ gõ (Unikey/Telex) luôn ra kết quả. Bản cũ tự lọc bằng React nên bộ gõ làm mất
+  // chữ trong state -> danh sách không lọc.
+  // Không cắt bớt người đã có quyền: gõ "Lộc"/"Nhàn" vẫn ra, bấm Thêm sẽ mở thẳng
+  // dòng của họ để sửa thay vì tạo dòng trùng.
+  const addEmployeeOptions = useMemo(() => {
+    return employeeDirectory
+      .filter(e => e.name && (e.email || "").trim())
+      .map(e => {
+        const first = (e.email || "").split(",")[0].trim();
+        const existing = rows.find(r => (r.email || "").toLowerCase().includes(first.toLowerCase()));
+        return {
+          name: e.name,
+          department: e.department || "",
+          email: e.email || "",
+          existingId: existing?.id as string | undefined,
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, "vi"));
   }, [employeeDirectory, rows]);
 
   const countActiveFlags = (row: PermissionRow) =>
@@ -274,19 +296,39 @@ export default function UserPermissionsModal({
 
   // ━━━ Tab 1 handlers (cờ quyền) ━━━
   const handleAdd = async () => {
-    const emp = employeeDirectory.find(e => (e.email || "").split(",")[0].trim() === newEmployeeEmail);
-    if (!emp) return;
-    // Cột email của employees có thể chứa nhiều email phân cách dấu phẩy -> lấy email đầu
-    const firstEmail = (emp.email || "").split(",")[0].trim();
+    // Đọc THẲNG chữ trong ô (không qua state) — bộ gõ tiếng Việt có thể làm state
+    // lệch với những gì đang hiện trên màn hình.
+    const typed = (addNameRef.current?.value || "").trim();
+    if (!typed) {
+      alert("Hãy gõ hoặc chọn tên nhân viên trong Danh sách nhân viên.");
+      return;
+    }
+    const key = normalizeName(typed);
+    const emp =
+      addEmployeeOptions.find(o => normalizeName(o.name) === key) ||
+      addEmployeeOptions.filter(o => normalizeName(o.name).includes(key))[0];
+    if (!emp) {
+      alert(`Không tìm thấy "${typed}" trong Danh sách nhân viên.\nGõ một phần tên rồi chọn trong danh sách gợi ý.`);
+      return;
+    }
+    // Đã có dòng phân quyền -> mở thẳng dòng đó để sửa, không tạo dòng trùng
+    if (emp.existingId) {
+      setSelectedId(emp.existingId);
+      if (addNameRef.current) addNameRef.current.value = "";
+      return;
+    }
+    // Lưu TẤT CẢ email của nhân viên (công ty + gmail…), không chỉ email đầu — để
+    // khớp được với bất kỳ email nào người đó dùng khi đăng nhập.
+    const allEmails = normalizeEmailList(emp.email);
     try {
       setSaving(true);
       const { data, error } = await supabase
         .from("approval_permissions")
-        .insert([{ email: firstEmail, name: emp.name }])
+        .insert([{ email: allEmails, name: emp.name }])
         .select()
         .single();
       if (error) throw error;
-      setNewEmployeeEmail("");
+      if (addNameRef.current) addNameRef.current.value = "";
       await fetchRows();
       if (data?.id) setSelectedId(data.id);
     } catch (err: any) {
@@ -299,12 +341,18 @@ export default function UserPermissionsModal({
 
   const handleSave = async () => {
     if (!selectedRow) return;
+    const emailVal = normalizeEmailList(selectedRow.email);
+    if (!emailVal) {
+      alert("Email không được để trống — đây là khoá khớp với tài khoản đăng nhập.");
+      return;
+    }
     try {
       setSaving(true);
       // Chỉ gửi các cột thật sự tồn tại trong dòng đã fetch — tránh lỗi khi
       // tenant cũ thiếu cột cờ mới
       const payload: Record<string, any> = {
         name: selectedRow.name || null,
+        email: emailVal,
       };
       if ("supervises_name" in selectedRow) {
         payload.supervises_name = (selectedRow.supervises_name || "").trim() || null;
@@ -545,21 +593,32 @@ export default function UserPermissionsModal({
             <div className="p-4 border-b border-slate-100 space-y-2 shrink-0">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Cấp quyền cho nhân sự mới</label>
               <div className="flex gap-2">
-                <SearchablePicker
-                  options={availableEmployees.map(e => ({
-                    value: (e.email || "").split(",")[0].trim(),
-                    label: e.name,
-                    sub: e.department || undefined,
-                  }))}
-                  value={newEmployeeEmail}
-                  onChange={setNewEmployeeEmail}
-                  placeholder="Tìm tên nhân viên..."
-                  accentCls="focus:border-[#005BAC]"
-                />
+                {/* Ô tìm nhân sự — gợi ý bằng <datalist>: trình duyệt tự lọc theo chữ
+                    đang gõ nên gõ tiếng Việt bằng bộ gõ luôn ra kết quả. */}
+                <div className="relative flex-1 min-w-0">
+                  <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                  <input
+                    ref={addNameRef}
+                    type="text"
+                    list="up-add-employee"
+                    placeholder="Gõ tên nhân viên..."
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAdd(); } }}
+                    className="w-full pl-8 pr-3 py-2 text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] outline-none transition-all"
+                  />
+                  <datalist id="up-add-employee">
+                    {addEmployeeOptions.map(o => (
+                      <option
+                        key={`${o.name}|${o.email}`}
+                        value={o.name}
+                        label={[o.department, o.existingId ? "đã có quyền" : ""].filter(Boolean).join(" • ") || undefined}
+                      />
+                    ))}
+                  </datalist>
+                </div>
                 <button
                   type="button"
                   onClick={handleAdd}
-                  disabled={!newEmployeeEmail || saving}
+                  disabled={saving}
                   className="shrink-0 px-3 py-2 bg-[#005BAC] hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl transition-all active:scale-95 cursor-pointer"
                   title="Thêm vào bảng phân quyền"
                 >
@@ -632,11 +691,15 @@ export default function UserPermissionsModal({
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Email (khoá khớp đăng nhập)</label>
                       <input
                         type="text"
-                        value={selectedRow.email}
-                        readOnly
-                        className="w-full px-3 py-2 text-xs font-semibold bg-slate-100 border border-slate-200 rounded-xl text-slate-500 cursor-not-allowed"
-                        title="Email là khoá khớp với tài khoản đăng nhập — muốn đổi hãy xoá dòng và cấp lại"
+                        value={selectedRow.email || ""}
+                        onChange={(e) => updateSelected({ email: e.target.value })}
+                        placeholder="email@cty.com, email@gmail.com"
+                        className="w-full px-3 py-2 text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] outline-none transition-all"
+                        title="Khoá khớp với tài khoản đăng nhập. Nhập được nhiều email cách nhau dấu phẩy (VD email công ty + gmail dùng để đăng nhập) — cờ sẽ nhận khi đăng nhập bằng bất kỳ email nào ở đây."
                       />
+                      <p className="text-[10px] text-slate-400 font-normal leading-snug">
+                        Đăng nhập bằng gmail thì phải có gmail ở đây, cách email công ty bằng dấu phẩy.
+                      </p>
                     </div>
                   </div>
 
