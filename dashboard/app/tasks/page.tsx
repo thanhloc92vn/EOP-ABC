@@ -995,7 +995,16 @@ export default function TaskManagementPage() {
               {/* Assignee & Status */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <label className="text-slate-500">Người nhận <span className="text-rose-500">*</span></label>
+                  {/* Nói rõ đang lấy nhân sự của phòng nào và bao nhiêu người — để
+                      người dùng kiểm chứng được bộ lọc, không phải đoán. */}
+                  <label className="text-slate-500">
+                    Người nhận <span className="text-rose-500">*</span>
+                    <span className="ml-1 text-[11px] font-semibold text-slate-400">
+                      {seesAllDepartments
+                        ? `(toàn công ty — ${assignableEmployees.length} người)`
+                        : `(${currentUser?.department || "phòng của bạn"} — ${assignableEmployees.length} người)`}
+                    </span>
+                  </label>
                   <select
                     required
                     value={newAssignee}
