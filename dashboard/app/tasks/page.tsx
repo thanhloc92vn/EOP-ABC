@@ -354,7 +354,15 @@ export default function TaskManagementPage() {
       if (!targetKey || targetKey === meKey) return;
 
       const emp = employeesList.find(e => normalizeName(e.name) === targetKey);
-      if (!emp?.email) return; // chưa có email trong Danh sách nhân viên
+      if (!emp?.email) {
+        // Báo rõ thay vì im lặng — nếu không, người giao việc tưởng tính năng hỏng.
+        alert(
+          `Đã tạo công việc, nhưng KHÔNG gửi được email báo ${task.assignee}:\n` +
+          `nhân sự này chưa có email trong Danh sách nhân viên.\n\n` +
+          `Vào Danh sách nhân viên bổ sung email công ty cho họ để lần sau hệ thống gửi được.`
+        );
+        return;
+      }
 
       const res = await apiFetch("/api/send-task-email", {
         method: "POST",
@@ -370,9 +378,11 @@ export default function TaskManagementPage() {
         }),
       });
       const data = await res.json().catch(() => ({}));
-      if (data?.error) console.warn("Không gửi được email giao việc:", data.error);
-    } catch (err) {
-      console.warn("Lỗi khi gửi email giao việc:", err);
+      if (data?.error) {
+        alert(`Đã tạo công việc, nhưng KHÔNG gửi được email báo ${task.assignee}:\n${data.error}`);
+      }
+    } catch (err: any) {
+      alert(`Đã tạo công việc, nhưng KHÔNG gửi được email báo ${task.assignee}:\n${err?.message || err}`);
     }
   };
 
@@ -569,6 +579,22 @@ export default function TaskManagementPage() {
 
   const myDeptKey = normalizeName(currentUser?.department || "");
   const amIDeptManager = isDeptManagerRole(currentUser?.role);
+
+  // Ai được giao việc cho toàn công ty (không giới hạn phòng)
+  const seesAllDepartments = !!currentUser && (
+    currentUser.isAdmin ||
+    currentUser.role.toLowerCase() === "admin" ||
+    currentUser.isDirector ||
+    isDirectorRole(currentUser.department) ||
+    perms.canViewAllTasks
+  );
+
+  // Ô "Người nhận" chỉ liệt kê nhân sự CÙNG PHÒNG với tài khoản đang dùng —
+  // Trưởng phòng Thị trường chỉ giao được cho người phòng Thị trường.
+  // Admin / Ban lãnh đạo / người có cờ xem toàn bộ thì vẫn chọn được mọi phòng.
+  const assignableEmployees = seesAllDepartments || !myDeptKey
+    ? employeesList
+    : employeesList.filter(e => normalizeName(e.department || "") === myDeptKey);
 
   const filteredTasks = tasks.filter(t => {
     const matchesSearch = t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -977,7 +1003,7 @@ export default function TaskManagementPage() {
                     className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 bg-white font-medium text-slate-800 cursor-pointer"
                   >
                     <option value="">Chọn...</option>
-                    {employeesList.map((emp) => (
+                    {assignableEmployees.map((emp) => (
                       <option key={emp.id} value={emp.name}>
                         {emp.name}
                       </option>
@@ -1152,7 +1178,7 @@ export default function TaskManagementPage() {
                     className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 bg-white font-medium text-slate-800 cursor-pointer"
                   >
                     <option value="">Chọn...</option>
-                    {employeesList.map((emp) => (
+                    {assignableEmployees.map((emp) => (
                       <option key={emp.id} value={emp.name}>
                         {emp.name}
                       </option>
