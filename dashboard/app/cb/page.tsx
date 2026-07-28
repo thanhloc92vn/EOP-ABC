@@ -500,6 +500,16 @@ export default function CBPage() {
   // Authorization states
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [hasFullAccess, setHasFullAccess] = useState(false);
+
+  // Chốt chặn: ẩn NÚT tab thôi chưa đủ vì nội dung render theo state. Nếu người
+  // không đủ quyền đang đứng ở tab lương/hợp đồng (state cũ, quay lại trang…)
+  // thì đẩy về tab an toàn.
+  useEffect(() => {
+    if (hasFullAccess) return;
+    setActiveTab(cur => (cur === "payroll_insurance" || cur === "employee_contracts") ? "employee_profile" : cur);
+    setActiveSubTab(cur => (cur === "salary" || cur === "contract") ? "personal" : cur);
+  }, [hasFullAccess]);
+
   // Cờ can_approve_benefit — người được giao duyệt chi phúc lợi (hiếu hỷ, thưởng lễ)
   const [canApproveBenefit, setCanApproveBenefit] = useState(false);
   // Chứng từ đính kèm phiếu hiếu hỷ: id phiếu đang tải lên + file đang xem
@@ -3743,9 +3753,17 @@ export default function CBPage() {
             {[
               { id: "employee_profile", label: "Hồ sơ nhân viên", icon: User },
               { id: "attendance", label: "Chấm công", icon: Clock },
-              { id: "payroll_insurance", label: "Bảng lương & BHXH", icon: DollarSign },
+              // 2 tab dưới đây hiện lương BHXH / phụ cấp / tổng thu nhập -> chỉ
+              // Admin hoặc người có cờ "Xem lương & HĐLĐ" mới thấy. Sau khi siết
+              // RLS bảng contracts (migration 018) người khác cũng không đọc được
+              // dữ liệu, nên ẩn tab để không hiện bảng rỗng trông như lỗi.
+              ...(hasFullAccess ? [
+                { id: "payroll_insurance", label: "Bảng lương & BHXH", icon: DollarSign },
+              ] : []),
               { id: "benefits", label: "Phúc lợi", icon: Award },
-              { id: "employee_contracts", label: "Hợp đồng nhân sự", icon: FileText },
+              ...(hasFullAccess ? [
+                { id: "employee_contracts", label: "Hợp đồng nhân sự", icon: FileText },
+              ] : []),
             ].map((tab) => {
               const Icon = tab.icon;
               return (
@@ -4007,8 +4025,13 @@ export default function CBPage() {
                     <div className="flex flex-wrap gap-1 text-xs font-bold bg-slate-100/80 p-1 rounded-2xl shrink-0 shadow-sm border border-slate-200/20">
                       {[
                         { id: "personal", label: "Thông tin cá nhân" },
-                        { id: "salary", label: "Thông tin lương" },
-                        { id: "contract", label: "Thông tin HĐ" },
+                        // Lương & hợp đồng chứa dữ liệu tiền (lương BHXH, phụ cấp,
+                        // tổng thu nhập) -> chỉ Admin / người có cờ "Xem lương & HĐLĐ".
+                        // Kể cả hồ sơ của chính mình cũng không hiện (user chốt).
+                        ...(hasFullAccess ? [
+                          { id: "salary", label: "Thông tin lương" },
+                          { id: "contract", label: "Thông tin HĐ" },
+                        ] : []),
                         { id: "promotion", label: "Lộ trình thăng tiến" },
                         { id: "termination", label: "Nghỉ việc" },
                         { id: "concurrent", label: "Quản lý kiêm nhiệm" }

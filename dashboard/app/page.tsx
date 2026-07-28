@@ -346,10 +346,16 @@ export default function DashboardPage() {
     return { monthTotal, monthCount, allTotal, hasAny: myInvoices.length > 0 };
   }, [myInvoices]);
 
+  // Ô "HĐ lao động chính thức" đếm từ bảng contracts — bảng này đã siết chỉ cho
+  // Admin / người có cờ "Xem lương & HĐLĐ" (migration 018). Người khác đọc ra 0
+  // dòng, hiện số 0 sẽ trông như lỗi -> ẩn hẳn ô đó với họ.
+  const canSeeContractStat = user.isAdmin || user.perms.canViewSalary;
   const hrCards = [
     { label: "Nhân sự hiện tại", value: hr.headcount, icon: Users, grad: "from-indigo-500 to-blue-600" },
     { label: "Nhân sự mới vào (nhận việc)", value: recruit.acceptedHires, icon: UserPlus, grad: "from-emerald-500 to-teal-600" },
-    { label: "HĐ lao động chính thức", value: hr.official, icon: BadgeCheck, grad: "from-blue-500 to-cyan-600" },
+    ...(canSeeContractStat
+      ? [{ label: "HĐ lao động chính thức", value: hr.official, icon: BadgeCheck, grad: "from-blue-500 to-cyan-600" }]
+      : []),
   ];
 
   return (
