@@ -166,6 +166,8 @@ export default function TaskManagementPage() {
 
   // Drag State
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
+  // Thẻ vừa được kéo vào "Đã hoàn thành" — dùng để bật hiệu ứng chúc mừng
+  const [justCompletedId, setJustCompletedId] = useState<string | null>(null);
 
   // Grouped columns: collapse tasks that share the same assignee (name or department)
   const GROUPED_COLUMNS = new Set(["planning", "completed"]);
@@ -311,15 +313,35 @@ export default function TaskManagementPage() {
     const taskId = draggedTaskId || e.dataTransfer.getData("text/plain");
     if (!taskId) return;
 
+    const isCompleting = columnId === "completed";
+
+    // Chỉ Trưởng phòng / Phó phòng / Tổ trưởng / Admin được kết luận công việc
+    // đã xong — nhân viên tự kéo vào "Đã hoàn thành" sẽ bị chặn.
+    if (isCompleting && !canManageTasks) {
+      alert(
+        'Chỉ Trưởng phòng, Phó phòng, Tổ trưởng hoặc Admin mới được chuyển công việc sang "Đã hoàn thành".\n\n' +
+        "Bạn hãy cập nhật tiến độ và chuyển sang \"Chờ phê duyệt\" để cấp quản lý xác nhận."
+      );
+      setDraggedTaskId(null);
+      return;
+    }
+
+    // Vào cột hoàn thành thì tiến độ tự nhảy 100%
+    const patch = isCompleting ? { status: columnId, progress: 100 } : { status: columnId };
+
     // Optimistic UI Update
-    const updatedTasks = tasks.map(t => t.id === taskId ? { ...t, status: columnId } : t);
-    setTasks(updatedTasks);
+    setTasks(prev => prev.map(t => (t.id === taskId ? { ...t, ...patch } : t)));
+    if (isCompleting) {
+      // Bật hiệu ứng chúc mừng trên thẻ vừa hoàn thành, tự tắt sau ~1.4s
+      setJustCompletedId(taskId);
+      setTimeout(() => setJustCompletedId(cur => (cur === taskId ? null : cur)), 1400);
+    }
 
     // Update in Supabase
     try {
       const { error } = await supabase
         .from("tasks")
-        .update({ status: columnId })
+        .update(patch)
         .eq("id", taskId);
 
       if (error) throw error;
@@ -802,9 +824,18 @@ export default function TaskManagementPage() {
                 return (
                   <div 
                     key={col.id} 
-                    onDragOver={(e) => e.preventDefault()}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      // Người không đủ quyền kéo qua cột "Đã hoàn thành" -> con trỏ
+                      // hiện dấu cấm ngay, không đợi thả xong mới báo.
+                      if (col.id === "completed" && !canManageTasks) {
+                        e.dataTransfer.dropEffect = "none";
+                      }
+                    }}
                     onDrop={(e) => handleDrop(e, col.id)}
-                    className="flex flex-col gap-4 min-w-[220px] shrink-0 bg-slate-100/50 p-3 rounded-2xl border border-slate-200/50 min-h-[500px]"
+                    className={`flex flex-col gap-4 min-w-[220px] shrink-0 bg-slate-100/50 p-3 rounded-2xl border border-slate-200/50 min-h-[500px] ${
+                      col.id === "completed" && !canManageTasks && draggedTaskId ? "opacity-60" : ""
+                    }`}
                   >
                     {/* Column Header */}
                     <div className={`flex items-center justify-between border-t-2 ${col.color} pt-2`}>
@@ -843,7 +874,11 @@ export default function TaskManagementPage() {
                                 }
                                 handleOpenEditModal(task);
                               }}
-                              className={`rounded-xl p-4 transition-all duration-300 hover:scale-[1.015] hover:-translate-y-0.5 border flex flex-col justify-between h-36 cursor-pointer active:cursor-grabbing relative group ${cardStyle.bg} ${cardStyle.shadow}`}
+                              className={`rounded-xl p-4 transition-all duration-300 hover:scale-[1.015] hover:-translate-y-0.5 border flex flex-col justify-between h-40 cursor-pointer active:cursor-grabbing relative group ${cardStyle.bg} ${cardStyle.shadow} ${
+                                justCompletedId === task.id
+                                  ? "scale-[1.04] ring-2 ring-emerald-400/80 shadow-xl shadow-emerald-500/25"
+                                  : ""
+                              }`}
                             >
                               <div className="space-y-1.5">
                                 <div className="flex items-center justify-between">
@@ -872,7 +907,23 @@ export default function TaskManagementPage() {
                                   <span className="flex items-center gap-1 font-extrabold text-slate-700">
                                     <User size={10} className="opacity-70" /> {task.assignee}
                                   </span>
-                                  <span className="font-extrabold text-slate-800">{task.progress}%</span>
+                                  <span className={`font-extrabold transition-colors duration-500 ${
+                                    task.progress >= 100 ? "text-emerald-600" : "text-slate-800"
+                                  }`}>
+                                    {task.progress}%
+                                  </span>
+                                </div>
+
+                                {/* Thanh tiến độ — chạy mượt tới mốc mới, xanh lá khi đủ 100% */}
+                                <div className="h-1.5 w-full bg-slate-200/70 rounded-full overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full transition-[width,background-color] duration-700 ease-out ${
+                                      task.progress >= 100
+                                        ? "bg-gradient-to-r from-emerald-400 to-emerald-500"
+                                        : "bg-gradient-to-r from-blue-400 to-blue-500"
+                                    }`}
+                                    style={{ width: `${Math.min(100, Math.max(0, task.progress || 0))}%` }}
+                                  />
                                 </div>
 
                                 {/* Footer Info */}
