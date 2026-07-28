@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { apiFetch } from "@/lib/apiClient";
-import { X, MapPin, Loader2, Check, Trash2, Search, AlertCircle } from "lucide-react";
+import { X, MapPin, Loader2, Check, Trash2, Search, AlertCircle, Navigation, Globe } from "lucide-react";
 import type { ProjectItem } from "./types";
 import { VN_PROVINCE_NAMES } from "@/lib/vnProvinces";
 
@@ -50,7 +50,8 @@ export function parseLatLng(input: string): [number, number] | null {
 }
 
 type Draft = {
-  location: string; // ô dán link / toạ độ
+  mapsLink: string; // ô TRÊN: link Google Maps / toạ độ — vị trí BĐH (để chỉ đường)
+  earthLink: string; // ô DƯỚI: link Google Earth — xem thiết kế dự án
   status: string;
   investor: string;
   packageName: string;
@@ -77,7 +78,8 @@ export default function LocationEditor({
 
   const getDraft = (p: ProjectItem): Draft =>
     drafts[p.bdhName] ?? {
-      location: p.loc ? `${p.loc.lat}, ${p.loc.lng}` : "",
+      mapsLink: p.loc ? `${p.loc.lat}, ${p.loc.lng}` : "",
+      earthLink: p.loc?.google_earth_url || "",
       status: p.loc?.status || "active",
       investor: p.loc?.investor || "",
       packageName: p.loc?.package || "",
@@ -97,18 +99,18 @@ export default function LocationEditor({
 
   async function saveRow(p: ProjectItem) {
     const draft = getDraft(p);
-    let coords = parseLatLng(draft.location);
+    let coords = parseLatLng(draft.mapsLink);
     let kmlUrl: string | null = null;
 
     // Link My Maps -> nhờ server lấy tâm toạ độ từ toàn bộ điểm trong bản đồ.
-    if (!coords && isMyMapsLink(draft.location)) {
+    if (!coords && isMyMapsLink(draft.mapsLink)) {
       setRowState((s) => ({ ...s, [p.bdhName]: "saving" }));
       setRowMsg((m) => ({ ...m, [p.bdhName]: "" }));
       try {
         const res = await apiFetch("/api/mymaps-extract", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: draft.location }),
+          body: JSON.stringify({ url: draft.mapsLink }),
         });
         const j = await res.json().catch(() => null);
         if (!res.ok || !j?.ok) {
@@ -117,7 +119,7 @@ export default function LocationEditor({
           return;
         }
         coords = [j.lat, j.lng];
-        kmlUrl = draft.location;
+        kmlUrl = draft.mapsLink;
       } catch {
         setRowState((s) => ({ ...s, [p.bdhName]: "error" }));
         setRowMsg((m) => ({ ...m, [p.bdhName]: "Lỗi kết nối khi đọc My Maps." }));
@@ -129,7 +131,7 @@ export default function LocationEditor({
       setRowState((s) => ({ ...s, [p.bdhName]: "error" }));
       setRowMsg((m) => ({
         ...m,
-        [p.bdhName]: draft.location.includes("goo.gl")
+        [p.bdhName]: draft.mapsLink.includes("goo.gl")
           ? "Link rút gọn không đọc được toạ độ. Mở link rồi copy lat,lng."
           : "Chưa nhận ra toạ độ. Dán 'lat, lng', link Google Maps có @lat,lng, hoặc link Google My Maps.",
       }));
@@ -145,6 +147,7 @@ export default function LocationEditor({
       investor: draft.investor || null,
       package: draft.packageName || null,
       province: draft.province || null,
+      google_earth_url: draft.earthLink.trim() || null, // link Google Earth (xem thiết kế)
       created_by: email,
       updated_at: new Date().toISOString(),
     };
@@ -239,12 +242,29 @@ export default function LocationEditor({
                   )}
                 </div>
 
-                <input
-                  value={draft.location}
-                  onChange={(e) => setDraft(p.bdhName, { location: e.target.value }, draft)}
-                  placeholder="Dán link Google My Maps / Google Maps / Earth, hoặc: 10.7769, 106.7009"
-                  className="w-full text-xs font-medium text-slate-700 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 focus:outline-none focus:border-[#00AEEF] placeholder:text-slate-400"
-                />
+                <div className="space-y-1">
+                  <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500">
+                    <Navigation size={11} className="text-[#005BAC]" /> Vị trí Ban điều hành — để chỉ đường (Google Maps)
+                  </label>
+                  <input
+                    value={draft.mapsLink}
+                    onChange={(e) => setDraft(p.bdhName, { mapsLink: e.target.value }, draft)}
+                    placeholder="Dán link Google Maps / My Maps, hoặc: 10.7769, 106.7009"
+                    className="w-full text-xs font-medium text-slate-700 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 focus:outline-none focus:border-[#00AEEF] placeholder:text-slate-400"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500">
+                    <Globe size={11} className="text-emerald-600" /> Bản thiết kế dự án — xem trên Google Earth (tuỳ chọn)
+                  </label>
+                  <input
+                    value={draft.earthLink}
+                    onChange={(e) => setDraft(p.bdhName, { earthLink: e.target.value }, draft)}
+                    placeholder="Dán link Google Earth (earth.google.com/…) hoặc My Maps"
+                    className="w-full text-xs font-medium text-slate-700 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 focus:outline-none focus:border-emerald-500 placeholder:text-slate-400"
+                  />
+                </div>
 
                 <div className="grid grid-cols-2 gap-2">
                   <select
