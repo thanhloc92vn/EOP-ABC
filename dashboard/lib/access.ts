@@ -82,8 +82,8 @@ export const MODULE_REGISTRY: Record<ModuleKey, ModuleDef> = {
   booking:        { minPlan: "basic", route: "/dang-ky", grantFlag: "canApproveBooking" },
   administration: { minPlan: "basic", route: "/administration", grantFlag: "canViewInvoices" },
   meeting:        { minPlan: "basic", route: "/meeting-team" },
+  project_locations: { minPlan: "basic", route: "/vi-tri-du-an" },
   // ── Professional ──
-  project_locations: { minPlan: "professional", route: "/vi-tri-du-an" },
   employees:      { minPlan: "professional", route: "/employees", grantFlag: "canViewEmployees" },
   cb:             { minPlan: "professional", route: "/cb", grantFlag: "canViewSalary" },
   suggestions:    { minPlan: "professional", route: "/suggestions", grantFlag: "canViewSuggestions" },
