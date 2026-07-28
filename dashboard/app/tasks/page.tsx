@@ -6,7 +6,8 @@ import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
 import { useCurrentUser } from "@/lib/useCurrentUser";
-import { isHrDept } from "@/lib/access";
+import { isHrDept, isDirectorRole } from "@/lib/access";
+import { normalizeName } from "@/lib/approvers";
 import {
   Calendar,
   Paperclip,
@@ -23,6 +24,15 @@ import {
   Users
 } from "lucide-react";
 
+// Một dòng trong "Danh sách nhân viên" — gốc để suy ra task thuộc phòng nào.
+interface EmployeeRef {
+  id: string;
+  name: string;
+  department?: string | null;
+  role?: string | null;
+  email?: string | null;
+}
+
 interface Task {
   id: string;
   title: string;
@@ -38,6 +48,27 @@ interface Task {
   link?: string;
   notes?: string;
 }
+
+// Trưởng phòng / Phó phòng / Tổ trưởng — quản lý cấp phòng: thấy cả phòng mình,
+// và khi họ giao việc cho người khác thì hệ thống gửi email báo nhân viên.
+const isDeptManagerRole = (role?: string | null) => {
+  const r = normalizeName(role || "");
+  return (
+    r.includes("truong phong") || r.includes("pho phong") ||
+    r.includes("pho truong phong") || r.includes("quyen truong phong") ||
+    r.includes("to truong")
+  );
+};
+
+// Cấu hình SMTP dự phòng đọc từ trình duyệt (Cài đặt hệ thống / C&B). Email hệ thống
+// trên server (SMTP_USER/SMTP_PASS) luôn được API ưu tiên trước.
+const readSmtpConfig = () => ({
+  user: typeof window !== "undefined" ? localStorage.getItem("tnec_cb_smtp_user") || "" : "",
+  pass: typeof window !== "undefined" ? localStorage.getItem("tnec_cb_smtp_pass") || "" : "",
+  host: typeof window !== "undefined" ? localStorage.getItem("tnec_cb_smtp_host") || "smtp.gmail.com" : "smtp.gmail.com",
+  port: typeof window !== "undefined" ? Number(localStorage.getItem("tnec_cb_smtp_port")) || 465 : 465,
+  secure: typeof window === "undefined" || localStorage.getItem("tnec_cb_smtp_secure") !== "false",
+});
 
 const COLUMNS = [
   { id: "planning", title: "Lập kế hoạch", color: "border-t-slate-400" },
@@ -97,7 +128,6 @@ export default function TaskManagementPage() {
   const user = useCurrentUser();
   const currentUser = user.authenticated ? user : null;
   const perms = user.perms;
-  const [userDeptEmployees, setUserDeptEmployees] = useState<string[]>([]);
   
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -118,7 +148,7 @@ export default function TaskManagementPage() {
   const [newLink, setNewLink] = useState("");
   const [newNotes, setNewNotes] = useState("");
   const [isAiSuggesting, setIsAiSuggesting] = useState(false);
-  const [employeesList, setEmployeesList] = useState<{ id: string; name: string }[]>([]);
+  const [employeesList, setEmployeesList] = useState<EmployeeRef[]>([]);
 
   // Edit Modal State
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -214,29 +244,16 @@ export default function TaskManagementPage() {
     }
   };
 
-  // Phó phòng thấy task của cả phòng -> nạp danh sách NV cùng phòng khi đã biết
-  // danh tính (lấy từ hook useCurrentUser thay vì tự query lại).
-  useEffect(() => {
-    if (user.loading || !user.authenticated) return;
-    const r = user.role.toLowerCase();
-    const isDeputy = r.includes("phó phòng") || r.includes("pho phong") ||
-                     r.includes("phó trưởng phòng") || r.includes("pho truong phong");
-    if (!isDeputy) return;
-    supabase
-      .from("employees_directory")
-      .select("name")
-      .eq("department", user.department)
-      .then(({ data }) => { if (data) setUserDeptEmployees(data.map(e => e.name)); });
-  }, [user.loading, user.authenticated, user.role, user.department]);
-
   const fetchEmployeesList = async () => {
     try {
+      // Lấy kèm phòng ban + chức danh: "Danh sách nhân viên" là GỐC để biết task
+      // thuộc phòng nào và ai là Trưởng/Phó phòng/Tổ trưởng của phòng đó.
       const { data, error } = await supabase
         .from("employees_directory")
-        .select("id, name")
+        .select("id, name, department, role, email")
         .order("name", { ascending: true });
       if (data) {
-        setEmployeesList(data);
+        setEmployeesList(data as EmployeeRef[]);
       }
     } catch (err) {
       console.error("Error fetching employees list:", err);
@@ -315,6 +332,50 @@ export default function TaskManagementPage() {
     }
   };
 
+  // Gửi email báo "bạn được giao việc mới". Im lặng bỏ qua khi không đủ điều kiện —
+  // việc đã tạo xong rồi, lỗi email không được làm hỏng thao tác của người dùng.
+  const notifyAssignee = async (task: {
+    title: string; assignee: string; priority: string;
+    due_date?: string; start_date?: string; description?: string; link?: string;
+  }) => {
+    try {
+      if (!currentUser) return;
+
+      const amIManagerOrLeader =
+        currentUser.isAdmin ||
+        currentUser.isDirector ||
+        isDirectorRole(currentUser.department) ||
+        isDeptManagerRole(currentUser.role);
+      if (!amIManagerOrLeader) return; // nhân viên thường tự tạo việc -> không gửi
+
+      // Giao cho chính mình -> không gửi
+      const meKey = normalizeName(currentUser.name);
+      const targetKey = normalizeName(task.assignee);
+      if (!targetKey || targetKey === meKey) return;
+
+      const emp = employeesList.find(e => normalizeName(e.name) === targetKey);
+      if (!emp?.email) return; // chưa có email trong Danh sách nhân viên
+
+      const res = await apiFetch("/api/send-task-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          smtpConfig: readSmtpConfig(),
+          task,
+          assigneeEmails: emp.email,
+          assigneeName: emp.name,
+          assignedByName: currentUser.name,
+          assignedByRole: currentUser.role,
+          siteUrl: typeof window !== "undefined" ? window.location.origin : "",
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data?.error) console.warn("Không gửi được email giao việc:", data.error);
+    } catch (err) {
+      console.warn("Lỗi khi gửi email giao việc:", err);
+    }
+  };
+
   // Create Task
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -344,6 +405,21 @@ export default function TaskManagementPage() {
         }]);
 
       if (error) throw error;
+
+      // ─── Báo email cho nhân viên khi CẤP QUẢN LÝ giao việc ───
+      // Nhân viên tự tạo việc cho mình -> KHÔNG gửi. Chỉ gửi khi người tạo là
+      // Trưởng/Phó phòng, Tổ trưởng, Ban lãnh đạo hoặc Admin, VÀ giao cho người khác.
+      // Người gửi luôn là email hệ thống cấu hình ở Cài đặt hệ thống; người nhận lấy
+      // email trong Danh sách nhân viên (ưu tiên email công ty).
+      notifyAssignee({
+        title: newTitle,
+        assignee: newAssignee,
+        priority: newPriority,
+        due_date: newDueDate,
+        start_date: newStartDate,
+        description: newDescription,
+        link: newLink,
+      });
 
       // Reset Form & Close Modal
       setNewTitle("");
@@ -475,6 +551,25 @@ export default function TaskManagementPage() {
     }
   };
 
+  // ─── GỐC PHÂN QUYỀN: "Danh sách nhân viên" (employees_directory) ───
+  // Task chỉ lưu TÊN người nhận, nên phòng ban của task = phòng ban của người nhận
+  // tra trong Danh sách nhân viên. Đổi phòng cho ai trong danh sách -> quyền tự theo.
+  const findEmployeeByName = (name: string): EmployeeRef | null => {
+    const key = normalizeName(name || "");
+    if (!key) return null;
+    return (
+      employeesList.find(e => normalizeName(e.name) === key) ||
+      employeesList.find(e => {
+        const n = normalizeName(e.name);
+        return !!n && (n.includes(key) || key.includes(n));
+      }) ||
+      null
+    );
+  };
+
+  const myDeptKey = normalizeName(currentUser?.department || "");
+  const amIDeptManager = isDeptManagerRole(currentUser?.role);
+
   const filteredTasks = tasks.filter(t => {
     const matchesSearch = t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           t.assignee.toLowerCase().includes(searchQuery.toLowerCase());
@@ -495,25 +590,20 @@ export default function TaskManagementPage() {
     const userEmail = currentUser.email.toLowerCase().trim();
     const userName = currentUser.name;
 
-    // 1. Trưởng phòng/Tổ trưởng/Giám đốc thấy toàn bộ theo vai trò (tự chuyển giao được).
-    // Đặc cách cá nhân (Hoa Đào, Hoành Anh, Huỳnh Giáp Nhân, Nguyễn Duy Hưng...) giờ đọc
-    // từ approval_permissions.can_view_all_tasks — khi bàn giao tài khoản, quyền tự động
-    // chuyển sang người tiếp nhận thay vì bị khóa cứng vào tên người cũ.
-    const isUserAdmin = currentUser.isAdmin ||
-                        currentUser.role.toLowerCase() === "admin" ||
-                        currentUser.role.toLowerCase().includes("trưởng phòng") ||
-                        currentUser.role.toLowerCase().includes("truong phong") ||
-                        currentUser.role.toLowerCase().includes("tổ trưởng") ||
-                        currentUser.role.toLowerCase().includes("to truong") ||
-                        currentUser.role.toLowerCase().includes("giám đốc") ||
-                        currentUser.role.toLowerCase().includes("giam doc") ||
-                        (currentUser.department && (
-                          currentUser.department.toLowerCase().includes("giám đốc") ||
-                          currentUser.department.toLowerCase().includes("giam doc")
-                        )) ||
-                        perms.canViewAllTasks;
+    // 1. THẤY TOÀN BỘ CÔNG TY: Admin, Giám đốc/Ban lãnh đạo, hoặc được cấp cờ riêng
+    //    can_view_all_tasks (cờ đọc từ approval_permissions nên bàn giao tài khoản là
+    //    quyền tự chuyển sang người tiếp nhận).
+    //    LƯU Ý: Trưởng/Phó phòng & Tổ trưởng KHÔNG còn nằm ở đây — họ chỉ thấy phòng
+    //    mình (xử lý ở bước 2), theo đúng quy định phân quyền theo phòng ban.
+    const seesEverything =
+      currentUser.isAdmin ||
+      currentUser.role.toLowerCase() === "admin" ||
+      currentUser.isDirector ||
+      // người thuộc Ban Giám đốc (phòng ban, không phải chức danh) — giữ như trước
+      isDirectorRole(currentUser.department) ||
+      perms.canViewAllTasks;
 
-    if (isUserAdmin) return true;
+    if (seesEverything) return true;
 
     // --- VPP TASK FILTER SYNC ---
     // If it is a VPP (Stationery) request task, apply custom visibility rules
@@ -554,7 +644,16 @@ export default function TaskManagementPage() {
       return false;
     }
 
-    // 2. Quan hệ giám sát (approval_permissions.supervises_name): người này thấy task
+    // 2. QUẢN LÝ CẤP PHÒNG (Trưởng phòng / Phó phòng / Tổ trưởng theo chức danh trong
+    //    Danh sách nhân viên): thấy mọi task của nhân viên CÙNG PHÒNG với mình.
+    //    Phòng của task = phòng của người nhận, tra trong Danh sách nhân viên.
+    if (amIDeptManager && myDeptKey) {
+      const taskDeptKey = normalizeName(findEmployeeByName(t.assignee)?.department || "");
+      if (taskDeptKey && taskDeptKey === myDeptKey) return true;
+      // không khớp phòng -> rơi xuống các luật dưới (giám sát / task của chính mình)
+    }
+
+    // 3. Quan hệ giám sát (approval_permissions.supervises_name): người này thấy task
     // của người họ giám sát + của chính mình. Trước đây so cứng "Như Quỳnh thấy Thanh
     // Hằng" / "Hoành Anh thấy Thùy Quyên" — giờ là dữ liệu, tự chuyển giao khi đổi người.
     if (perms.supervisesName) {
@@ -593,7 +692,20 @@ export default function TaskManagementPage() {
     <div className="flex min-h-screen bg-[#F7F9FC]">
       <Sidebar />
       <div className="ml-60 flex-1 flex flex-col min-w-0">
-        <Header title="Quản lý Công việc" subtitle="Bảng theo dõi và quản lý công việc phòng Hành chính Nhân sự" />
+        {/* Phụ đề nói đúng phạm vi người xem đang thấy (trước đây cứng là "phòng
+            Hành chính Nhân sự" với mọi người). */}
+        <Header
+          title="Quản lý Công việc"
+          subtitle={
+            !currentUser
+              ? "Bảng theo dõi và quản lý công việc"
+              : (currentUser.isAdmin || currentUser.isDirector || perms.canViewAllTasks)
+                ? "Bảng theo dõi công việc — toàn công ty"
+                : amIDeptManager && currentUser.department
+                  ? `Bảng theo dõi công việc — ${currentUser.department}`
+                  : "Bảng theo dõi công việc của bạn"
+          }
+        />
 
         <main className="flex-1 p-8 space-y-6 overflow-y-auto">
           {/* Subheader Filters */}
@@ -768,6 +880,12 @@ export default function TaskManagementPage() {
                                   <span className="flex items-center gap-1.5 text-[10px] font-extrabold text-slate-700 truncate">
                                     <Users size={11} className="opacity-70 shrink-0" />
                                     <span className="truncate">{group.assignee}</span>
+                                    {/* Phòng ban của người nhận — tra từ Danh sách nhân viên */}
+                                    {findEmployeeByName(group.assignee)?.department && (
+                                      <span className="shrink-0 text-[9px] font-bold text-slate-400 normal-case">
+                                        · {findEmployeeByName(group.assignee)!.department}
+                                      </span>
+                                    )}
                                   </span>
                                   <span className="flex items-center gap-1 shrink-0">
                                     <span className="text-[9px] font-extrabold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full">{group.tasks.length}</span>
