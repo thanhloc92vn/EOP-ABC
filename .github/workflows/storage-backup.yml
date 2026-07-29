@@ -31,11 +31,11 @@ jobs:
         run: |
           mkdir -p ./storage_backup
           
-          # Tải trực tiếp các file từ từng Bucket (kể cả Public Bucket)
-          rclone copy supabase:benefit-attachments ./storage_backup/benefit-attachments --s3-no-check-bucket --verbose || true
-          rclone copy supabase:meetings ./storage_backup/meetings --s3-no-check-bucket --verbose || true
-          rclone copy supabase:attendance-files ./storage_backup/attendance-files --s3-no-check-bucket --verbose || true
-          rclone copy supabase:clerical-documents ./storage_backup/clerical-documents --s3-no-check-bucket --verbose || true
+          # Tải dữ liệu từng bucket
+          rclone copy supabase:clerical-documents ./storage_backup/clerical-documents --s3-no-check-bucket --ignore-errors --verbose || true
+          rclone copy supabase:benefit-attachments ./storage_backup/benefit-attachments --s3-no-check-bucket --ignore-errors --verbose || true
+          rclone copy supabase:meetings ./storage_backup/meetings --s3-no-check-bucket --ignore-errors --verbose || true
+          rclone copy supabase:attendance-files ./storage_backup/attendance-files --s3-no-check-bucket --ignore-errors --verbose || true
 
       - name: Upload Storage Backup Artifact
         uses: actions/upload-artifact@v4
