@@ -2,9 +2,8 @@ name: Daily Supabase Storage Backup
 
 on:
   schedule:
-    # Chạy tự động vào 01:00 UTC mỗi ngày (tức 08:00 sáng giờ Việt Nam)
     - cron: '0 1 * * *'
-  workflow_dispatch: # Nút bấm chạy thủ công trên giao diện Actions khi cần ngay lập tức
+  workflow_dispatch:
 
 jobs:
   backup-storage:
@@ -31,8 +30,12 @@ jobs:
       - name: Sync Storage Buckets
         run: |
           mkdir -p ./storage_backup
-          # Đồng bộ toàn bộ các Buckets (benefit-attachments, meetings, attendance-files, clerical-documents)
-          rclone copy supabase: ./storage_backup/ --verbose
+          
+          # Tải cụ thể từng Bucket về thư mục backup
+          rclone copy supabase:benefit-attachments ./storage_backup/benefit-attachments --verbose || true
+          rclone copy supabase:meetings ./storage_backup/meetings --verbose || true
+          rclone copy supabase:attendance-files ./storage_backup/attendance-files --verbose || true
+          rclone copy supabase:clerical-documents ./storage_backup/clerical-documents --verbose || true
 
       - name: Upload Storage Backup Artifact
         uses: actions/upload-artifact@v4
