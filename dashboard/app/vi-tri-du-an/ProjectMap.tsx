@@ -47,13 +47,33 @@ function statusMeta(status: string | null) {
   return STATUS_META[(status || "active").toLowerCase()] || STATUS_META.active;
 }
 
-// Pin SVG bo tròn theo màu trạng thái (tránh lỗi icon mặc định của Leaflet khi bundle).
-function pinIcon(color: string): L.DivIcon {
+// Chèn tên dự án vào HTML của icon -> phải khử ký tự đặc biệt.
+function escapeHtml(s: string): string {
+  return s.replace(
+    /[&<>"]/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string
+  );
+}
+
+// Tên ngắn hiển thị cạnh pin: bỏ tiền tố dài dòng, cắt bớt nếu quá dài.
+function shortLabel(name: string): string {
+  const s = (name || "")
+    .replace(/^(ban\s*điều\s*hành|bđh|dự\s*án|công\s*trình)\s+/i, "")
+    .trim();
+  return s.length > 30 ? `${s.slice(0, 29).trimEnd()}…` : s;
+}
+
+// Pin SVG bo tròn theo màu trạng thái (tránh lỗi icon mặc định của Leaflet khi bundle),
+// kèm nhãn tên dự án nổi ngay trên đầu pin cho dễ nhận diện khi không mở panel.
+function pinIcon(color: string, label: string): L.DivIcon {
   return L.divIcon({
     className: "",
     html: `
-      <div style="position:relative;transform:translate(-50%,-100%)">
-        <svg width="30" height="40" viewBox="0 0 30 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <div style="position:relative;transform:translate(-50%,-100%);display:flex;flex-direction:column;align-items:center;">
+        <div style="max-width:170px;margin-bottom:3px;padding:2px 7px;border-radius:8px;background:rgba(255,255,255,.95);border:1px solid rgba(148,163,184,.4);box-shadow:0 1px 4px rgba(15,23,42,.2);font-family:Inter,system-ui,sans-serif;font-size:11px;font-weight:700;line-height:1.35;color:#1E293B;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(
+          label
+        )}</div>
+        <svg width="30" height="40" viewBox="0 0 30 40" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block">
           <path d="M15 0C6.7 0 0 6.7 0 15c0 10.5 15 25 15 25s15-14.5 15-25C30 6.7 23.3 0 15 0z" fill="${color}"/>
           <circle cx="15" cy="15" r="6" fill="white"/>
         </svg>
@@ -298,7 +318,9 @@ export default function ProjectMap() {
     const markers: L.Marker[] = [];
     locatedItems.forEach((p) => {
       const loc = p.loc!;
-      const m = L.marker([loc.lat, loc.lng], { icon: pinIcon(statusMeta(loc.status).color) });
+      const m = L.marker([loc.lat, loc.lng], {
+        icon: pinIcon(statusMeta(loc.status).color, shortLabel(displayName(p))),
+      });
       m.on("click", () => {
         setSelected(p);
         map.flyTo([loc.lat, loc.lng], Math.max(map.getZoom(), 13), { duration: 0.6 });
