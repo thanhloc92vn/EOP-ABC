@@ -854,8 +854,8 @@ function SettingsContent() {
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   {([
-                    { key: "basic" as Plan, desc: "Dashboard, Công việc, Lịch, Đăng ký xe/phòng họp, Hành chính & Tài sản, Biên bản họp, Vị trí dự án, Phòng ban, Cài đặt", accent: "border-slate-300", badge: "bg-slate-100 text-slate-600" },
-                    { key: "professional" as Plan, desc: "+ Danh sách nhân viên, C&B, Góp ý & Kiến nghị, Tuyển dụng, Văn thư, Tổng hợp", accent: "border-blue-300", badge: "bg-blue-50 text-blue-600" },
+                    { key: "basic" as Plan, desc: "Dashboard, Công việc, Lịch, Đăng ký xe/phòng họp, Hành chính & Tài sản, Biên bản họp, Vị trí dự án, Lương & Phúc lợi (C&B), Phòng ban, Cài đặt", accent: "border-slate-300", badge: "bg-slate-100 text-slate-600" },
+                    { key: "professional" as Plan, desc: "+ Danh sách nhân viên, Góp ý & Kiến nghị, Tuyển dụng, Văn thư, Tổng hợp", accent: "border-blue-300", badge: "bg-blue-50 text-blue-600" },
                     { key: "enterprise" as Plan, desc: "+ Tìm kiếm AI thông minh", accent: "border-indigo-300", badge: "bg-indigo-50 text-indigo-600" },
                   ]).map(p => {
                     const isActive = activePlan === p.key;
@@ -885,6 +885,12 @@ function SettingsContent() {
                     );
                   })}
                 </div>
+
+                <p className="mt-4 text-[10px] text-slate-400 font-medium leading-relaxed bg-slate-50 border border-slate-100 rounded-xl px-3 py-2.5">
+                  🔒 Gói mở <b className="text-slate-500">module</b>, không mở <b className="text-slate-500">dữ liệu nhạy cảm</b>.
+                  Trong C&amp;B, bảng lương &amp; BHXH và hợp đồng lao động chỉ hiện với Admin hoặc tài khoản
+                  được bật cờ &quot;Xem lương &amp; HĐLĐ&quot; ở phần Phân quyền người dùng.
+                </p>
               </div>
               )}
 

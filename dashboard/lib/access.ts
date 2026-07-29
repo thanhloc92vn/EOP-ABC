@@ -83,9 +83,11 @@ export const MODULE_REGISTRY: Record<ModuleKey, ModuleDef> = {
   administration: { minPlan: "basic", route: "/administration", grantFlag: "canViewInvoices" },
   meeting:        { minPlan: "basic", route: "/meeting-team" },
   project_locations: { minPlan: "basic", route: "/vi-tri-du-an" },
+  // Module C&B mở từ Basic, NHƯNG lương/BHXH/HĐLĐ bên trong vẫn khoá theo cờ
+  // can_view_salary (app/cb/page.tsx > hasFullAccess) — gói không mở khoá lương.
+  cb:             { minPlan: "basic", route: "/cb", grantFlag: "canViewSalary" },
   // ── Professional ──
   employees:      { minPlan: "professional", route: "/employees", grantFlag: "canViewEmployees" },
-  cb:             { minPlan: "professional", route: "/cb", grantFlag: "canViewSalary" },
   suggestions:    { minPlan: "professional", route: "/suggestions", grantFlag: "canViewSuggestions" },
   recruitment:    { minPlan: "professional", route: "/recruitment", grantFlag: "canViewCandidates" },
   documents:      { minPlan: "professional", route: "/document-control", grantFlag: "canViewDocuments" },
