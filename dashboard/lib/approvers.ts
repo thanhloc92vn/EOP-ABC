@@ -17,7 +17,11 @@ export type ApprovalPermissions = {
   canManageEmployees: boolean; // Sửa/xoá/khoá hồ sơ nhân sự (Danh sách nhân viên)
   canViewInvoices: boolean; // Xem toàn bộ hoá đơn/HS thanh toán (trang Hành chính). Người
                             // không có cờ này chỉ thấy phiếu do CHÍNH họ tạo (RLS invoices).
-  canViewDocuments: boolean; // Xem/xử lý Văn Thư (trang /document-control + RLS clerical_documents)
+  canViewDocuments: boolean; // XEM Văn Thư (trang /document-control + RLS clerical_documents).
+                             // Chỉ xem — không kèm quyền sửa/xoá (xem canManageDocuments).
+  canManageDocuments: boolean; // Sửa/xoá công văn + thêm công văn mới (trang Văn thư).
+                               // Tách khỏi canViewDocuments vì trước đây ai được đặc cách
+                               // XEM cũng thấy luôn cột "Thao tác" -> sửa/xoá được công văn.
   canViewCandidates: boolean; // Xem/xử lý Tuyển dụng (trang /recruitment + RLS candidates, recruitment_needs)
   canViewEmployees: boolean; // Xem FULL danh sách nhân viên (trang /employees). Không có cờ
                              // -> chỉ thấy hồ sơ chính mình. (Gate UI, bảng employees không RLS
@@ -47,6 +51,7 @@ export const NO_APPROVAL_PERMISSIONS: ApprovalPermissions = {
   canManageEmployees: false,
   canViewInvoices: false,
   canViewDocuments: false,
+  canManageDocuments: false,
   canViewCandidates: false,
   canViewEmployees: false,
   canViewSalary: false,
@@ -336,6 +341,7 @@ export async function fetchApprovalPermissions(email?: string | null): Promise<A
       canManageEmployees: !!row.can_manage_employees,
       canViewInvoices: !!row.can_view_invoices,
       canViewDocuments: !!row.can_view_documents,
+      canManageDocuments: !!row.can_manage_documents,
       canViewCandidates: !!row.can_view_candidates,
       canViewEmployees: !!row.can_view_employees,
       canViewSalary: !!row.can_view_salary,

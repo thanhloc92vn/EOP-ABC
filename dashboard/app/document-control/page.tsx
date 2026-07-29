@@ -5,9 +5,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
-import { isManagerRole, normalizeName } from "@/lib/approvers";
 import { useCurrentUser } from "@/lib/useCurrentUser";
-import { isHrDept } from "@/lib/access";
 import {
   FileDown,
   FileUp,
@@ -195,19 +193,15 @@ export default function DocumentControlPage() {
   // nới theo gói — người cùng gói Professional vẫn không thấy nếu chưa có cờ.
   const canView = !!(currentUser && (currentUser.isAdmin || approvalPerms.canViewDocuments));
 
-  const canManage = useMemo(() => {
-    if (!currentUser) return false;
-    if (currentUser.isAdmin || approvalPerms.canViewDocuments) return true;
-    const role = currentUser.role || "";
-    const dept = currentUser.department || "";
-    // Nhận diện HCNS / quản lý / văn thư qua helper trung tâm (thay 5 dòng so chuỗi).
-    return (
-      isHrDept(dept) ||
-      isManagerRole(role) ||
-      normalizeName(dept).includes("van thu") ||
-      normalizeName(role).includes("van thu")
-    );
-  }, [currentUser, approvalPerms]);
+  // SỬA/XOÁ công văn + thêm công văn mới — cờ RIÊNG can_manage_documents.
+  // Trước đây: ai có cờ XEM (can_view_documents) là tự động sửa/xoá được, kèm 4 dòng
+  // đoán quyền theo tên phòng/chức danh (HCNS, cấp quản lý, chữ "văn thư"). Nghĩa là
+  // một tài khoản được đặc cách XEM cũng thấy nguyên cột "Thao tác" -> sửa/xoá công văn.
+  // Nay tách hẳn: cờ là nguồn DUY NHẤT, giống cách đã áp cho C&B và Danh sách nhân viên.
+  const canManage = useMemo(
+    () => !!(currentUser && (currentUser.isAdmin || approvalPerms.canManageDocuments)),
+    [currentUser, approvalPerms]
+  );
 
   // Load API Settings & Current User & Active Tab on mount
   useEffect(() => {
@@ -972,13 +966,15 @@ export default function DocumentControlPage() {
                       <th className="pb-3 text-center">Bản Scan</th>
                       <th className="pb-3 text-center">Bản gốc</th>
                       <th className="pb-3 whitespace-nowrap">Tên file CV</th>
-                      {canManage && <th className="pb-3 text-right">Thao tác</th>}
+                      {/* Cột luôn hiện: người chỉ-xem vẫn tải được file, nút Sửa/Xoá
+                          bên trong mới gate theo canManage. */}
+                      <th className="pb-3 text-right">Thao tác</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-semibold text-slate-600">
                     {loading ? (
                       <tr>
-                        <td colSpan={canManage ? 11 : 10} className="py-20 text-center text-slate-400 italic">
+                        <td colSpan={11} className="py-20 text-center text-slate-400 italic">
                           <div className="flex flex-col items-center gap-2">
                             <RefreshCw size={24} className="animate-spin text-blue-600" />
                             <span>Đang tải dữ liệu từ Supabase...</span>
@@ -987,7 +983,7 @@ export default function DocumentControlPage() {
                       </tr>
                     ) : filteredDocs.length === 0 ? (
                       <tr>
-                        <td colSpan={canManage ? 11 : 10} className="py-20 text-center text-slate-400 font-normal">
+                        <td colSpan={11} className="py-20 text-center text-slate-400 font-normal">
                           {search ? "Không tìm thấy công văn phù hợp." : "Chưa có công văn nào được lưu trong mục này."}
                         </td>
                       </tr>
@@ -1044,9 +1040,9 @@ export default function DocumentControlPage() {
                               doc.file_name || "–"
                             )}
                           </td>
-                          {canManage && (
-                            <td className="py-4 text-right">
+                          <td className="py-4 text-right">
                               <div className="flex justify-end gap-2">
+                                {canManage && (
                                 <button
                                   onClick={() => openEditDocModal(doc)}
                                   className="p-1 text-slate-400 hover:text-blue-600 hover:bg-slate-100 rounded transition-all"
@@ -1054,6 +1050,7 @@ export default function DocumentControlPage() {
                                 >
                                   <Edit size={14} />
                                 </button>
+                                )}
                                 {(doc.scan_file_url || doc.original_file_url) ? (
                                   <button
                                     onClick={() => downloadFile(doc.scan_file_url || doc.original_file_url!, doc.file_name || "cong_van")}
@@ -1070,6 +1067,7 @@ export default function DocumentControlPage() {
                                     <Download size={14} />
                                   </span>
                                 )}
+                                {canManage && (
                                 <button
                                   onClick={() => doc.id && handleDeleteDoc(doc.id)}
                                   className="p-1 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded transition-all"
@@ -1077,9 +1075,9 @@ export default function DocumentControlPage() {
                                 >
                                   <Trash2 size={14} />
                                 </button>
+                                )}
                               </div>
                             </td>
-                          )}
                         </tr>
                       ))
                     )}
