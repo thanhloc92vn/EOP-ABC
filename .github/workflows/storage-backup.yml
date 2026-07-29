@@ -1,0 +1,42 @@
+name: Daily Supabase Storage Backup
+
+on:
+  schedule:
+    # Chạy tự động vào 01:00 UTC mỗi ngày (tức 08:00 sáng giờ Việt Nam)
+    - cron: '0 1 * * *'
+  workflow_dispatch: # Nút bấm chạy thủ công trên giao diện Actions khi cần ngay lập tức
+
+jobs:
+  backup-storage:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install Rclone
+        run: sudo apt-get update && sudo apt-get install -y rclone
+
+      - name: Configure Rclone for Supabase S3
+        run: |
+          mkdir -p ~/.config/rclone
+          cat <<EOF > ~/.config/rclone/rclone.conf
+          [supabase]
+          type = s3
+          provider = Other
+          env_auth = false
+          access_key_id = ${{ secrets.SUPABASE_S3_ACCESS_KEY }}
+          secret_access_key = ${{ secrets.SUPABASE_S3_SECRET_KEY }}
+          region = ${{ secrets.SUPABASE_S3_REGION }}
+          endpoint = ${{ secrets.SUPABASE_S3_ENDPOINT }}
+          EOF
+
+      - name: Sync Storage Buckets
+        run: |
+          mkdir -p ./storage_backup
+          # Đồng bộ toàn bộ các Buckets (benefit-attachments, meetings, attendance-files, clerical-documents)
+          rclone copy supabase: ./storage_backup/ --verbose
+
+      - name: Upload Storage Backup Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: supabase-storage-backup
+          path: ./storage_backup/
+          retention-days: 7
