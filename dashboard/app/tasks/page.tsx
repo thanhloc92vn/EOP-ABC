@@ -1,13 +1,14 @@
 "use client";
 
 import { apiFetch } from "@/lib/apiClient";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import { isHrDept, isDirectorRole } from "@/lib/access";
 import { normalizeName } from "@/lib/approvers";
+import { useDepartments } from "@/lib/departments";
 import {
   Calendar,
   Paperclip,
@@ -21,7 +22,8 @@ import {
   Loader2,
   ChevronDown,
   ChevronRight,
-  Users
+  Users,
+  Filter
 } from "lucide-react";
 
 // Một dòng trong "Danh sách nhân viên" — gốc để suy ra task thuộc phòng nào.
@@ -59,6 +61,16 @@ const isDeptManagerRole = (role?: string | null) => {
     r.includes("to truong")
   );
 };
+
+// Tiện ích khoảng tháng cho bộ lọc thời gian — giống hệt bộ lọc Tuyển dụng ở Trang chủ.
+const monthFirstDay = (mk: string) => `${mk}-01`;
+const monthLastDay = (mk: string) => {
+  const [y, m] = mk.split("-").map(Number);
+  return `${mk}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`;
+};
+const fmtD = (iso: string) => (iso ? iso.split("-").reverse().join("/") : "");
+// Cắt phần giờ nếu cột ngày lưu dạng timestamp — so sánh chuỗi "YYYY-MM-DD" mới đúng.
+const dayKey = (v?: string | null) => (v ? String(v).slice(0, 10) : "");
 
 // Cấu hình SMTP dự phòng đọc từ trình duyệt (Cài đặt hệ thống / C&B). Email hệ thống
 // trên server (SMTP_USER/SMTP_PASS) luôn được API ưu tiên trước.
@@ -149,6 +161,36 @@ export default function TaskManagementPage() {
   const [newNotes, setNewNotes] = useState("");
   const [isAiSuggesting, setIsAiSuggesting] = useState(false);
   const [employeesList, setEmployeesList] = useState<EmployeeRef[]>([]);
+
+  // Ô "Người nhận" — picker có ô tìm kiếm, dựng theo đúng ô "Nhân viên tham dự"
+  // ở trang Đăng ký phòng họp / xe để hai màn hình nhìn giống nhau.
+  const [assigneeSearch, setAssigneeSearch] = useState("");
+  const [showAssigneeDropdown, setShowAssigneeDropdown] = useState(false);
+  const assigneePickerRef = useRef<HTMLDivElement>(null);
+
+  // Bộ lọc thời gian của bảng Kanban — mặc định THÁNG HIỆN TẠI, cho phép chỉnh
+  // từ ngày / đến ngày. Dựng theo đúng bộ lọc Tuyển dụng ở Trang chủ.
+  const nowD = new Date();
+  const currentMonthKey = `${nowD.getFullYear()}-${String(nowD.getMonth() + 1).padStart(2, "0")}`;
+  // Ngày hôm nay theo giờ máy người dùng — dùng để bật cảnh báo đỏ "đến hạn hôm nay".
+  const todayKey = `${currentMonthKey}-${String(nowD.getDate()).padStart(2, "0")}`;
+  const [taskMonth, setTaskMonth] = useState<string>(currentMonthKey);
+  const [taskFrom, setTaskFrom] = useState<string>(monthFirstDay(currentMonthKey));
+  const [taskTo, setTaskTo] = useState<string>(monthLastDay(currentMonthKey));
+  const [showDateFilter, setShowDateFilter] = useState(false);
+
+  // Bộ lọc Phòng ban / Ban điều hành — mượn nguyên từ trang Danh sách nhân viên.
+  // Danh mục đọc từ bảng `departments` nên thêm/bớt phòng chỉ cần sửa dữ liệu.
+  const { phongBan: DEPARTMENTS, bdh: BDH_OPTIONS } = useDepartments();
+  const [filterDept, setFilterDept] = useState("all");
+  const [filterBdh, setFilterBdh] = useState("all");
+
+  const handleTaskMonthChange = (mk: string) => {
+    if (!mk) return;
+    setTaskMonth(mk);
+    setTaskFrom(monthFirstDay(mk));
+    setTaskTo(monthLastDay(mk));
+  };
 
   // Edit Modal State
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -301,6 +343,17 @@ export default function TaskManagementPage() {
     fetchEmployeesList();
   }, []);
 
+  // Bấm ra ngoài thì đóng dropdown "Người nhận"
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (assigneePickerRef.current && !assigneePickerRef.current.contains(e.target as Node)) {
+        setShowAssigneeDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, []);
+
   // Handle Drag Start
   const handleDragStart = (e: React.DragEvent, id: string) => {
     setDraggedTaskId(id);
@@ -419,13 +472,22 @@ export default function TaskManagementPage() {
       alert("Vui lòng chọn Người nhận!");
       return;
     }
+    // Ô Người nhận giờ là ô GÕ TỰ DO (có gợi ý datalist) nên phải chốt lại tên
+    // đúng người trong danh sách — tránh giao việc cho một cái tên gõ sai, task
+    // sẽ không hiện với ai và không gửi được email báo.
+    if (!assignableEmployees.some(emp => emp.name === newAssignee.trim())) {
+      alert("Người nhận không hợp lệ!\nHãy gõ và CHỌN tên từ danh sách gợi ý.");
+      return;
+    }
+
+    const assigneeName = newAssignee.trim();
 
     try {
       const { error } = await supabase
         .from("tasks")
         .insert([{
           title: newTitle,
-          assignee: newAssignee,
+          assignee: assigneeName,
           priority: newPriority,
           due_date: newDueDate || null,
           progress: Number(newProgress),
@@ -445,7 +507,7 @@ export default function TaskManagementPage() {
       // email trong Danh sách nhân viên (ưu tiên email công ty).
       notifyAssignee({
         title: newTitle,
-        assignee: newAssignee,
+        assignee: assigneeName,
         priority: newPriority,
         due_date: newDueDate,
         start_date: newStartDate,
@@ -456,6 +518,8 @@ export default function TaskManagementPage() {
       // Reset Form & Close Modal
       setNewTitle("");
       setNewAssignee("");
+      setAssigneeSearch("");
+      setShowAssigneeDropdown(false);
       setNewPriority("Trung bình");
       setNewDueDate("");
       setNewProgress(0);
@@ -618,10 +682,38 @@ export default function TaskManagementPage() {
     ? employeesList
     : employeesList.filter(e => normalizeName(e.department || "") === myDeptKey);
 
+  // Lọc gợi ý cho ô "Người nhận": khớp cả TÊN lẫn PHÒNG BAN, cắt còn 30 dòng để
+  // danh sách 112 người không làm dropdown ì. Giống hệt ô "Nhân viên tham dự".
+  const filteredAssignees = useMemo(() => {
+    const q = assigneeSearch.trim().toLowerCase();
+    return assignableEmployees
+      .filter(e => !q || e.name.toLowerCase().includes(q) || (e.department || "").toLowerCase().includes(q))
+      .slice(0, 30);
+  }, [assignableEmployees, assigneeSearch]);
+
   const filteredTasks = tasks.filter(t => {
     const matchesSearch = t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           t.assignee.toLowerCase().includes(searchQuery.toLowerCase());
     if (!matchesSearch) return false;
+
+    // ─── Lọc theo khoảng thời gian: căn theo DEADLINE ───
+    // Việc thuộc "Tháng 7" khi DEADLINE rơi vào tháng 7, bất kể bắt đầu từ bao giờ.
+    // Việc KHÔNG có deadline thì luôn hiện — không có căn cứ để loại, ẩn đi sẽ làm
+    // người dùng tưởng mất việc.
+    if (taskFrom && taskTo) {
+      const d = dayKey(t.due_date);
+      if (d && (d < taskFrom || d > taskTo)) return false;
+    }
+
+    // ─── Lọc theo Phòng ban / Ban điều hành ───
+    // Bảng `tasks` chỉ lưu TÊN người nhận, không lưu phòng — nên phải tra ngược ra
+    // phòng qua Danh sách nhân viên. Một số việc đặt thẳng tên phòng vào ô người
+    // nhận (giao cho cả phòng), nên tra không ra người thì lấy chính ô đó làm phòng.
+    if (filterDept !== "all" || filterBdh !== "all") {
+      const wanted = normalizeName(filterDept !== "all" ? filterDept : filterBdh);
+      const taskDept = normalizeName(findEmployeeByName(t.assignee)?.department || t.assignee);
+      if (taskDept !== wanted) return false;
+    }
 
     if (!currentUser) return false;
 
@@ -770,15 +862,116 @@ export default function TaskManagementPage() {
                   className="w-full pl-9 pr-4 py-2 text-xs bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40 transition-all shadow-sm"
                 />
               </div>
-              <button 
+              <button
                 onClick={fetchTasks}
                 className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 text-xs font-semibold text-slate-600 rounded-xl hover:bg-slate-50 transition-colors shadow-sm"
               >
                 Tải lại
               </button>
+
+              {/* Lọc Phòng ban / Ban điều hành — CHỈ hiện với người xem được toàn công
+                  ty. Người khác vốn chỉ thấy việc phòng mình, bày ra chỉ tổ rối. */}
+              {seesAllDepartments && (
+                <>
+                  <div className="flex items-center gap-2 bg-white px-3 py-2 border border-slate-200 rounded-xl shadow-sm">
+                    <Filter size={13} className="text-slate-400" />
+                    <select
+                      value={filterDept}
+                      onChange={(e) => {
+                        setFilterDept(e.target.value);
+                        if (e.target.value !== "all") setFilterBdh("all");
+                      }}
+                      className="text-xs text-slate-600 bg-transparent outline-none font-semibold cursor-pointer"
+                    >
+                      <option value="all">Tất cả phòng ban</option>
+                      {DEPARTMENTS.map(d => (
+                        <option key={d} value={d}>{d}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-2 bg-white px-3 py-2 border border-slate-200 rounded-xl shadow-sm">
+                    <Filter size={13} className="text-slate-400" />
+                    <select
+                      value={filterBdh}
+                      onChange={(e) => {
+                        setFilterBdh(e.target.value);
+                        if (e.target.value !== "all") setFilterDept("all");
+                      }}
+                      className="text-xs text-slate-600 bg-transparent outline-none font-semibold cursor-pointer"
+                    >
+                      <option value="all">Tất cả Ban điều hành</option>
+                      {BDH_OPTIONS.map(bdh => (
+                        <option key={bdh} value={bdh}>{bdh}</option>
+                      ))}
+                    </select>
+                  </div>
+                </>
+              )}
             </div>
 
-            <button 
+            <div className="flex items-center gap-3">
+            {/* Bộ lọc thời gian dạng nút gọn — bấm mới bung lịch chọn */}
+            <div className="relative">
+              <button
+                onClick={() => setShowDateFilter(v => !v)}
+                className="flex items-center gap-2 bg-white border border-slate-200 hover:border-blue-300 hover:bg-blue-50/40 px-3 py-2 rounded-xl shadow-sm text-xs font-bold text-slate-700 transition-colors cursor-pointer"
+              >
+                <span>📅</span>
+                <span>
+                  {taskFrom === monthFirstDay(taskMonth) && taskTo === monthLastDay(taskMonth)
+                    ? `Tháng ${parseInt(taskMonth.slice(5), 10)}/${taskMonth.slice(0, 4)}`
+                    : `${fmtD(taskFrom)} – ${fmtD(taskTo)}`}
+                </span>
+                <ChevronRight size={12} className={`transition-transform ${showDateFilter ? "rotate-90" : ""}`} />
+              </button>
+
+              {showDateFilter && (
+                <>
+                  {/* Lớp phủ trong suốt: bấm ra ngoài để đóng */}
+                  <div className="fixed inset-0 z-20" onClick={() => setShowDateFilter(false)} />
+                  <div className="absolute right-0 top-full mt-2 z-30 bg-white border border-slate-200 rounded-2xl shadow-xl p-4 w-64 space-y-3">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Chọn nhanh theo tháng</label>
+                      <input
+                        type="month"
+                        value={taskMonth}
+                        onChange={(e) => handleTaskMonthChange(e.target.value)}
+                        className="w-full text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 outline-none focus:border-blue-300 cursor-pointer"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Từ ngày</label>
+                        <input
+                          type="date"
+                          value={taskFrom}
+                          onChange={(e) => { setTaskFrom(e.target.value); if (e.target.value) setTaskMonth(e.target.value.slice(0, 7)); }}
+                          className="w-full text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-2 py-2 outline-none focus:border-blue-300 cursor-pointer"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Đến ngày</label>
+                        <input
+                          type="date"
+                          value={taskTo}
+                          onChange={(e) => setTaskTo(e.target.value)}
+                          className="w-full text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-2 py-2 outline-none focus:border-blue-300 cursor-pointer"
+                        />
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setShowDateFilter(false)}
+                      className="w-full text-xs font-black text-white bg-[#005BAC] hover:bg-blue-700 rounded-lg py-2 transition-colors cursor-pointer"
+                    >
+                      Xong
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <button
               onClick={() => {
                 if (currentUser) {
                   setNewAssignee(currentUser.name);
@@ -790,6 +983,7 @@ export default function TaskManagementPage() {
             >
               <Plus size={14} /> Thêm công việc
             </button>
+            </div>
           </div>
 
           {loading ? (
@@ -863,6 +1057,15 @@ export default function TaskManagementPage() {
                       {(() => {
                         const renderCard = (task: Task) => {
                           const cardStyle = getCardStyles(task.status);
+                          // Đến hạn ĐÚNG HÔM NAY -> viền + nền đỏ cảnh báo. Việc đã xong
+                          // thì thôi, không còn gì để nhắc.
+                          const isDueToday = dayKey(task.due_date) === todayKey && task.status !== "completed";
+                          // Phải THAY nền theo trạng thái chứ không chồng thêm class: nền
+                          // gốc là gradient (background-image) nên sẽ phủ lên màu đỏ
+                          // (background-color) và cảnh báo coi như mất.
+                          const cardBg = isDueToday
+                            ? "bg-rose-500/20 border-rose-300/70 border-l-4 border-l-rose-600"
+                            : cardStyle.bg;
                           return (
                             <div
                               key={task.id}
@@ -874,10 +1077,12 @@ export default function TaskManagementPage() {
                                 }
                                 handleOpenEditModal(task);
                               }}
-                              className={`rounded-xl p-4 transition-all duration-300 hover:scale-[1.015] hover:-translate-y-0.5 border flex flex-col justify-between h-40 cursor-pointer active:cursor-grabbing relative group ${cardStyle.bg} ${cardStyle.shadow} ${
+                              className={`rounded-xl p-4 transition-all duration-300 hover:scale-[1.015] hover:-translate-y-0.5 border flex flex-col justify-between h-40 cursor-pointer active:cursor-grabbing relative group ${cardBg} ${cardStyle.shadow} ${
                                 justCompletedId === task.id
                                   ? "scale-[1.04] ring-2 ring-emerald-400/80 shadow-xl shadow-emerald-500/25"
-                                  : ""
+                                  : isDueToday
+                                    ? "ring-2 ring-rose-500 shadow-lg shadow-rose-500/25"
+                                    : ""
                               }`}
                             >
                               <div className="space-y-1.5">
@@ -928,8 +1133,9 @@ export default function TaskManagementPage() {
 
                                 {/* Footer Info */}
                                 <div className="flex items-center justify-between text-[9px] text-slate-500 font-bold">
-                                  <span className="flex items-center gap-0.5">
+                                  <span className={`flex items-center gap-0.5 ${isDueToday ? "text-rose-600 font-extrabold" : ""}`}>
                                     <Calendar size={10} className="opacity-75" /> {task.due_date ? new Date(task.due_date).toLocaleDateString("vi-VN", { day: '2-digit', month: '2-digit' }) : "Không hạn"}
+                                    {isDueToday && <span className="ml-1 bg-rose-600 text-white px-1.5 py-0.5 rounded-full text-[8px] uppercase tracking-wide">Hôm nay</span>}
                                   </span>
                                   <div className="flex items-center gap-1.5">
                                     {task.attachments > 0 && <span className="flex items-center gap-0.5"><Paperclip size={10} /> {task.attachments}</span>}
@@ -1056,19 +1262,62 @@ export default function TaskManagementPage() {
                         : `(${currentUser?.department || "phòng của bạn"} — ${assignableEmployees.length} người)`}
                     </span>
                   </label>
-                  <select
-                    required
-                    value={newAssignee}
-                    onChange={(e) => setNewAssignee(e.target.value)}
-                    className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 bg-white font-medium text-slate-800 cursor-pointer"
-                  >
-                    <option value="">Chọn...</option>
-                    {assignableEmployees.map((emp) => (
-                      <option key={emp.id} value={emp.name}>
-                        {emp.name}
-                      </option>
-                    ))}
-                  </select>
+                  {/* Picker có ô tìm kiếm — dựng theo đúng ô "Nhân viên tham dự" ở
+                      trang Đăng ký phòng họp/xe: chọn xong hiện thẻ tên có avatar,
+                      bấm X để đổi người. Danh sách 112 người nên bỏ <select> cuộn tay. */}
+                  <div className="relative" ref={assigneePickerRef}>
+                    <div className="w-full min-h-[42px] px-3 py-2 border border-slate-200 rounded-xl flex flex-wrap items-center gap-1.5 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500/40 bg-white">
+                      {newAssignee ? (
+                        <span className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 border border-blue-200 rounded-full px-2.5 py-1 text-[10px] font-bold">
+                          {newAssignee}
+                          <button
+                            type="button"
+                            onClick={() => { setNewAssignee(""); setAssigneeSearch(""); setShowAssigneeDropdown(true); }}
+                            className="hover:text-rose-500 transition-colors cursor-pointer"
+                          >
+                            <X size={10} />
+                          </button>
+                        </span>
+                      ) : (
+                        <div className="flex items-center gap-1.5 flex-1 min-w-[160px]">
+                          <Search size={12} className="text-slate-400 shrink-0" />
+                          <input
+                            type="text"
+                            value={assigneeSearch}
+                            onChange={(e) => { setAssigneeSearch(e.target.value); setShowAssigneeDropdown(true); }}
+                            onFocus={() => setShowAssigneeDropdown(true)}
+                            placeholder="Tìm tên nhân viên hoặc bấm để chọn nhanh..."
+                            className="flex-1 min-w-0 py-1 outline-none text-xs font-semibold placeholder:font-normal"
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    {showAssigneeDropdown && !newAssignee && (
+                      <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-premium z-20 max-h-56 overflow-y-auto animate-in fade-in duration-150">
+                        {filteredAssignees.length === 0 ? (
+                          <p className="text-center text-slate-400 text-[11px] italic py-4">Không tìm thấy nhân viên phù hợp.</p>
+                        ) : (
+                          filteredAssignees.map((emp) => (
+                            <button
+                              key={emp.id}
+                              type="button"
+                              onClick={() => { setNewAssignee(emp.name); setAssigneeSearch(""); setShowAssigneeDropdown(false); }}
+                              className="w-full flex items-center gap-2.5 px-4 py-2 hover:bg-slate-50 transition-colors text-left cursor-pointer"
+                            >
+                              <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-cyan-400 text-white text-[9px] font-bold flex items-center justify-center shrink-0">
+                                {emp.name.split(" ").filter(Boolean).map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
+                              </span>
+                              <span className="flex-1 min-w-0">
+                                <span className="block text-xs font-bold text-slate-700 truncate">{emp.name}</span>
+                                <span className="block text-[10px] text-slate-400 font-semibold truncate">{emp.department || "Chưa xếp phòng"}{emp.role ? ` • ${emp.role}` : ""}</span>
+                              </span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div className="space-y-1">
                   <label className="text-slate-500">Trạng thái</label>
