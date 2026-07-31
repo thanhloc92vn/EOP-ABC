@@ -45,15 +45,27 @@ import { isHrDept } from "@/lib/access";
 import * as XLSX from "xlsx";
 
 // ─── TYPES & INTERFACES ──────────────────────────────────────────────────────
+// Một dòng trong bảng `vpp_supplies`. CHỈ giữ số liệu đầu vào — số cấp phát,
+// số dư cuối kỳ và trạng thái cảnh báo được tính từ phiếu VPP trong
+// suppliesWithDynamicAllocated, không lưu xuống DB (tránh lệch số như cột
+// `stock` denormalize cũ).
 interface SupplyItem {
+  id: string;
   name: string;
   cat: string;
   unit: string;
-  stock: number;
-  allocated: number;
-  alert: "Bình thường" | "Cảnh báo";
-  initialStock?: number;
-  imported?: number;
+  initialStock: number;
+  imported: number;
+}
+
+// Đúng hình dạng một dòng bảng `vpp_supplies` (snake_case như trong Postgres).
+interface VppSupplyRow {
+  id: string;
+  name: string;
+  cat: string | null;
+  unit: string | null;
+  initial_stock: number | null;
+  imported: number | null;
 }
 
 interface DeptRequest {
@@ -136,12 +148,9 @@ interface SupplierPayment {
   project_name?: string;
 }
 
-// ─── INITIAL MOCK DATA ────────────────────────────────────────────────────────
-const INITIAL_SUPPLIES: SupplyItem[] = [
-  { name: "Giấy A4 Double A 70gsm", cat: "Giấy in", unit: "Ram", stock: 150, allocated: 0, alert: "Bình thường" },
-  { name: "Bút bi Thiên Long xanh", cat: "Bút viết", unit: "Hộp", stock: 12, allocated: 0, alert: "Cảnh báo" },
-  { name: "Kẹp bướm 25mm", cat: "Dụng cụ lưu trữ", unit: "Hộp", stock: 45, allocated: 0, alert: "Bình thường" }
-];
+// Danh mục tồn kho VPP đọc từ bảng `vpp_supplies` (migration 020). Mảng mock
+// INITIAL_SUPPLIES cũ đã xoá — nó từng được seed thẳng vào DB ở lần mở trang
+// đầu tiên, khiến 3 vật tư giả nằm lẫn với dữ liệu thật.
 
 const INITIAL_DEPT_REQUESTS: DeptRequest[] = [];
 
@@ -402,13 +411,10 @@ export default function AdministrationPage() {
   const [isExportingReport, setIsExportingReport] = useState(false);
 
   // State Management
-  const [supplies, setSupplies] = useState<SupplyItem[]>(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("tnec_supplies");
-      if (saved) return JSON.parse(saved);
-    }
-    return INITIAL_SUPPLIES;
-  });
+  // Nguồn duy nhất là bảng `vpp_supplies`. Không mồi từ localStorage nữa —
+  // cách cũ khiến lần render đầu hiện số tồn kho cũ của máy rồi mới bị server
+  // đè lên, người dùng thấy số sai thoáng qua.
+  const [supplies, setSupplies] = useState<SupplyItem[]>([]);
   // Danh tính người dùng — hook chung (thay khối allowed_users + employees +
   // fetchApprovalPermissions từng copy-paste ở mỗi trang).
   const user = useCurrentUser();
@@ -708,7 +714,6 @@ export default function AdministrationPage() {
     unit: string;
     qty: number;
   }>>([]);
-  const [isSuppliesLoadedFromServer, setIsSuppliesLoadedFromServer] = useState(false);
 
   // VPP Slip Preview & Download States
   const [showSlipPreviewModal, setShowSlipPreviewModal] = useState(false);
@@ -917,14 +922,10 @@ export default function AdministrationPage() {
       const allocatedSum = deptRequests
         .filter(r => r.status === "Đã cấp phát" && findMatchingSupply(r.item)?.name === s.name)
         .reduce((sum, r) => sum + r.qty, 0);
-      const initialStock = s.initialStock !== undefined ? s.initialStock : (s.stock !== undefined ? s.stock : 0);
-      const imported = s.imported !== undefined ? s.imported : 0;
-      const remaining = imported - allocatedSum;
-      const ending = initialStock + imported - allocatedSum;
+      const remaining = s.imported - allocatedSum;
+      const ending = s.initialStock + s.imported - allocatedSum;
       return {
         ...s,
-        initialStock,
-        imported,
         allocated: allocatedSum,
         remaining,
         ending
@@ -939,72 +940,84 @@ export default function AdministrationPage() {
     return suppliesWithDynamicAllocated.find(s => s.name === raw.name) || null;
   };
 
-  // Fetch VPP supplies catalog from Supabase
+  // ─── Danh mục tồn kho VPP: bảng `vpp_supplies` (migration 020) ───
+  // Trước đây cả danh mục là MỘT chuỗi JSON trong tasks.notes, mỗi lần sửa 1 ô
+  // là ghi đè toàn bộ -> hai người sửa cùng lúc thì người lưu sau xoá mất thay
+  // đổi của người trước. Giờ mỗi vật tư là một dòng, sửa/xoá theo id.
+  const mapSupplyRow = (row: VppSupplyRow): SupplyItem => ({
+    id: row.id,
+    name: row.name,
+    cat: row.cat || "Khác",
+    unit: row.unit || "cái",
+    initialStock: Number(row.initial_stock) || 0,
+    imported: Number(row.imported) || 0,
+  });
+
   const fetchSuppliesCatalog = async () => {
     try {
       const { data, error } = await supabase
-        .from("tasks")
-        .select("*")
-        .eq("title", "VPP_INVENTORY_CATALOG");
+        .from("vpp_supplies")
+        .select("id, name, cat, unit, initial_stock, imported")
+        .order("name");
 
-      if (error) {
-        throw error;
-      }
-
-      if (data && data.length > 0) {
-        const primaryRecord = data[0];
-        
-        // Background cleanup of any duplicates
-        if (data.length > 1) {
-          const idsToDelete = data.slice(1).map(r => r.id);
-          supabase
-            .from("tasks")
-            .delete()
-            .in("id", idsToDelete)
-            .then(({ error: delErr }) => {
-              if (delErr) console.error("Error deleting duplicate catalogs:", delErr);
-            });
-        }
-
-        if (primaryRecord.notes) {
-          const parsedServer = JSON.parse(primaryRecord.notes);
-          if (Array.isArray(parsedServer)) {
-            // Supabase is the single source of truth across all devices
-            setSupplies(parsedServer);
-            localStorage.setItem("tnec_supplies", JSON.stringify(parsedServer));
-          }
-        }
-      } else {
-        // First-time seed: Read current local storage items if they exist to prevent losing entered items, otherwise fallback to INITIAL_SUPPLIES
-        let seedData = INITIAL_SUPPLIES;
-        if (typeof window !== "undefined") {
-          const localSaved = localStorage.getItem("tnec_supplies");
-          if (localSaved) {
-            try {
-              const parsed = JSON.parse(localSaved);
-              if (Array.isArray(parsed) && parsed.length > 0) {
-                seedData = parsed;
-              }
-            } catch (e) {}
-          }
-        }
-
-        const { error: insertError } = await supabase
-          .from("tasks")
-          .insert([{
-            title: "VPP_INVENTORY_CATALOG",
-            assignee: "Hành chính",
-            status: "completed",
-            notes: JSON.stringify(seedData)
-          }]);
-
-        if (insertError) throw insertError;
-        setSupplies(seedData);
-        localStorage.setItem("tnec_supplies", JSON.stringify(seedData));
-      }
-      setIsSuppliesLoadedFromServer(true);
+      if (error) throw error;
+      setSupplies((data || []).map(mapSupplyRow));
     } catch (err) {
       console.error("Error fetching supplies catalog from Supabase:", err);
+    }
+  };
+
+  const NO_VPP_PERMISSION_MSG =
+    "Bạn không có quyền sửa danh mục kho VPP. Cần là Admin, có cờ \"Phụ trách VPP\", hoặc thuộc phòng HCNS.";
+
+  // Thêm một vật tư. Trả về dòng vừa tạo, hoặc null nếu lỗi (đã báo cho người dùng).
+  const insertSupply = async (item: Omit<SupplyItem, "id">): Promise<SupplyItem | null> => {
+    try {
+      const { data, error } = await supabase
+        .from("vpp_supplies")
+        .insert([{
+          name: item.name,
+          cat: item.cat,
+          unit: item.unit,
+          initial_stock: item.initialStock,
+          imported: item.imported,
+        }])
+        .select("id, name, cat, unit, initial_stock, imported")
+        .single();
+
+      if (error) throw error;
+
+      const created = mapSupplyRow(data);
+      setSupplies(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name, "vi")));
+      return created;
+    } catch (err: any) {
+      console.error("Error inserting supply:", err);
+      // 23505 = trùng khoá; chỉ số duy nhất chặn trùng tên không phân biệt hoa/thường.
+      alert(err?.code === "23505"
+        ? `Vật tư "${item.name}" đã có trong danh mục.`
+        : NO_VPP_PERMISSION_MSG);
+      return null;
+    }
+  };
+
+  // Sửa một vài trường của đúng một vật tư. Cập nhật lạc quan rồi hoàn tác nếu lỗi.
+  const updateSupply = async (item: SupplyItem, patch: Partial<Omit<SupplyItem, "id">>) => {
+    const previous = supplies;
+    setSupplies(prev => prev.map(s => (s.id === item.id ? { ...s, ...patch } : s)));
+    try {
+      const payload: Partial<VppSupplyRow> = {};
+      if (patch.name !== undefined) payload.name = patch.name;
+      if (patch.cat !== undefined) payload.cat = patch.cat;
+      if (patch.unit !== undefined) payload.unit = patch.unit;
+      if (patch.initialStock !== undefined) payload.initial_stock = patch.initialStock;
+      if (patch.imported !== undefined) payload.imported = patch.imported;
+
+      const { error } = await supabase.from("vpp_supplies").update(payload).eq("id", item.id);
+      if (error) throw error;
+    } catch (err) {
+      console.error("Error updating supply:", err);
+      setSupplies(previous);
+      alert(NO_VPP_PERMISSION_MSG);
     }
   };
 
@@ -1201,39 +1214,26 @@ export default function AdministrationPage() {
     isHrDept(currentUser.department)
   ));
 
-  // Sync supplies to Supabase and localStorage when changed
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      localStorage.setItem("tnec_supplies", JSON.stringify(supplies));
-
-      // Only sync if the catalog has been fetched from the server.
-      // This prevents overwriting the database with default/stale local values on mount.
-      if (isSuppliesLoadedFromServer) {
-        const syncSuppliesToSupabase = async () => {
-          try {
-            await supabase
-              .from("tasks")
-              .update({ notes: JSON.stringify(supplies) })
-              .eq("title", "VPP_INVENTORY_CATALOG");
-          } catch (err) {
-            console.error("Error syncing supplies to Supabase:", err);
-          }
-        };
-        syncSuppliesToSupabase();
-      }
-    }
-  }, [supplies, isSuppliesLoadedFromServer]);
+  // Không còn useEffect đồng bộ danh mục: mỗi thao tác thêm/sửa/xoá tự ghi
+  // đúng dòng của nó xuống `vpp_supplies` ngay tại handler tương ứng.
 
   // Sync deptRequests is now handled directly by Supabase
 
-  // Delete Supply Handler
-  const handleDeleteSupply = (name: string) => {
-    if (!window.confirm(`Bạn có chắc chắn muốn xóa vật tư "${name}" khỏi danh mục kho không?`)) return;
-    setSupplies(prev => prev.filter(s => s.name !== name));
+  // Delete Supply Handler — xoá đúng dòng theo id
+  const handleDeleteSupply = async (item: SupplyItem) => {
+    if (!window.confirm(`Bạn có chắc chắn muốn xóa vật tư "${item.name}" khỏi danh mục kho không?`)) return;
+    try {
+      const { error } = await supabase.from("vpp_supplies").delete().eq("id", item.id);
+      if (error) throw error;
+      setSupplies(prev => prev.filter(s => s.id !== item.id));
+    } catch (err) {
+      console.error("Error deleting supply:", err);
+      alert("Không xoá được vật tư. Bạn cần quyền phụ trách VPP (Admin / cờ can_manage_vpp / phòng HCNS).");
+    }
   };
 
   // VPP Inventory quick add unregistered item handler
-  const handleQuickAddSupply = (itemName: string) => {
+  const handleQuickAddSupply = async (itemName: string) => {
     if (!itemName || !itemName.trim()) return;
     const cleanName = itemName.trim();
     if (supplies.some(s => s.name.toLowerCase() === cleanName.toLowerCase())) {
@@ -1257,18 +1257,15 @@ export default function AdministrationPage() {
     else if (lowerName.includes("giấy note") || lowerName.includes("trình ký")) guessedUnit = "xấp";
     else if (lowerName.includes("pin")) guessedUnit = "cục";
 
-    const newSupply: SupplyItem = {
+    const inserted = await insertSupply({
       name: cleanName,
       cat: guessedCat,
       unit: guessedUnit,
       initialStock: 0,
       imported: 0,
-      stock: 0, // Quick added has 0 stock initially
-      allocated: 0,
-      alert: "Cảnh báo" // 0 stock is Alert
-    };
+    });
+    if (!inserted) return;
 
-    setSupplies(prev => [...prev, newSupply]);
     alert(`Đã thêm nhanh vật tư "${cleanName}" (Đơn vị: ${guessedUnit}, Danh mục: ${guessedCat}) vào danh mục tồn kho hành chính với số lượng tồn kho mặc định là 0. Bạn có thể nhấp vào biểu tượng bút chì để cập nhật số lượng tồn kho!`);
   };
 
@@ -1330,21 +1327,10 @@ export default function AdministrationPage() {
           if (error) throw error;
         }
 
-        // If the request was approved ("Đã cấp phát"), restore the stock
-        if (request.status === "Đã cấp phát") {
-          setSupplies(prev => prev.map(s => {
-            const matched = findMatchingSupply(request.item);
-            if (matched && s.name === matched.name) {
-              const newStock = s.stock + request.qty;
-              return {
-                ...s,
-                stock: newStock,
-                alert: newStock < 15 ? "Cảnh báo" : "Bình thường"
-              };
-            }
-            return s;
-          }));
-        }
+        // Không cần hoàn kho thủ công: số cấp phát được tính lại từ danh sách
+        // phiếu ở suppliesWithDynamicAllocated, nên fetchDeptRequests() bên dưới
+        // đã tự trả số dư cuối kỳ về đúng. Khối cộng tay cột `stock` trước đây
+        // còn làm cộng đúp trên các vật tư chưa có `initialStock`.
 
         alert("Đã xóa yêu cầu cấp phát thành công.");
         fetchDeptRequests();
@@ -2853,31 +2839,28 @@ export default function AdministrationPage() {
   };
 
   // VPP Inventory add supply handler
-  const handleAddSupply = (e: React.FormEvent) => {
+  const handleAddSupply = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newSupplyName.trim() || !newSupplyUnit.trim()) {
       alert("Vui lòng điền đầy đủ thông tin vật tư.");
       return;
     }
 
-    // Check duplicate
+    // Check duplicate (chỉ số duy nhất trên DB là chốt chặn cuối)
     if (supplies.some(s => s.name.toLowerCase() === newSupplyName.trim().toLowerCase())) {
       alert("Vật tư này đã tồn tại trong kho.");
       return;
     }
 
-    const newSupply: SupplyItem = {
+    const created = await insertSupply({
       name: newSupplyName.trim(),
       cat: newSupplyCat,
       unit: newSupplyUnit.trim(),
       initialStock: Number(newSupplyStock),
       imported: 0,
-      stock: Number(newSupplyStock),
-      allocated: 0,
-      alert: Number(newSupplyStock) < 15 ? "Cảnh báo" : "Bình thường"
-    };
+    });
+    if (!created) return;
 
-    setSupplies(prev => [...prev, newSupply]);
     setShowAddSupply(false);
     setNewSupplyName("");
     setNewSupplyUnit("");
@@ -2891,19 +2874,9 @@ export default function AdministrationPage() {
     setEditingInitialStockVal(item.initialStock || 0);
   };
 
-  const handleSaveInitialStock = (name: string) => {
-    setSupplies(prev => prev.map(s => {
-      if (s.name === name) {
-        const currentImported = s.imported !== undefined ? s.imported : 0;
-        return {
-          ...s,
-          initialStock: editingInitialStockVal,
-          stock: editingInitialStockVal + currentImported
-        };
-      }
-      return s;
-    }));
+  const handleSaveInitialStock = async (item: SupplyItem) => {
     setEditingInitialStockName(null);
+    await updateSupply(item, { initialStock: Math.max(0, editingInitialStockVal) });
   };
 
   const handleStartEditImported = (item: any) => {
@@ -2911,19 +2884,9 @@ export default function AdministrationPage() {
     setEditingImportedVal(item.imported || 0);
   };
 
-  const handleSaveImported = (name: string) => {
-    setSupplies(prev => prev.map(s => {
-      if (s.name === name) {
-        const currentInitial = s.initialStock !== undefined ? s.initialStock : (s.stock !== undefined ? s.stock : 0);
-        return {
-          ...s,
-          imported: editingImportedVal,
-          stock: currentInitial + editingImportedVal
-        };
-      }
-      return s;
-    }));
+  const handleSaveImported = async (item: SupplyItem) => {
     setEditingImportedName(null);
+    await updateSupply(item, { imported: Math.max(0, editingImportedVal) });
   };
 
   // VPP Edit category handlers
@@ -2932,17 +2895,9 @@ export default function AdministrationPage() {
     setEditingCatVal(item.cat);
   };
 
-  const handleSaveCat = (name: string) => {
-    setSupplies(prev => prev.map(s => {
-      if (s.name === name) {
-        return {
-          ...s,
-          cat: editingCatVal
-        };
-      }
-      return s;
-    }));
+  const handleSaveCat = async (item: SupplyItem) => {
     setEditingSupplyCatName(null);
+    await updateSupply(item, { cat: editingCatVal.trim() || "Khác" });
   };
 
   // VPP Create new PYC handler
@@ -4226,24 +4181,24 @@ export default function AdministrationPage() {
                                       <th className="py-2.5 px-3">Tên vật tư</th>
                                       <th className="py-2.5 px-3 w-28">Danh mục</th>
                                       <th className="py-2.5 px-3 w-20">Đơn vị</th>
-                                      <th className="py-2.5 px-3 w-24">Số tồn kho</th>
+                                      <th className="py-2.5 px-3 w-24">Số dư cuối kỳ</th>
                                       <th className="py-2.5 px-3 w-12 text-center">Xóa</th>
                                     </tr>
                                   </thead>
                                   <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
-                                    {supplies
+                                    {suppliesWithDynamicAllocated
                                       .filter(s => s.name.toLowerCase().includes(searchTerm.toLowerCase()))
                                       .map((s, index) => (
-                                        <tr key={index} className="hover:bg-slate-50/50 transition-all">
+                                        <tr key={s.id} className="hover:bg-slate-50/50 transition-all">
                                           <td className="py-2 px-3 text-center text-slate-400 font-mono text-[10px]">{index + 1}</td>
                                           <td className="py-2 px-3 text-slate-800 font-bold">{s.name}</td>
                                           <td className="py-2 px-3 text-slate-500">{s.cat}</td>
                                           <td className="py-2 px-3 font-mono text-slate-500">{s.unit}</td>
-                                          <td className="py-2 px-3 text-slate-800 font-bold">{s.stock}</td>
+                                          <td className="py-2 px-3 text-slate-800 font-bold">{s.ending}</td>
                                           <td className="py-2 px-3 text-center">
                                             <button
                                               type="button"
-                                              onClick={() => handleDeleteSupply(s.name)}
+                                              onClick={() => handleDeleteSupply(s)}
                                               className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
                                               title="Xóa vật tư"
                                             >
@@ -4366,7 +4321,7 @@ export default function AdministrationPage() {
                                           className="w-28 px-2 py-0.5 border border-slate-300 rounded text-xs font-semibold focus:border-blue-500 focus:outline-none"
                                         />
                                         <button
-                                          onClick={() => handleSaveCat(item.name)}
+                                          onClick={() => handleSaveCat(item)}
                                           className="p-1 text-emerald-600 hover:bg-emerald-50 rounded transition-all"
                                           title="Lưu"
                                         >
@@ -4407,7 +4362,7 @@ export default function AdministrationPage() {
                                           min={0}
                                         />
                                         <button
-                                          onClick={() => handleSaveInitialStock(item.name)}
+                                          onClick={() => handleSaveInitialStock(item)}
                                           className="p-1 text-emerald-600 hover:bg-emerald-50 rounded transition-all"
                                           title="Lưu"
                                         >
@@ -4447,7 +4402,7 @@ export default function AdministrationPage() {
                                           min={0}
                                         />
                                         <button
-                                          onClick={() => handleSaveImported(item.name)}
+                                          onClick={() => handleSaveImported(item)}
                                           className="p-1 text-emerald-600 hover:bg-emerald-50 rounded transition-all"
                                           title="Lưu"
                                         >
@@ -4493,7 +4448,7 @@ export default function AdministrationPage() {
                                     <td className="py-3.5 px-4 text-center">
                                       <button
                                         type="button"
-                                        onClick={() => handleDeleteSupply(item.name)}
+                                        onClick={() => handleDeleteSupply(item)}
                                         className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
                                         title="Xóa vật tư"
                                       >
@@ -4503,6 +4458,20 @@ export default function AdministrationPage() {
                                   )}
                                 </tr>
                               ))}
+                            {suppliesWithDynamicAllocated.filter(s => s.name.toLowerCase().includes(searchTerm.toLowerCase())).length === 0 && (
+                              <tr>
+                                <td colSpan={canDeleteSupplies ? 9 : 8} className="py-10 text-center">
+                                  <p className="text-slate-500 font-bold text-xs">
+                                    {searchTerm ? "Không tìm thấy vật tư nào khớp từ khoá." : "Kho hành chính chưa có vật tư nào."}
+                                  </p>
+                                  {!searchTerm && (
+                                    <p className="text-[11px] text-slate-400 font-semibold mt-1">
+                                      Bấm <span className="font-bold text-slate-500">＋ Nhập kho mới</span> để thêm vật tư đầu tiên.
+                                    </p>
+                                  )}
+                                </td>
+                              </tr>
+                            )}
                           </tbody>
                         </table>
                       </div>
@@ -5343,7 +5312,7 @@ export default function AdministrationPage() {
                                 </thead>
                                 <tbody className="divide-y divide-slate-100 font-semibold text-slate-600">
                                   {vppPreviewItems.map((item, index) => {
-                                    const matchedSupply = supplies.find(s => s.name.trim().toLowerCase() === item.name.trim().toLowerCase());
+                                    const matchedSupply = suppliesWithDynamicAllocated.find(s => s.name.trim().toLowerCase() === item.name.trim().toLowerCase());
                                     const exists = !!matchedSupply;
                                     return (
                                       <tr key={index} className={`hover:bg-slate-50/50 ${!item.checked ? 'opacity-50' : ''}`}>
@@ -5377,7 +5346,7 @@ export default function AdministrationPage() {
                                             )}
                                             {exists && (
                                               <div className="text-[9px] text-emerald-600 font-bold flex items-center gap-0.5">
-                                                <Check size={10} /> Khớp danh mục (Tồn: {matchedSupply.stock} {matchedSupply.unit})
+                                                <Check size={10} /> Khớp danh mục (Tồn: {matchedSupply.ending} {matchedSupply.unit})
                                               </div>
                                             )}
                                           </div>
