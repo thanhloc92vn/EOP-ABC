@@ -42,6 +42,66 @@ export function initialsFrom(name: string): string {
 }
 
 /**
+ * Tách ô email của hồ sơ nhân sự thành danh sách địa chỉ chữ thường.
+ *
+ * `employees.email` thường chứa NHIỀU địa chỉ trong một ô, vd
+ * "tnec.mkt@trungnamgroup.com.vn, phamthanhloc92vn@gmail.com" — trong khi
+ * `user_avatars` khoá theo ĐÚNG email đăng nhập. Không tách ra thì người dùng
+ * đăng nhập bằng gmail sẽ không khớp được ảnh của chính mình.
+ */
+export function splitEmails(raw?: string | null): string[] {
+  if (!raw) return [];
+  return raw
+    .split(/[,;\s]+/)
+    .map(s => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+/**
+ * Lấy ảnh cho một danh sách người (mỗi phần tử là ô email của một hồ sơ).
+ * Trả Map<email chữ thường, ảnh>.
+ *
+ * Chỉ hỏi đúng những email đang hiển thị, và chia lô 80 địa chỉ mỗi lượt để
+ * chuỗi truy vấn không vượt giới hạn độ dài URL khi danh sách nhân sự dài.
+ */
+export async function fetchAvatarMap(emailFields: (string | null | undefined)[]): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  const emails = Array.from(new Set(emailFields.flatMap(splitEmails)));
+  if (emails.length === 0) return result;
+
+  const CHUNK = 80;
+  const chunks: string[][] = [];
+  for (let i = 0; i < emails.length; i += CHUNK) chunks.push(emails.slice(i, i + CHUNK));
+
+  try {
+    const responses = await Promise.all(
+      chunks.map(chunk =>
+        supabase.from("user_avatars").select("email, image_data").in("email", chunk)
+      )
+    );
+    for (const { data, error } of responses) {
+      if (error) throw error;
+      for (const row of data || []) {
+        if (row.email && row.image_data) result.set(row.email, row.image_data);
+      }
+    }
+  } catch (err) {
+    // Thiếu ảnh chỉ là quay về chữ viết tắt — không đáng làm vỡ trang.
+    console.error("Error fetching avatar map:", err);
+  }
+  return result;
+}
+
+/** Ảnh của một hồ sơ: thử lần lượt mọi địa chỉ trong ô email của họ. */
+export function pickAvatar(map: Map<string, string>, emailField?: string | null): string | null {
+  for (const e of splitEmails(emailField)) {
+    const found = map.get(e);
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
  * Lấy ảnh đại diện của một email. Trả null khi chưa đặt ảnh.
  * Không ném lỗi — thiếu ảnh chỉ là quay về chữ viết tắt, không đáng làm vỡ trang.
  */

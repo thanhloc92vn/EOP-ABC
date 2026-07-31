@@ -8,6 +8,7 @@ import { supabase } from "@/lib/supabase";
 import { fetchApprovalPermissions, normalizeName } from "@/lib/approvers";
 import { useDepartments } from "@/lib/departments";
 import { useTenantConfig } from "@/lib/tenantConfig";
+import { fetchAvatarMap, pickAvatar } from "@/lib/avatar";
 import {
   User,
   Clock,
@@ -442,7 +443,28 @@ export default function CBPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loadingEmployees, setLoadingEmployees] = useState(false);
   const [selectedEmp, setSelectedEmp] = useState<Employee | null>(null);
-  
+
+  // Ảnh đại diện của ĐÚNG nhân viên đang mở hồ sơ — nguồn là ảnh họ tự tải ở
+  // Cài đặt hệ thống (bảng `user_avatars`, khoá theo email đăng nhập).
+  // null = chưa đặt ảnh -> giữ nguyên hai chữ viết tắt như cũ.
+  const [selectedAvatar, setSelectedAvatar] = useState<string | null>(null);
+
+  // Chỉ hỏi ảnh của người đang xem, không tải ảnh cả danh sách.
+  // `employees.email` có thể chứa nhiều địa chỉ trong một ô nên phải dùng
+  // fetchAvatarMap/pickAvatar để thử lần lượt từng địa chỉ của họ.
+  const selectedEmpEmail = selectedEmp?.email;
+  useEffect(() => {
+    let mounted = true;
+    setSelectedAvatar(null);
+    if (!selectedEmpEmail) return;
+    fetchAvatarMap([selectedEmpEmail]).then(map => {
+      if (mounted) setSelectedAvatar(pickAvatar(map, selectedEmpEmail));
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [selectedEmpEmail]);
+
   // Real contract data from Supabase
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [loadingContracts, setLoadingContracts] = useState(false);
@@ -3969,8 +3991,17 @@ export default function CBPage() {
                       <div className="px-8 pb-6 relative">
                         {/* Avatar */}
                         <div className="absolute -top-14 left-8">
-                          <div className="w-24 h-24 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 border-4 border-white flex items-center justify-center font-black text-white text-3xl shadow-xl">
-                            {selectedEmp.avatar || selectedEmp.name.slice(0, 2).toUpperCase()}
+                          <div className="w-24 h-24 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 border-4 border-white flex items-center justify-center font-black text-white text-3xl shadow-xl overflow-hidden">
+                            {selectedAvatar ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={selectedAvatar}
+                                alt={selectedEmp.name}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              selectedEmp.avatar || selectedEmp.name.slice(0, 2).toUpperCase()
+                            )}
                           </div>
                         </div>
 
