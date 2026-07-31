@@ -17,6 +17,11 @@ import {
 import { useSidebar } from "./SidebarContext";
 import { useTenantConfig } from "@/lib/tenantConfig";
 import { usePlan } from "@/lib/plan";
+import {
+  AVATAR_UPDATED_EVENT,
+  fetchAvatar,
+  type AvatarUpdatedDetail,
+} from "@/lib/avatar";
 
 interface Props {
   title: string;
@@ -33,6 +38,9 @@ export default function Header({ title, subtitle }: Props) {
     avatar: "HR"
   });
   
+  // Ảnh đại diện (bảng `user_avatars`). null = chưa đặt -> vẽ hai chữ viết tắt.
+  const [avatarImage, setAvatarImage] = useState<string | null>(null);
+
   const [currentUser, setCurrentUser] = useState<{
     email: string;
     name: string;
@@ -252,6 +260,7 @@ export default function Header({ title, subtitle }: Props) {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session || !session.user) {
         setProfile({ name: "Chưa đăng nhập", role: "...", avatar: "HR" });
+        setAvatarImage(null);
         return;
       }
 
@@ -288,6 +297,8 @@ export default function Header({ title, subtitle }: Props) {
         role: userRole,
         avatar: initials
       });
+
+      fetchAvatar(email).then(setAvatarImage);
 
       setCurrentUser({
         email,
@@ -546,6 +557,18 @@ export default function Header({ title, subtitle }: Props) {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Trang Cài đặt phát sự kiện này sau khi lưu/gỡ ảnh — cập nhật ngay, không
+  // phải tải lại trang (Header và trang Cài đặt là hai component tách rời).
+  useEffect(() => {
+    const onAvatarUpdated = (e: Event) => {
+      const detail = (e as CustomEvent<AvatarUpdatedDetail>).detail;
+      if (!detail) return;
+      setAvatarImage(detail.imageData);
+    };
+    window.addEventListener(AVATAR_UPDATED_EVENT, onAvatarUpdated);
+    return () => window.removeEventListener(AVATAR_UPDATED_EVENT, onAvatarUpdated);
+  }, []);
+
   useEffect(() => {
     if (currentUser) {
       fetchNotifications(currentUser);
@@ -715,8 +738,13 @@ export default function Header({ title, subtitle }: Props) {
             onClick={() => setShowProfileDropdown(!showProfileDropdown)}
             className="flex items-center gap-1.5 sm:gap-2.5 pl-2 sm:pl-4 border-l border-slate-200/80 cursor-pointer hover:bg-slate-100/60 rounded-xl py-1 pr-1.5 transition-all"
           >
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-400 flex items-center justify-center font-bold text-white text-xs shadow-sm uppercase shrink-0">
-              {profile.avatar}
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-400 flex items-center justify-center font-bold text-white text-xs shadow-sm uppercase shrink-0 overflow-hidden">
+              {avatarImage ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={avatarImage} alt={profile.name} className="w-full h-full object-cover" />
+              ) : (
+                profile.avatar
+              )}
             </div>
             <div className="hidden md:flex flex-col text-left max-w-[150px]">
               <span className="text-xs font-bold text-slate-800 leading-none truncate" title={profile.name}>

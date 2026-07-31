@@ -6,6 +6,7 @@ import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { Settings, Database, Info, Key, CheckCircle, ShieldAlert, ShieldCheck, Check, X, Calendar, Briefcase, User, CarFront, DoorOpen, Mail, Package, Users, CalendarClock, ChevronRight } from "lucide-react";
 import UserPermissionsModal, { type UserPermissionsTab } from "@/components/UserPermissionsModal";
+import AvatarUploadCard from "@/components/AvatarUploadCard";
 import { supabase } from "@/lib/supabase";
 import { usePlan } from "@/lib/plan";
 import { PLAN_LABELS, type Plan } from "@/lib/planShared";
@@ -1062,6 +1063,11 @@ function SettingsContent() {
                   </div>
                 </div>
               </div>
+
+              {/* Ảnh đại diện — mọi tài khoản đều dùng được, không gate quyền */}
+              {currentUser?.email && (
+                <AvatarUploadCard email={currentUser.email} name={currentUser.name} />
+              )}
               </div>
             </div>
             </div>
