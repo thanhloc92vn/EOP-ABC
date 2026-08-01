@@ -5,6 +5,10 @@ import { getTenantConfigServer } from "@/lib/tenantConfigServer";
 import OpenAI from "openai";
 import * as XLSX from "xlsx";
 
+// Ảnh (PNG/JPEG) và PDF cần thời gian AI đọc lâu hơn Excel rất nhiều.
+// Không khai báo maxDuration, Vercel cắt hàm ở ~10s => chỉ file Excel chạy được.
+export const maxDuration = 300;
+
 const buildSystemPrompt = (lists: ServerDepartmentLists, companyName: string) => `
 Bạn là AI chuyên phân tích phiếu/file yêu cầu văn phòng phẩm (VPP) của công ty ${companyName}.
 Nhiệm vụ của bạn là phân tích văn bản hoặc tệp (Excel, Word, PDF, hình ảnh) được tải lên và trích xuất các thông tin dưới định dạng JSON.
@@ -78,6 +82,19 @@ export async function POST(req: NextRequest) {
     const openai = new OpenAI({ apiKey });
     const fileBuffer = Buffer.from(await file.arrayBuffer());
     const fileType = file.name.toLowerCase();
+    const mime = (file.type || "").toLowerCase();
+
+    // Nhận diện theo cả đuôi file lẫn MIME type: ảnh chụp từ điện thoại / ảnh dán từ
+    // clipboard nhiều khi không có đuôi .png/.jpg nên chỉ xét tên file là không đủ.
+    const isExcel = fileType.endsWith(".xlsx") || fileType.endsWith(".xls") || mime.includes("spreadsheet") || mime.includes("ms-excel");
+    const isWord = fileType.endsWith(".docx") || fileType.endsWith(".doc") || mime.includes("wordprocessing") || mime.includes("msword");
+    const isPdf = fileType.endsWith(".pdf") || mime === "application/pdf";
+    const isImage =
+      fileType.endsWith(".png") ||
+      fileType.endsWith(".jpg") ||
+      fileType.endsWith(".jpeg") ||
+      fileType.endsWith(".webp") ||
+      mime.startsWith("image/");
 
     let messages: OpenAI.Chat.ChatCompletionMessageParam[] = [];
     const filenameInfo = originalFilename ? `Tên file tài liệu gốc: "${originalFilename}"` : `Tên file tài liệu: "${file.name}"`;
@@ -90,7 +107,7 @@ LƯU Ý QUAN TRỌNG:
 2. Nếu tài liệu chứa nhiều sheet, hãy tìm sheet có điền số lượng thực tế khớp với tên file gốc hoặc khớp với thông tin bộ phận/người yêu cầu thực tế được điền tay trong bảng.
 3. Nếu có danh mục vật tư dài (dropdown danh mục), chỉ trích xuất các mặt hàng có điền số lượng yêu cầu cụ thể (>0).`;
 
-    if (fileType.endsWith(".xlsx") || fileType.endsWith(".xls")) {
+    if (isExcel) {
       const workbook = XLSX.read(fileBuffer, { type: "buffer" });
       let excelText = "";
       
@@ -196,7 +213,7 @@ LƯU Ý QUAN TRỌNG:
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: `${promptText}\n\n--- NỘI DUNG SHEET EXCEL ---\n${excelText}` },
       ];
-    } else if (fileType.endsWith(".docx") || fileType.endsWith(".doc")) {
+    } else if (isWord) {
       const mammoth = await import("mammoth");
       const result = await mammoth.extractRawText({ buffer: fileBuffer });
       const text = result.value || "";
@@ -204,9 +221,15 @@ LƯU Ý QUAN TRỌNG:
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: `${promptText}\n\n--- NỘI DUNG VĂN BẢN WORD ---\n${text}` },
       ];
-    } else if (fileType.endsWith(".png") || fileType.endsWith(".jpg") || fileType.endsWith(".jpeg")) {
+    } else if (isImage) {
       const base64 = fileBuffer.toString("base64");
-      const mimeType = fileType.endsWith(".png") ? "image/png" : "image/jpeg";
+      const mimeType = mime.startsWith("image/")
+        ? mime
+        : fileType.endsWith(".png")
+          ? "image/png"
+          : fileType.endsWith(".webp")
+            ? "image/webp"
+            : "image/jpeg";
       messages = [
         { role: "system", content: SYSTEM_PROMPT },
         {
@@ -217,7 +240,7 @@ LƯU Ý QUAN TRỌNG:
           ],
         },
       ];
-    } else if (fileType.endsWith(".pdf")) {
+    } else if (isPdf) {
       const base64Pdf = fileBuffer.toString("base64");
       const model = req.headers.get("x-openai-model") || process.env.OPENAI_MODEL || "gpt-4o-mini";
       try {
@@ -242,9 +265,11 @@ LƯU Ý QUAN TRỌNG:
       } catch (pdfErr: any) {
         console.warn("openai.responses.create failed, falling back to pdf-parse:", pdfErr);
         try {
-          const pdfParse = require("pdf-parse");
-          const parsed = await pdfParse(fileBuffer);
-          const text = parsed.text || "";
+          // pdf-parse v2 export dạng { PDFParse }, không còn là hàm gọi trực tiếp như v1
+          const { PDFParse } = require("pdf-parse");
+          const parser = new PDFParse({ data: new Uint8Array(fileBuffer) });
+          const parsed = await parser.getText();
+          const text = parsed?.text || "";
           messages = [
             { role: "system", content: SYSTEM_PROMPT },
             { role: "user", content: `${promptText}\n\n--- NỘI DUNG VĂN BẢN PDF ---\n${text}` },

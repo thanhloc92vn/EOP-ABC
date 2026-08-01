@@ -81,6 +81,9 @@ interface DeptRequest {
   requesterName?: string;
   cat?: string;
   unit?: string;
+  // Phiếu gốc (ảnh/PDF/Excel) đã tải lên Storage lúc tạo phiếu, dùng để đối chiếu
+  sourceFileUrl?: string;
+  sourceFileName?: string;
 }
 
 interface AllocationTarget {
@@ -637,6 +640,9 @@ export default function AdministrationPage() {
   // States for PYC (phiếu yêu cầu)
   const [selectedDeptFilter, setSelectedDeptFilter] = useState<string>("Tất cả");
   const [selectedProjectFilter, setSelectedProjectFilter] = useState<string>("Tất cả");
+  // Bộ lọc tháng/năm cho bảng tổng hợp "Đã cấp phát" ("Tất cả" | "01".."12" và "Tất cả" | "2026"...)
+  const [allocatedMonthFilter, setAllocatedMonthFilter] = useState<string>("Tất cả");
+  const [allocatedYearFilter, setAllocatedYearFilter] = useState<string>("Tất cả");
 
   // State for creating new PYC
   const [showNewPYCModal, setShowNewPYCModal] = useState(false);
@@ -714,6 +720,10 @@ export default function AdministrationPage() {
     unit: string;
     qty: number;
   }>>([]);
+  // File gốc vừa được AI đọc, giữ lại để tải lên Storage khi bấm "Xác nhận & Tạo phiếu"
+  const [vppPreviewSourceFile, setVppPreviewSourceFile] = useState<File | null>(null);
+  // Phiếu gốc đang được xem trong pop-up (bấm icon con mắt ở cột Thao tác)
+  const [vppSourceViewer, setVppSourceViewer] = useState<{ url: string; name: string } | null>(null);
 
   // VPP Slip Preview & Download States
   const [showSlipPreviewModal, setShowSlipPreviewModal] = useState(false);
@@ -730,6 +740,8 @@ export default function AdministrationPage() {
         const targetType = parsed.target || "phongban";
         const requesterName = parsed.requesterName || "";
         const dateVal = parsed.date || t.start_date || "";
+        const sourceFileUrl = parsed.sourceFileUrl || "";
+        const sourceFileName = parsed.sourceFileName || "";
 
         // Check if notes has a list of items
         if (Array.isArray(parsed.items) && parsed.items.length > 0) {
@@ -748,7 +760,9 @@ export default function AdministrationPage() {
               targetName: normTargetName,
               requesterName: requesterName,
               cat: itemObj.cat || "",
-              unit: itemObj.unit || ""
+              unit: itemObj.unit || "",
+              sourceFileUrl: sourceFileUrl,
+              sourceFileName: sourceFileName
             };
           });
         }
@@ -766,7 +780,9 @@ export default function AdministrationPage() {
           targetName: normTargetName,
           requesterName: requesterName,
           cat: parsed.cat || "",
-          unit: parsed.unit || ""
+          unit: parsed.unit || "",
+          sourceFileUrl: sourceFileUrl,
+          sourceFileName: sourceFileName
         }];
       }
     } catch (e) {
@@ -932,6 +948,213 @@ export default function AdministrationPage() {
       };
     });
   }, [supplies, deptRequests]);
+
+  // Tháng của một dòng yêu cầu (YYYY-MM): ưu tiên ngày cấp phát, không đọc được thì lấy ngày yêu cầu
+  const monthOfRequest = (r: DeptRequest): string => {
+    const candidates = [(r.allocationTime || "").trim(), (r.date || "").trim()];
+    for (const raw of candidates) {
+      if (!raw) continue;
+      const iso = raw.match(/(\d{4})-(\d{2})/);
+      if (iso) return `${iso[1]}-${iso[2]}`;
+      const dmy = raw.match(/(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
+      if (dmy) return `${dmy[3]}-${String(Number(dmy[2])).padStart(2, "0")}`;
+    }
+    return "";
+  };
+
+  // Gom mọi vật tư của cùng một phiếu về 1 dòng tổng hợp — chỉ giữ phiếu đã có món
+  // được duyệt cấp phát. Dùng cho bảng "Đã cấp phát trong tháng" bên dưới.
+  const allocatedGroups = useMemo(() => {
+    const map = new Map<string, {
+      id: string;
+      target: "phongban" | "duan";
+      targetName: string;
+      dept: string;
+      month: string;
+      allocationDate: string;
+      requesterName: string;
+      totalItems: number;
+      allocatedItems: number;
+      totalQty: number;
+      sourceFileUrl: string;
+      sourceFileName: string;
+    }>();
+
+    deptRequests.forEach(r => {
+      const parentId = r.id.includes("__") ? r.id.split("__")[0] : r.id;
+      const existing = map.get(parentId);
+      const isAllocated = r.status === "Đã cấp phát";
+      const allocDate = (r.allocationTime || "").trim() || r.date || "";
+
+      if (!existing) {
+        map.set(parentId, {
+          id: parentId,
+          target: r.target || "phongban",
+          targetName: r.targetName || "",
+          dept: r.dept || "",
+          month: monthOfRequest(r),
+          allocationDate: isAllocated ? allocDate : "",
+          requesterName: r.requesterName || "",
+          totalItems: 1,
+          allocatedItems: isAllocated ? 1 : 0,
+          totalQty: isAllocated ? r.qty : 0,
+          sourceFileUrl: r.sourceFileUrl || "",
+          sourceFileName: r.sourceFileName || "",
+        });
+        return;
+      }
+
+      existing.totalItems += 1;
+      if (isAllocated) {
+        existing.allocatedItems += 1;
+        existing.totalQty += r.qty;
+        if (!existing.allocationDate) existing.allocationDate = allocDate;
+      }
+      if (!existing.month) existing.month = monthOfRequest(r);
+      if (!existing.sourceFileUrl && r.sourceFileUrl) {
+        existing.sourceFileUrl = r.sourceFileUrl;
+        existing.sourceFileName = r.sourceFileName || "";
+      }
+    });
+
+    return Array.from(map.values())
+      .filter(g => g.allocatedItems > 0)
+      .sort((a, b) => (b.month || "").localeCompare(a.month || ""));
+  }, [deptRequests]);
+
+  const formatMonthLabel = (month: string) => {
+    if (!month) return "Chưa rõ tháng";
+    const [y, m] = month.split("-");
+    return `Tháng ${Number(m)}/${y}`;
+  };
+
+  // Bảng tổng hợp "Đã cấp phát" — mỗi phiếu 1 dòng, 1 icon mắt xem phiếu gốc.
+  // Dùng chung cho cả tab Phòng ban và tab Ban điều hành dự án.
+  const renderAllocatedSummary = (type: "phongban" | "duan") => {
+    const targetFilter = type === "phongban" ? selectedDeptFilter : selectedProjectFilter;
+    const scoped = allocatedGroups.filter(
+      g => g.target === type && (targetFilter === "Tất cả" || g.targetName === targetFilter)
+    );
+    // Danh sách năm: các năm đã có phiếu + năm hiện tại (để chọn được cả tháng chưa phát sinh)
+    const years = Array.from(
+      new Set([
+        ...scoped.map(g => g.month.split("-")[0]).filter(Boolean),
+        String(new Date().getFullYear()),
+      ])
+    ).sort().reverse();
+
+    const rows = scoped.filter(g => {
+      const [gYear, gMonth] = (g.month || "").split("-");
+      if (allocatedYearFilter !== "Tất cả" && gYear !== allocatedYearFilter) return false;
+      if (allocatedMonthFilter !== "Tất cả" && gMonth !== allocatedMonthFilter) return false;
+      return true;
+    });
+    const totalQty = rows.reduce((sum, g) => sum + g.totalQty, 0);
+
+    return (
+      <div className="border-t border-slate-100 pt-4 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h4 className="font-heading font-bold text-slate-800 text-xs">
+              Danh sách đã cấp phát {type === "phongban" ? "cho Phòng ban" : "cho Ban điều hành dự án"}
+            </h4>
+            <p className="text-[10px] text-slate-400 font-semibold mt-0.5">
+              Mỗi phiếu gộp thành 1 dòng — bấm icon mắt để xem lại phiếu yêu cầu gốc
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs">
+              <Calendar size={12} className="text-slate-400" />
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Tháng:</span>
+              <select
+                value={allocatedMonthFilter}
+                onChange={(e) => setAllocatedMonthFilter(e.target.value)}
+                className="bg-transparent border-none outline-none font-semibold text-slate-700 cursor-pointer text-xs"
+              >
+                <option value="Tất cả">-- Cả năm --</option>
+                {Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, "0")).map(m => (
+                  <option key={m} value={m}>Tháng {Number(m)}</option>
+                ))}
+              </select>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Năm:</span>
+              <select
+                value={allocatedYearFilter}
+                onChange={(e) => setAllocatedYearFilter(e.target.value)}
+                className="bg-transparent border-none outline-none font-semibold text-slate-700 cursor-pointer text-xs"
+              >
+                <option value="Tất cả">-- Tất cả --</option>
+                {years.map(y => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </div>
+            <span className="inline-flex items-center px-3 py-1.5 rounded-xl text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-100">
+              {rows.length} phiếu · {totalQty} món đã cấp
+            </span>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto rounded-xl border border-slate-100">
+          <table className="w-full text-xs text-left">
+            <thead>
+              <tr className="bg-slate-50/75 border-b border-slate-100 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                <th className="py-3 px-4 w-32">Tháng</th>
+                <th className="py-3 px-4">{type === "phongban" ? "Phòng ban" : "Dự án"}</th>
+                <th className="py-3 px-4">Người yêu cầu</th>
+                <th className="py-3 px-4 text-center w-28">Số vật tư</th>
+                <th className="py-3 px-4 text-center w-28">Tổng số lượng</th>
+                <th className="py-3 px-4 w-36">Ngày cấp phát</th>
+                <th className="py-3 px-4 text-center w-28">Phiếu gốc</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 font-semibold text-slate-600">
+              {rows.map((g) => (
+                <tr key={g.id} className="hover:bg-slate-50/50 hover:translate-x-[2px] transition-all duration-150">
+                  <td className="py-3.5 px-4">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold text-[#005BAC] bg-blue-50 border border-blue-100">
+                      {formatMonthLabel(g.month)}
+                    </span>
+                  </td>
+                  <td className="py-3.5 px-4 text-slate-800 font-bold">{g.targetName}</td>
+                  <td className="py-3.5 px-4 text-slate-500">{g.requesterName || "—"}</td>
+                  <td className="py-3.5 px-4 text-center">
+                    {g.allocatedItems}
+                    {g.allocatedItems < g.totalItems && (
+                      <span className="text-slate-400 font-normal">/{g.totalItems}</span>
+                    )}
+                  </td>
+                  <td className="py-3.5 px-4 text-center text-slate-800 font-bold">{g.totalQty}</td>
+                  <td className="py-3.5 px-4 font-mono text-slate-500">{g.allocationDate || "—"}</td>
+                  <td className="py-3.5 px-4 text-center">
+                    {g.sourceFileUrl ? (
+                      <button
+                        type="button"
+                        onClick={() => setVppSourceViewer({ url: g.sourceFileUrl, name: g.sourceFileName || "Phiếu yêu cầu gốc" })}
+                        className="p-1.5 text-[#005BAC] hover:bg-blue-50 hover:text-blue-700 rounded-lg transition-colors cursor-pointer"
+                        title={`Xem phiếu gốc: ${g.sourceFileName || ""}`}
+                      >
+                        <Eye size={14} />
+                      </button>
+                    ) : (
+                      <span className="text-slate-300 text-[10px] font-normal italic">Không có file</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="py-8 text-center text-slate-400 font-medium italic">
+                    Chưa có phiếu nào được cấp phát theo bộ lọc hiện tại.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
 
   // Helper to get matched supply item with dynamically calculated stocks (initialStock, imported, allocated, remaining, ending)
   const findMatchingSupplyDynamic = (itemName: string) => {
@@ -3016,12 +3239,82 @@ export default function AdministrationPage() {
     }
   };
 
+  // Ảnh chụp từ điện thoại thường 3-8MB, vượt giới hạn body ~4.5MB của serverless.
+  // Thu nhỏ về tối đa 2000px cạnh dài và nén JPEG trước khi gửi lên AI.
+  const compressVppImage = (file: File): Promise<File> =>
+    new Promise((resolve) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const MAX = 2000;
+        const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          URL.revokeObjectURL(url);
+          resolve(file);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(
+          (blob) => {
+            URL.revokeObjectURL(url);
+            if (!blob) {
+              resolve(file);
+              return;
+            }
+            const newName = file.name.replace(/\.[^/.]+$/, "") + ".jpg";
+            resolve(new File([blob], newName, { type: "image/jpeg" }));
+          },
+          "image/jpeg",
+          0.85
+        );
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve(file);
+      };
+      img.src = url;
+    });
+
   const handleVppFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const originalFile = e.target.files?.[0];
+    if (!originalFile) return;
+
+    const lowerName = originalFile.name.toLowerCase();
+    const isImageFile = (originalFile.type || "").startsWith("image/") || /\.(png|jpe?g|webp)$/.test(lowerName);
+    const isPdfFile = originalFile.type === "application/pdf" || lowerName.endsWith(".pdf");
+    const isOfficeFile = /\.(xlsx|xls|docx|doc)$/.test(lowerName);
+
+    if (!isImageFile && !isPdfFile && !isOfficeFile) {
+      alert("Định dạng file không hỗ trợ. Vui lòng chọn Excel (.xlsx/.xls), Word (.docx/.doc), PDF hoặc ảnh (.png/.jpg/.jpeg).");
+      e.target.value = "";
+      return;
+    }
 
     setVppFileUploading(true);
-    
+
+    let file = originalFile;
+    if (isImageFile) {
+      try {
+        file = await compressVppImage(originalFile);
+      } catch {
+        file = originalFile;
+      }
+    }
+
+    if (file.size > 4 * 1024 * 1024) {
+      setVppFileUploading(false);
+      e.target.value = "";
+      alert(
+        `File "${originalFile.name}" nặng ${(file.size / 1024 / 1024).toFixed(1)}MB, vượt giới hạn 4MB.\n` +
+        "Vui lòng nén lại file PDF hoặc chụp/quét lại ảnh với dung lượng nhỏ hơn."
+      );
+      return;
+    }
+
     // Clear the file input so the same file can be uploaded again if needed
     const fileInput = document.getElementById("vpp-file-input") as HTMLInputElement;
     if (fileInput) fileInput.value = "";
@@ -3033,7 +3326,7 @@ export default function AdministrationPage() {
       const currentFilter = vppSubTab === "phongban" ? selectedDeptFilter : selectedProjectFilter;
       const formData = new FormData();
       formData.append("vpp_file", file);
-      formData.append("original_filename", file.name);
+      formData.append("original_filename", originalFile.name);
       formData.append("target_filter", currentFilter);
 
       const headers: Record<string, string> = {};
@@ -3074,6 +3367,7 @@ export default function AdministrationPage() {
       }));
       
       setVppPreviewItems(parsedItems);
+      setVppPreviewSourceFile(file);
       setShowVppPreviewModal(true);
     } catch (err: any) {
       console.error("Error analyzing VPP document:", err);
@@ -3101,6 +3395,35 @@ export default function AdministrationPage() {
       const currentMonthStr = new Date().toLocaleDateString("vi-VN", { month: "numeric" });
       const title = `Cấp phát VPP cho ${vppPreviewTargetName} tháng ${currentMonthStr}`;
 
+      // Lưu phiếu gốc lên Storage để sau này đối chiếu (dùng chung bucket clerical-documents).
+      // Upload lỗi thì vẫn tạo phiếu, chỉ mất phần xem lại file gốc.
+      let sourceFileUrl = "";
+      let sourceFileName = "";
+      if (vppPreviewSourceFile) {
+        try {
+          const cleanFileName = vppPreviewSourceFile.name.replace(/[^a-zA-Z0-9.-]/g, "_");
+          const filePath = `vpp-requests/${Date.now()}_${cleanFileName}`;
+
+          const { error: uploadError } = await supabase.storage
+            .from("clerical-documents")
+            .upload(filePath, vppPreviewSourceFile, {
+              cacheControl: "3600",
+              upsert: true,
+            });
+          if (uploadError) throw uploadError;
+
+          const { data: { publicUrl } } = supabase.storage
+            .from("clerical-documents")
+            .getPublicUrl(filePath);
+
+          sourceFileUrl = publicUrl;
+          sourceFileName = vppPreviewSourceFile.name;
+        } catch (uploadErr: any) {
+          console.error("Lỗi tải phiếu gốc VPP lên Storage:", uploadErr);
+          alert("Không lưu được file gốc lên hệ thống (" + (uploadErr.message || uploadErr) + ").\nPhiếu yêu cầu vẫn được tạo nhưng sẽ không xem lại được phiếu gốc.");
+        }
+      }
+
       const items = selectedItems.map((item, index) => ({
         id: index + 1,
         item: item.name,
@@ -3118,6 +3441,8 @@ export default function AdministrationPage() {
         requesterName: vppPreviewRequesterName,
         frequency: "Cấp phát",
         date: dateStr,
+        sourceFileUrl: sourceFileUrl,
+        sourceFileName: sourceFileName,
         items: items
       });
 
@@ -3141,7 +3466,8 @@ export default function AdministrationPage() {
       alert(`Đã tạo thành công Phiếu yêu cầu cấp phát VPP cho ${deptName} với ${items.length} vật tư.`);
       setShowVppPreviewModal(false);
       setVppPreviewRequesterName("");
-      
+      setVppPreviewSourceFile(null);
+
       // Refresh list from Supabase
       fetchDeptRequests();
       fetchChecklist();
@@ -4723,6 +5049,8 @@ export default function AdministrationPage() {
                           </tbody>
                         </table>
                       </div>
+
+                      {renderAllocatedSummary("phongban")}
                     </div>
                   )}
 
@@ -4971,6 +5299,8 @@ export default function AdministrationPage() {
                           </tbody>
                         </table>
                       </div>
+
+                      {renderAllocatedSummary("duan")}
                     </div>
                   )}
 
@@ -4979,7 +5309,7 @@ export default function AdministrationPage() {
                     type="file"
                     id="vpp-file-input"
                     className="hidden"
-                    accept=".xlsx,.xls,.docx,.doc,.pdf,image/*"
+                    accept=".xlsx,.xls,.docx,.doc,.pdf,.png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp,application/pdf"
                     onChange={handleVppFileUpload}
                   />
 
@@ -5410,7 +5740,10 @@ export default function AdministrationPage() {
                           <div className="flex gap-2">
                             <button
                               type="button"
-                              onClick={() => setShowVppPreviewModal(false)}
+                              onClick={() => {
+                                setShowVppPreviewModal(false);
+                                setVppPreviewSourceFile(null);
+                              }}
                               className="py-2 px-4 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 text-xs font-bold transition-all"
                             >
                               Hủy bỏ
@@ -5423,6 +5756,84 @@ export default function AdministrationPage() {
                               <Check size={14} /> Xác nhận & Tạo phiếu
                             </button>
                           </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Pop-up xem phiếu yêu cầu gốc (ảnh / PDF / Excel) */}
+                  {vppSourceViewer && (
+                    <div
+                      className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in-0 duration-150"
+                      onClick={() => setVppSourceViewer(null)}
+                    >
+                      <div
+                        className="bg-white rounded-2xl shadow-premium w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-slate-100 shrink-0">
+                          <div className="min-w-0">
+                            <h4 className="font-heading font-bold text-slate-800 text-xs">Phiếu yêu cầu gốc</h4>
+                            <p className="text-[10px] text-slate-400 font-semibold mt-0.5 truncate">{vppSourceViewer.name}</p>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <a
+                              href={vppSourceViewer.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-1.5 text-[10px] font-bold text-[#005BAC] hover:text-blue-700 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-all"
+                            >
+                              <Download size={12} /> Tải file gốc
+                            </a>
+                            <button
+                              type="button"
+                              onClick={() => setVppSourceViewer(null)}
+                              className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
+                              title="Đóng"
+                            >
+                              <X size={16} />
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="flex-1 overflow-auto bg-slate-50 p-4">
+                          {(() => {
+                            const lower = (vppSourceViewer.name || vppSourceViewer.url).toLowerCase();
+                            if (/\.(png|jpe?g|webp|gif)$/.test(lower)) {
+                              return (
+                                <img
+                                  src={vppSourceViewer.url}
+                                  alt={vppSourceViewer.name}
+                                  className="max-w-full mx-auto rounded-xl border border-slate-200 bg-white shadow-sm"
+                                />
+                              );
+                            }
+                            if (lower.endsWith(".pdf")) {
+                              return (
+                                <iframe
+                                  src={vppSourceViewer.url}
+                                  title={vppSourceViewer.name}
+                                  className="w-full h-[70vh] rounded-xl border border-slate-200 bg-white"
+                                />
+                              );
+                            }
+                            return (
+                              <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+                                <FileSpreadsheet size={40} className="text-slate-300" />
+                                <p className="text-xs font-semibold text-slate-500">
+                                  File Excel/Word không xem trực tiếp được trên trình duyệt.
+                                </p>
+                                <a
+                                  href={vppSourceViewer.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="flex items-center gap-1.5 bg-[#005BAC] hover:bg-blue-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-sm transition-all"
+                                >
+                                  <Download size={14} /> Tải file gốc về máy
+                                </a>
+                              </div>
+                            );
+                          })()}
                         </div>
                       </div>
                     </div>
