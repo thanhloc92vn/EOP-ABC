@@ -86,6 +86,13 @@ function pinIcon(color: string, label: string): L.DivIcon {
 // Tên hiển thị của dự án: ưu tiên tên đầy đủ, mặc định là tên BĐH.
 const displayName = (p: ProjectItem) => p.loc?.name || p.bdhName;
 
+// Bóng đổ dùng CHUNG cho mọi khối nổi trên bản đồ, để 3 khối trông đồng đều.
+// Phải đặt inline: class `.glass` và `.shadow-premium` trong globals.css đều tự
+// khai báo box-shadow rất nhạt (alpha 0.02–0.03) và đứng SAU phần utility của
+// Tailwind, nên mọi class shadow-[...] đặt trên chúng đều bị đè mất.
+const PANEL_SHADOW =
+  "0 14px 36px -10px rgba(15,23,42,0.38), 0 4px 10px -4px rgba(15,23,42,0.18)";
+
 // Khung nhìn tập trung vào Việt Nam (đất liền + Biển Đông gồm Hoàng Sa/Trường Sa).
 const VN_FIT: L.LatLngBoundsExpression = [
   [8.2, 102.4],
@@ -362,14 +369,17 @@ export default function ProjectMap() {
 
       {/* Cụm điều khiển góc trái-dưới: quản lý vị trí + nền bản đồ & tìm kiếm
           + bảng tổng quan */}
-      <div className="absolute bottom-4 left-4 z-[500] flex flex-col gap-2 items-start max-w-[calc(100%-2rem)]">
+      {/* Neo góc trái-TRÊN. Neo dưới sẽ bị thanh địa chỉ của trình duyệt di
+          động che mất ô tìm kiếm. */}
+      <div className="absolute top-4 left-4 z-[500] flex flex-col gap-2 items-start max-w-[calc(100%-2rem)]">
         {/* Nút quản lý vị trí (Admin hoặc tài khoản có cờ quản lý vị trí).
             Đặt ngay trên bộ chọn nền bản đồ để không bị thanh tìm kiếm đè
             trên màn hình điện thoại. */}
         {canManageLocations && (
           <button
             onClick={() => setEditorOpen(true)}
-            className="glass rounded-2xl shadow-premium border border-slate-200/60 flex items-center gap-2 px-3.5 py-2.5 text-xs font-bold text-[#005BAC] hover:bg-blue-50 transition-all active:scale-[0.97]"
+            className="glass rounded-2xl border border-slate-200/60 flex items-center gap-2 px-3.5 py-2.5 text-xs font-bold text-[#005BAC] hover:bg-blue-50 transition-all active:scale-[0.97]"
+            style={{ boxShadow: PANEL_SHADOW }}
             title="Gán toạ độ / link cho dự án"
           >
             <Settings2 size={15} className="shrink-0" /> Quản lý vị trí
@@ -381,14 +391,11 @@ export default function ProjectMap() {
             box-shadow và đứng sau utility của Tailwind nên sẽ đè mất
             class shadow-[...]. */}
         <div className="relative w-72">
-          {/* Danh sách kết quả — bung LÊN TRÊN vì khối nằm sát đáy màn hình */}
+          {/* Danh sách kết quả bung XUỐNG DƯỚI vì khối đã nằm sát đỉnh màn hình */}
           {searchFocused && query && (
             <div
-              className="absolute bottom-full left-0 right-0 mb-2 glass rounded-2xl border border-slate-200/60 overflow-hidden max-h-64 overflow-y-auto"
-              style={{
-                boxShadow:
-                  "0 14px 36px -10px rgba(15,23,42,0.38), 0 4px 10px -4px rgba(15,23,42,0.18)",
-              }}
+              className="absolute top-full mt-2 left-0 right-0 z-10 glass rounded-2xl border border-slate-200/60 overflow-hidden max-h-64 overflow-y-auto"
+              style={{ boxShadow: PANEL_SHADOW }}
             >
               {filtered.length === 0 ? (
                 <p className="text-slate-400 text-xs italic text-center py-5">
@@ -425,10 +432,7 @@ export default function ProjectMap() {
 
           <div
             className="glass rounded-2xl border border-slate-200/60 overflow-hidden"
-            style={{
-              boxShadow:
-                "0 14px 36px -10px rgba(15,23,42,0.38), 0 4px 10px -4px rgba(15,23,42,0.18)",
-            }}
+            style={{ boxShadow: PANEL_SHADOW }}
           >
             {/* Ô tìm kiếm */}
             <div className="flex items-center gap-2.5 px-3.5 py-2.5">
@@ -472,7 +476,10 @@ export default function ProjectMap() {
 
         {/* Bảng tổng quan (desktop): thương hiệu + số liệu + chú thích trạng
             thái gộp chung MỘT khối cho gọn. */}
-        <div className="hidden md:block glass rounded-2xl shadow-premium border border-slate-200/60 p-3.5 w-72">
+        <div
+          className="hidden md:block glass rounded-2xl border border-slate-200/60 p-3.5 w-72"
+          style={{ boxShadow: PANEL_SHADOW }}
+        >
           {/* Thương hiệu */}
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-600 to-cyan-500 flex items-center justify-center shadow-md shadow-blue-500/25 shrink-0">
