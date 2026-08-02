@@ -106,11 +106,637 @@ html.dark textarea::placeholder {
   color: #64748b;
 }
 
+/* Danh sách xổ xuống của <select>: trình duyệt vẽ popup theo background-color
+   của chính thẻ <select>. Nhiều ô lọc để `bg-transparent` (cố ý, để lộ nền
+   khung bao) -> popup rơi về nền TRẮNG trong khi chữ option đã là màu sáng.
+   Vì vậy phải tô màu thẳng cho <option>/<optgroup>. */
+html.dark select option,
+html.dark select optgroup {
+  background-color: #1e293b !important;
+  color: #e2e8f0 !important;
+}
+html.dark select option:checked {
+  background-color: #334155 !important;
+}
+
 /* Glass tweaks for dark */
 html.dark .glass {
   border-color: #334155 !important;
   box-shadow: 0 4px 30px rgba(0, 0, 0, 0.25);
 }
+
+/* ── Bổ sung dark mode (đợt rà soát Dashboard) ─────────────────────────────
+   Chỉ remap MÀU, không đụng bố cục/cấu trúc.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Cho trình duyệt vẽ tối các control gốc: lịch của <input type="date|month">,
+   danh sách <select>, thanh cuộn hệ thống. Thiếu dòng này thì bảng lịch bung ra
+   vẫn trắng toát. */
+html.dark {
+  color-scheme: dark;
+}
+
+/* Surfaces còn sót (biến thể opacity + slate-200) */
+html.dark .bg-slate-50\/20,
+html.dark .bg-slate-50\/60,
+html.dark .bg-slate-50\/70,
+html.dark .bg-slate-100\/60,
+html.dark .bg-gray-50,
+html.dark .bg-gray-100 {
+  background-color: #243246 !important;
+}
+html.dark .bg-slate-200,
+html.dark .bg-slate-200\/50,
+html.dark .bg-slate-200\/60,
+html.dark .bg-gray-200 {
+  background-color: #334155 !important;
+}
+
+/* Borders / dividers còn sót */
+html.dark .border-slate-150\/60,
+html.dark .border-slate-200\/80,
+html.dark .border-slate-300,
+html.dark .border-gray-100,
+html.dark .border-gray-200 {
+  border-color: #334155 !important;
+}
+html.dark .divide-slate-100 > *,
+html.dark .divide-slate-200 > * {
+  border-color: #334155 !important;
+}
+
+/* Trạng thái HOVER — trước đây không được remap nên rê chuột là loé trắng */
+html.dark .hover\:bg-white:hover,
+html.dark .hover\:bg-slate-50:hover,
+html.dark .hover\:bg-slate-50\/50:hover,
+html.dark .hover\:bg-slate-50\/80:hover,
+html.dark .hover\:bg-slate-100:hover,
+html.dark .hover\:bg-slate-100\/60:hover,
+html.dark .hover\:bg-gray-50:hover,
+html.dark .hover\:bg-gray-100:hover {
+  background-color: #2c3b52 !important;
+}
+html.dark .hover\:bg-slate-200:hover,
+html.dark .hover\:bg-gray-200:hover {
+  background-color: #3b4a63 !important;
+}
+html.dark .hover\:text-slate-900:hover,
+html.dark .hover\:text-slate-800:hover,
+html.dark .hover\:text-slate-700:hover {
+  color: #f1f5f9 !important;
+}
+html.dark .hover\:text-slate-600:hover,
+html.dark .hover\:text-slate-500:hover {
+  color: #e2e8f0 !important;
+}
+
+/* Chip/nhãn nền pastel (bg-*-50 / bg-*-100) → nền màu trong suốt trên nền tối */
+html.dark .bg-blue-50,
+html.dark .bg-blue-100,
+html.dark .hover\:bg-blue-50:hover,
+html.dark .hover\:bg-blue-50\/40:hover { background-color: rgba(59, 130, 246, 0.16) !important; }
+html.dark .bg-sky-50,
+html.dark .bg-sky-100,
+html.dark .bg-cyan-50,
+html.dark .bg-cyan-100 { background-color: rgba(14, 165, 233, 0.16) !important; }
+html.dark .bg-emerald-50,
+html.dark .bg-emerald-100,
+html.dark .bg-green-50,
+html.dark .bg-green-100,
+html.dark .bg-teal-50,
+html.dark .bg-teal-100 { background-color: rgba(16, 185, 129, 0.16) !important; }
+html.dark .bg-amber-50,
+html.dark .bg-amber-100,
+html.dark .bg-yellow-50,
+html.dark .bg-yellow-100,
+html.dark .bg-orange-50,
+html.dark .bg-orange-100 { background-color: rgba(245, 158, 11, 0.16) !important; }
+html.dark .bg-rose-50,
+html.dark .bg-rose-100,
+html.dark .bg-red-50,
+html.dark .bg-red-100,
+html.dark .hover\:bg-rose-50:hover,
+html.dark .hover\:bg-red-50:hover { background-color: rgba(244, 63, 94, 0.16) !important; }
+html.dark .bg-indigo-50,
+html.dark .bg-indigo-100,
+html.dark .bg-violet-50,
+html.dark .bg-violet-100,
+html.dark .bg-purple-50,
+html.dark .bg-purple-100 { background-color: rgba(129, 140, 248, 0.16) !important; }
+html.dark .bg-pink-50,
+html.dark .bg-pink-100,
+html.dark .bg-fuchsia-50,
+html.dark .bg-fuchsia-100 { background-color: rgba(236, 72, 153, 0.16) !important; }
+
+/* Viền pastel đi kèm các chip trên */
+html.dark .border-blue-50,
+html.dark .border-blue-100,
+html.dark .border-blue-200 { border-color: rgba(59, 130, 246, 0.35) !important; }
+html.dark .border-sky-100, html.dark .border-sky-200,
+html.dark .border-cyan-100, html.dark .border-cyan-200 { border-color: rgba(14, 165, 233, 0.35) !important; }
+html.dark .border-emerald-100, html.dark .border-emerald-200,
+html.dark .border-green-100, html.dark .border-green-200,
+html.dark .border-teal-100, html.dark .border-teal-200 { border-color: rgba(16, 185, 129, 0.35) !important; }
+html.dark .border-amber-100, html.dark .border-amber-200,
+html.dark .border-yellow-100, html.dark .border-yellow-200,
+html.dark .border-orange-100, html.dark .border-orange-200 { border-color: rgba(245, 158, 11, 0.35) !important; }
+html.dark .border-rose-100, html.dark .border-rose-200,
+html.dark .border-red-100, html.dark .border-red-200,
+html.dark .hover\:border-rose-100:hover { border-color: rgba(244, 63, 94, 0.35) !important; }
+html.dark .border-indigo-100, html.dark .border-indigo-200,
+html.dark .border-violet-100, html.dark .border-violet-200,
+html.dark .border-purple-100, html.dark .border-purple-200 { border-color: rgba(129, 140, 248, 0.35) !important; }
+
+/* Chữ màu đậm (600/700) vốn dành cho nền sáng → sáng lên cho nền tối */
+html.dark .text-blue-600, html.dark .text-blue-700,
+html.dark .text-\[\#005BAC\] { color: #60a5fa !important; }
+html.dark .text-sky-600, html.dark .text-sky-700,
+html.dark .text-cyan-600, html.dark .text-cyan-700 { color: #38bdf8 !important; }
+html.dark .text-emerald-600, html.dark .text-emerald-700,
+html.dark .text-green-600, html.dark .text-green-700,
+html.dark .text-teal-600, html.dark .text-teal-700 { color: #34d399 !important; }
+html.dark .text-amber-600, html.dark .text-amber-700,
+html.dark .text-yellow-600, html.dark .text-yellow-700,
+html.dark .text-orange-600, html.dark .text-orange-700 { color: #fbbf24 !important; }
+html.dark .text-rose-600, html.dark .text-rose-700,
+html.dark .text-red-600, html.dark .text-red-700 { color: #fb7185 !important; }
+html.dark .text-indigo-600, html.dark .text-indigo-700,
+html.dark .text-violet-600, html.dark .text-violet-700,
+html.dark .text-purple-600, html.dark .text-purple-700 { color: #a5b4fc !important; }
+html.dark .text-pink-600, html.dark .text-pink-700 { color: #f472b6 !important; }
+
+/* Thanh cuộn ở chế độ tối */
+html.dark ::-webkit-scrollbar-thumb { background: #334155; }
+html.dark ::-webkit-scrollbar-thumb:hover { background: #475569; }
+html.dark .custom-scrollbar-table::-webkit-scrollbar-track { background: #1e293b; }
+html.dark .custom-scrollbar-table::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-color: #1e293b;
+}
+html.dark .custom-scrollbar-table::-webkit-scrollbar-thumb:hover { background: #64748b; }
+
+/* Biểu đồ tròn "chưa có nhân sự" ở Dashboard vẽ màu #E2E8F0 (xám rất sáng) —
+   trên nền tối thành vòng trắng chói. Đổi sang xám tối, giữ nguyên code React. */
+html.dark .recharts-sector[fill="#E2E8F0"],
+html.dark .recharts-rectangle[fill="#E2E8F0"] {
+  fill: #334155;
+}
+
+/* ── Bổ sung dark mode (đợt rà soát Vị trí dự án) ──────────────────────────
+   Chỉ remap MÀU, không đụng bản đồ / bố cục / logic.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Nền trắng mờ dùng làm BỀ MẶT (dropdown, đầu panel dính) → nền tối đục */
+html.dark .bg-white\/95 {
+  background-color: #1e293b !important;
+  background-image: none !important;
+}
+/* Nền trắng mờ dùng làm LỚP PHỦ nhẹ (màn chờ, dòng bảng xen kẽ, hover tab):
+   giữ đúng ý đồ "sáng hơn nền một chút" nhưng ở tông tối */
+html.dark .bg-white\/40,
+html.dark .hover\:bg-white\/40:hover {
+  background-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* Viền/hover còn sót ở module này */
+html.dark .border-slate-50,
+html.dark .hover\:border-slate-200:hover {
+  border-color: #334155 !important;
+}
+html.dark .text-\[\#005BAC\]\/70 {
+  color: rgba(96, 165, 250, 0.75) !important;
+}
+
+/* ── Leaflet: CSS gốc của thư viện luôn màu sáng, không theo theme ── */
+/* Nền khung bản đồ khi tile chưa tải xong (mặc định #ddd → mảng xám chói) */
+html.dark .leaflet-container {
+  background: #0f172a;
+}
+/* Nút +/- phóng to thu nhỏ (góc phải dưới) */
+html.dark .leaflet-bar a,
+html.dark .leaflet-bar a:link,
+html.dark .leaflet-bar a:visited {
+  background-color: #1e293b;
+  color: #e2e8f0;
+  border-bottom-color: #334155;
+}
+html.dark .leaflet-bar a:hover {
+  background-color: #2c3b52;
+  color: #ffffff;
+}
+html.dark .leaflet-bar a.leaflet-disabled {
+  background-color: #172033;
+  color: #64748b;
+}
+html.dark .leaflet-bar {
+  border-color: rgba(0, 0, 0, 0.5);
+}
+/* Dòng bản quyền © OpenStreetMap / Esri (góc phải dưới) */
+html.dark .leaflet-control-attribution {
+  background: rgba(15, 23, 42, 0.85) !important;
+  color: #94a3b8;
+}
+html.dark .leaflet-control-attribution a {
+  color: #60a5fa;
+}
+
+/* ── Bổ sung dark mode (đợt rà soát Quản lý Công việc) ─────────────────────
+   Chỉ remap MÀU, không đụng bố cục / kéo thả / logic.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Thẻ công việc trên Kanban dùng GRADIENT với điểm dừng màu -50/-100.
+   Rule .bg-*-50 không với tới điểm dừng gradient nên thẻ vẫn nền sáng, chữ
+   sáng đè lên -> không đọc được. Đổi thẳng điểm dừng sang tông tối. */
+html.dark .from-slate-50\/90 { --tw-gradient-from: rgba(51, 65, 85, 0.9); }
+html.dark .to-slate-100\/40 { --tw-gradient-to: rgba(71, 85, 105, 0.4); }
+html.dark .from-blue-50\/60 { --tw-gradient-from: rgba(59, 130, 246, 0.2); }
+html.dark .to-sky-50\/20 { --tw-gradient-to: rgba(14, 165, 233, 0.07); }
+html.dark .from-purple-50\/60 { --tw-gradient-from: rgba(168, 85, 247, 0.2); }
+html.dark .to-fuchsia-50\/20 { --tw-gradient-to: rgba(217, 70, 239, 0.07); }
+html.dark .from-rose-50\/65 { --tw-gradient-from: rgba(244, 63, 94, 0.2); }
+html.dark .to-pink-50\/20 { --tw-gradient-to: rgba(236, 72, 153, 0.07); }
+html.dark .from-emerald-50\/60 { --tw-gradient-from: rgba(16, 185, 129, 0.2); }
+html.dark .to-teal-50\/20 { --tw-gradient-to: rgba(20, 184, 166, 0.07); }
+
+/* Tiêu đề thẻ dùng tông -950 (gần như đen, dành cho nền sáng) */
+html.dark .text-slate-950 { color: #e2e8f0 !important; }
+html.dark .text-blue-950 { color: #dbeafe !important; }
+html.dark .text-purple-950,
+html.dark .text-violet-950,
+html.dark .text-indigo-950 { color: #ede9fe !important; }
+html.dark .text-rose-950,
+html.dark .text-red-950 { color: #ffe4e6 !important; }
+html.dark .text-emerald-950,
+html.dark .text-green-950,
+html.dark .text-teal-950 { color: #d1fae5 !important; }
+html.dark .text-amber-950,
+html.dark .text-orange-950 { color: #fef3c7 !important; }
+
+/* Nền xám còn sót: thanh tiến độ, nhãn đếm số việc trên đầu cột */
+html.dark .bg-slate-200\/70,
+html.dark .bg-slate-200\/80 {
+  background-color: #334155 !important;
+}
+
+/* Viền còn sót (biến thể opacity + shade tự đặt) */
+html.dark .border-slate-200\/50,
+html.dark .border-indigo-150\/50 {
+  border-color: #334155 !important;
+}
+html.dark .border-blue-200\/45,
+html.dark .focus\:border-blue-300:focus,
+html.dark .hover\:border-blue-300:hover { border-color: rgba(59, 130, 246, 0.4) !important; }
+html.dark .border-purple-200\/45,
+html.dark .border-violet-200\/45 { border-color: rgba(168, 85, 247, 0.4) !important; }
+html.dark .border-rose-200\/45,
+html.dark .border-rose-300\/70 { border-color: rgba(244, 63, 94, 0.4) !important; }
+html.dark .border-emerald-200\/45 { border-color: rgba(16, 185, 129, 0.4) !important; }
+
+/* Hover nền pastel đậm hơn (-100) chưa được map ở đợt trước */
+html.dark .hover\:bg-indigo-100:hover,
+html.dark .hover\:bg-violet-100:hover,
+html.dark .hover\:bg-purple-100:hover { background-color: rgba(129, 140, 248, 0.24) !important; }
+html.dark .hover\:bg-rose-100:hover,
+html.dark .hover\:bg-red-100:hover { background-color: rgba(244, 63, 94, 0.24) !important; }
+html.dark .hover\:bg-blue-100:hover,
+html.dark .hover\:bg-sky-100:hover { background-color: rgba(59, 130, 246, 0.24) !important; }
+html.dark .hover\:bg-emerald-100:hover,
+html.dark .hover\:bg-green-100:hover { background-color: rgba(16, 185, 129, 0.24) !important; }
+html.dark .hover\:bg-amber-100:hover,
+html.dark .hover\:bg-yellow-100:hover { background-color: rgba(245, 158, 11, 0.24) !important; }
+
+/* ── Bổ sung dark mode (đợt rà soát Lịch công việc) ────────────────────────
+   Chỉ remap MÀU, không đụng form / luồng duyệt / logic.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Nền pastel có ĐỘ TRONG SUỐT (bg-*-50/40, /60...) — rule .bg-*-50 ở các đợt
+   trước chỉ khớp class trần nên các biến thể này vẫn sáng nguyên. */
+html.dark .bg-indigo-50\/30,
+html.dark .bg-indigo-50\/40,
+html.dark .bg-indigo-50\/50,
+html.dark .bg-indigo-50\/60,
+html.dark .bg-violet-50\/40,
+html.dark .bg-purple-50\/40 { background-color: rgba(129, 140, 248, 0.18) !important; }
+html.dark .bg-blue-50\/30,
+html.dark .bg-blue-50\/40,
+html.dark .bg-blue-50\/60,
+html.dark .bg-sky-50\/30 { background-color: rgba(59, 130, 246, 0.16) !important; }
+html.dark .bg-emerald-50\/40,
+html.dark .bg-emerald-50\/60,
+html.dark .bg-green-50\/40 { background-color: rgba(16, 185, 129, 0.16) !important; }
+html.dark .bg-rose-50\/40,
+html.dark .bg-rose-50\/60,
+html.dark .bg-red-50\/40 { background-color: rgba(244, 63, 94, 0.16) !important; }
+html.dark .bg-amber-50\/40,
+html.dark .bg-amber-50\/60,
+html.dark .bg-orange-50\/40 { background-color: rgba(245, 158, 11, 0.16) !important; }
+
+/* Chữ tông -800 / -900 (đậm, dành cho nền pastel sáng) */
+html.dark .text-blue-800, html.dark .text-blue-900 { color: #93c5fd !important; }
+html.dark .text-sky-800, html.dark .text-sky-900,
+html.dark .text-cyan-800, html.dark .text-cyan-900 { color: #7dd3fc !important; }
+html.dark .text-emerald-800, html.dark .text-emerald-900,
+html.dark .text-green-800, html.dark .text-green-900,
+html.dark .text-teal-800, html.dark .text-teal-900 { color: #6ee7b7 !important; }
+html.dark .text-indigo-800, html.dark .text-indigo-900,
+html.dark .text-violet-800, html.dark .text-violet-900,
+html.dark .text-purple-800, html.dark .text-purple-900 { color: #c4b5fd !important; }
+html.dark .text-rose-800, html.dark .text-rose-900,
+html.dark .text-red-800, html.dark .text-red-900 { color: #fda4af !important; }
+html.dark .text-amber-800, html.dark .text-amber-900,
+html.dark .text-orange-800, html.dark .text-orange-900,
+html.dark .text-yellow-800, html.dark .text-yellow-900 { color: #fcd34d !important; }
+html.dark .text-pink-800, html.dark .text-pink-900 { color: #f9a8d4 !important; }
+
+/* Hover nền pastel có độ trong suốt */
+html.dark .hover\:bg-indigo-100\/50:hover,
+html.dark .hover\:bg-indigo-100\/65:hover,
+html.dark .hover\:bg-purple-100\/50:hover { background-color: rgba(129, 140, 248, 0.26) !important; }
+html.dark .hover\:bg-blue-100\/50:hover,
+html.dark .hover\:bg-sky-100\/50:hover { background-color: rgba(59, 130, 246, 0.26) !important; }
+html.dark .hover\:bg-emerald-100\/50:hover,
+html.dark .hover\:bg-emerald-100\/60:hover,
+html.dark .hover\:bg-green-100\/50:hover { background-color: rgba(16, 185, 129, 0.26) !important; }
+html.dark .hover\:bg-rose-100\/70:hover,
+html.dark .hover\:bg-red-100\/50:hover { background-color: rgba(244, 63, 94, 0.26) !important; }
+html.dark .hover\:bg-amber-100\/50:hover,
+html.dark .hover\:bg-orange-100\/50:hover { background-color: rgba(245, 158, 11, 0.26) !important; }
+
+/* Hover xám còn sót (gồm shade tự đặt slate-150) */
+html.dark .hover\:bg-slate-50\/40:hover,
+html.dark .hover\:bg-slate-150:hover,
+html.dark .hover\:bg-slate-200\/50:hover { background-color: #2c3b52 !important; }
+
+/* ── Bổ sung dark mode (đợt rà soát Quản lý Đăng ký: xe & phòng họp) ───────
+   Chỉ remap MÀU, không đụng bảng biểu / luồng duyệt / logic.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Dòng tiêu đề của các bảng danh sách dùng bg-slate-50/75 — biến thể độ trong
+   suốt duy nhất chưa được map ở 4 đợt trước, nên header bảng vẫn sáng trắng. */
+html.dark .bg-slate-50\/75,
+html.dark .bg-slate-50\/40,
+html.dark .bg-slate-50\/90 {
+  background-color: #243246 !important;
+}
+
+/* ── Bổ sung dark mode (đợt rà soát Tuyển dụng) ────────────────────────────
+   Chỉ remap MÀU, không đụng bảng ứng viên / chấm điểm AI / logic.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Khung "Khối Văn Phòng" / "Khối Dự Án" dùng gradient điểm dừng pastel */
+html.dark .from-amber-50\/50 { --tw-gradient-from: rgba(245, 158, 11, 0.14); }
+html.dark .to-orange-50\/30 { --tw-gradient-to: rgba(249, 115, 22, 0.06); }
+html.dark .from-blue-50\/50 { --tw-gradient-from: rgba(59, 130, 246, 0.14); }
+html.dark .to-indigo-50\/30 { --tw-gradient-to: rgba(99, 102, 241, 0.06); }
+
+/* Nền pastel / xám còn sót ở các biến thể độ trong suốt khác */
+html.dark .bg-amber-50\/85 { background-color: rgba(245, 158, 11, 0.16) !important; }
+html.dark .bg-blue-50\/20,
+html.dark .bg-blue-50\/50,
+html.dark .bg-blue-50\/85 { background-color: rgba(59, 130, 246, 0.16) !important; }
+html.dark .bg-slate-100\/40,
+html.dark .bg-slate-300\/60 { background-color: #243246 !important; }
+
+/* Viền pastel / xám ở các biến thể độ trong suốt */
+html.dark .border-amber-200\/30,
+html.dark .border-amber-200\/50,
+html.dark .border-amber-200\/60,
+html.dark .border-amber-200\/80,
+html.dark .hover\:border-amber-300:hover { border-color: rgba(245, 158, 11, 0.4) !important; }
+html.dark .border-blue-200\/30,
+html.dark .border-blue-200\/50,
+html.dark .border-blue-200\/60,
+html.dark .border-blue-200\/80 { border-color: rgba(59, 130, 246, 0.4) !important; }
+html.dark .border-slate-100\/60,
+html.dark .border-slate-200\/30 { border-color: #334155 !important; }
+
+/* Chữ màu đậm ở biến thể độ trong suốt */
+html.dark .text-emerald-700\/70 { color: rgba(52, 211, 153, 0.8) !important; }
+
+/* Hover còn sót của module này */
+html.dark .hover\:bg-amber-200:hover { background-color: rgba(245, 158, 11, 0.3) !important; }
+html.dark .hover\:bg-blue-200:hover { background-color: rgba(59, 130, 246, 0.3) !important; }
+html.dark .hover\:bg-amber-50\/20:hover { background-color: rgba(245, 158, 11, 0.12) !important; }
+html.dark .hover\:bg-blue-50\/10:hover,
+html.dark .hover\:bg-blue-50\/20:hover,
+html.dark .hover\:bg-blue-100\/10:hover { background-color: rgba(59, 130, 246, 0.12) !important; }
+html.dark .hover\:bg-emerald-100\/40:hover { background-color: rgba(16, 185, 129, 0.26) !important; }
+html.dark .hover\:bg-slate-100\/50:hover { background-color: #2c3b52 !important; }
+html.dark .hover\:text-amber-900:hover { color: #fcd34d !important; }
+html.dark .hover\:text-blue-900:hover { color: #93c5fd !important; }
+html.dark .hover\:text-rose-700:hover,
+html.dark .hover\:text-red-700:hover { color: #fda4af !important; }
+
+/* Bảng ứng viên tô màu cảnh báo bằng mã màu tự đặt (nền sáng + chữ đậm đi kèm).
+   Phải đổi CẢ CẶP nền và chữ, đổi một bên là mất chữ. */
+html.dark .bg-\[\#FEE2E2\] { background-color: rgba(244, 63, 94, 0.16) !important; }
+html.dark .text-\[\#B91C1C\] { color: #fb7185 !important; }
+html.dark .border-\[\#FCA5A5\] { border-color: rgba(244, 63, 94, 0.4) !important; }
+html.dark .bg-\[\#FEF3C7\] { background-color: rgba(245, 158, 11, 0.16) !important; }
+html.dark .text-\[\#92400E\] { color: #fcd34d !important; }
+html.dark .bg-\[\#FFEDD5\] { background-color: rgba(249, 115, 22, 0.16) !important; }
+html.dark .text-\[\#C2410C\] { color: #fdba74 !important; }
+html.dark .border-\[\#FED7AA\] { border-color: rgba(249, 115, 22, 0.4) !important; }
+html.dark .focus\:bg-white:focus { background-color: #1e293b !important; }
+
+/* ── Bổ sung dark mode (đợt rà soát Danh sách nhân viên) ───────────────────
+   Chỉ remap MÀU, không đụng bảng / ô sửa tại chỗ / luồng bàn giao.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Dòng tiêu đề bảng nhân viên */
+html.dark .bg-slate-100\/70 { background-color: #243246 !important; }
+
+/* Ô chọn "Nhân sự nghỉ việc" (tông hổ phách) trong modal Bàn giao & Khoá tài
+   khoản — nền vàng nhạt + chữ text-slate-900 (đã bị đổi sang sáng) nên không
+   đọc được. Đổi nền sang tông tối là đủ, giữ nguyên sắc hổ phách cảnh báo. */
+html.dark .bg-amber-50\/70,
+html.dark .bg-amber-100\/60,
+html.dark .hover\:bg-amber-50\/80:hover,
+html.dark .hover\:bg-amber-100\/60:hover { background-color: rgba(245, 158, 11, 0.2) !important; }
+html.dark .bg-orange-50\/80,
+html.dark .hover\:bg-orange-100\/60:hover { background-color: rgba(249, 115, 22, 0.2) !important; }
+
+/* Viền còn sót */
+html.dark .border-emerald-200\/80,
+html.dark .border-green-200\/80 { border-color: rgba(16, 185, 129, 0.4) !important; }
+
+/* ── Bổ sung dark mode (đợt rà soát Lương & Phúc lợi C&B) ──────────────────
+   Chỉ remap MÀU, không đụng bảng lương / hợp đồng / công thức.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Dải sub-tab trong hồ sơ nhân viên (Thông tin cá nhân / lương / HĐ / ...) */
+html.dark .bg-slate-100\/80 { background-color: #243246 !important; }
+
+/* Ô cảnh báo hợp đồng còn <= 30 ngày tới hạn + các nền pastel -100/50 khác */
+html.dark .bg-amber-100\/50 { background-color: rgba(245, 158, 11, 0.2) !important; }
+html.dark .bg-blue-100\/50 { background-color: rgba(59, 130, 246, 0.2) !important; }
+html.dark .bg-emerald-100\/50 { background-color: rgba(16, 185, 129, 0.2) !important; }
+html.dark .bg-indigo-100\/50 { background-color: rgba(129, 140, 248, 0.2) !important; }
+
+/* Thẻ "Quy tắc thưởng lễ lớn theo thâm niên" dùng gradient điểm dừng pastel */
+html.dark .from-emerald-50\/40 { --tw-gradient-from: rgba(16, 185, 129, 0.14); }
+html.dark .to-blue-50\/20 { --tw-gradient-to: rgba(59, 130, 246, 0.06); }
+
+/* Ô nhập trong bảng cố ý để trong suốt để lộ màu nền của ô (vàng cảnh báo,
+   sọc xen kẽ). Rule `html.dark input` đang tô đè #1e293b lên, che mất màu ô. */
+html.dark .bg-transparent { background-color: transparent !important; }
+
+/* Viền còn sót của module này */
+html.dark .border-amber-200\/65,
+html.dark .border-amber-300 { border-color: rgba(245, 158, 11, 0.4) !important; }
+html.dark .border-blue-100\/20,
+html.dark .border-blue-100\/50,
+html.dark .border-blue-100\/60 { border-color: rgba(59, 130, 246, 0.35) !important; }
+html.dark .hover\:border-indigo-200:hover,
+html.dark .hover\:border-indigo-200\/70:hover { border-color: rgba(129, 140, 248, 0.4) !important; }
+html.dark .hover\:border-rose-200:hover { border-color: rgba(244, 63, 94, 0.4) !important; }
+
+/* Shade KHÔNG tồn tại trong Tailwind (amber-150 / emerald-250 / slate-250):
+   không sinh ra CSS nên viền rơi về currentColor = màu chữ, ở chế độ tối
+   thành đường kẻ trắng sáng. Ghim về màu viền tối cho khỏi chói. */
+html.dark .border-amber-150,
+html.dark .border-emerald-250,
+html.dark .border-slate-250 { border-color: #334155 !important; }
+
+/* Hover / disabled còn sót */
+html.dark .hover\:bg-slate-50\/30:hover { background-color: #2c3b52 !important; }
+html.dark .hover\:bg-emerald-50:hover { background-color: rgba(16, 185, 129, 0.16) !important; }
+html.dark .hover\:text-blue-800:hover { color: #93c5fd !important; }
+html.dark .group:hover .group-hover\:text-slate-900 { color: #f1f5f9 !important; }
+html.dark .disabled\:bg-slate-50:disabled { background-color: #243246 !important; }
+
+/* ── Bổ sung dark mode (đợt rà soát Hành chính & Tài sản) ──────────────────
+   Chỉ remap MÀU, không đụng phiếu thanh toán / tài sản / logic.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Nền còn sót */
+html.dark .bg-slate-100\/55,
+html.dark .bg-slate-100\/90,
+html.dark .hover\:bg-slate-100\/80:hover,
+html.dark .hover\:bg-slate-200\/60:hover,
+html.dark .hover\:bg-slate-50\/20:hover { background-color: #243246 !important; }
+html.dark .bg-blue-50\/45,
+html.dark .hover\:bg-blue-50\/50:hover { background-color: rgba(59, 130, 246, 0.16) !important; }
+html.dark .bg-rose-50\/50 { background-color: rgba(244, 63, 94, 0.16) !important; }
+/* Dòng tổng kết bảng chi phí tô xanh lá kiểu bảng tính */
+html.dark .bg-\[\#D9EAD3\] { background-color: rgba(16, 185, 129, 0.22) !important; }
+
+/* Viền pastel/xám còn sót */
+html.dark .border-amber-100\/50 { border-color: rgba(245, 158, 11, 0.35) !important; }
+html.dark .border-emerald-100\/50,
+html.dark .border-emerald-100\/60 { border-color: rgba(16, 185, 129, 0.35) !important; }
+html.dark .border-purple-100\/50,
+html.dark .border-purple-100\/60 { border-color: rgba(129, 140, 248, 0.35) !important; }
+html.dark .border-rose-100\/50 { border-color: rgba(244, 63, 94, 0.35) !important; }
+html.dark .border-sky-100\/50 { border-color: rgba(14, 165, 233, 0.35) !important; }
+html.dark .border-slate-105,
+html.dark .border-slate-200\/65,
+html.dark .border-slate-250\/30,
+html.dark .border-slate-400,
+html.dark .hover\:border-slate-300:hover,
+html.dark .hover\:border-slate-350:hover { border-color: #334155 !important; }
+html.dark .hover\:border-blue-400:hover { border-color: rgba(59, 130, 246, 0.55) !important; }
+
+/* Thẻ thống kê chi phí dùng gradient điểm dừng pastel */
+html.dark .from-amber-50\/40 { --tw-gradient-from: rgba(245, 158, 11, 0.14); }
+html.dark .from-blue-50\/40 { --tw-gradient-from: rgba(59, 130, 246, 0.14); }
+html.dark .from-emerald-50\/50 { --tw-gradient-from: rgba(16, 185, 129, 0.14); }
+html.dark .from-purple-50\/40,
+html.dark .from-purple-50\/50 { --tw-gradient-from: rgba(168, 85, 247, 0.14); }
+html.dark .from-sky-50\/40 { --tw-gradient-from: rgba(14, 165, 233, 0.14); }
+html.dark .to-orange-50\/20 { --tw-gradient-to: rgba(249, 115, 22, 0.06); }
+html.dark .to-indigo-50\/20 { --tw-gradient-to: rgba(99, 102, 241, 0.06); }
+html.dark .to-cyan-50\/20 { --tw-gradient-to: rgba(6, 182, 212, 0.06); }
+html.dark .to-fuchsia-50\/20 { --tw-gradient-to: rgba(217, 70, 239, 0.06); }
+
+/* Chữ hover / trạng thái khoá còn sót */
+html.dark .hover\:text-amber-700:hover { color: #fcd34d !important; }
+html.dark .hover\:text-emerald-800:hover { color: #6ee7b7 !important; }
+html.dark .hover\:text-blue-700:hover,
+html.dark .group:hover .group-hover\:text-blue-700 { color: #93c5fd !important; }
+html.dark .disabled\:bg-slate-300:disabled,
+html.dark .disabled\:bg-slate-400:disabled { background-color: #334155 !important; }
+html.dark .disabled\:text-slate-500:disabled { color: #94a3b8 !important; }
+
+/* ── Bổ sung dark mode (đợt rà soát Góp ý & Kiến nghị) ─────────────────────
+   Chỉ remap MÀU, không đụng bộ lọc / luồng xử lý góp ý.
+   ────────────────────────────────────────────────────────────────────────── */
+html.dark .hover\:bg-slate-200\/80:hover { background-color: #3b4a63 !important; }
+/* rose-650 là shade KHÔNG tồn tại -> viền rơi về currentColor (màu chữ sáng) */
+html.dark .hover\:border-rose-650:hover { border-color: rgba(244, 63, 94, 0.5) !important; }
+
+/* ── Bổ sung dark mode (đợt rà soát Cài đặt hệ thống) ──────────────────────
+   Chỉ remap MÀU, không đụng phân quyền / luồng duyệt / logic.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* 3 thẻ "Phân quyền & Luồng duyệt": thẻ xanh dùng bg-blue-50/50 và thẻ hồng
+   dùng bg-rose-50/50 (đã map từ các đợt trước) nhưng thẻ vàng dùng
+   bg-amber-50/50 thì chưa -> chỉ mình nó còn sáng trắng. */
+html.dark .bg-amber-50\/30,
+html.dark .bg-amber-50\/50,
+html.dark .hover\:bg-amber-50:hover { background-color: rgba(245, 158, 11, 0.16) !important; }
+html.dark .bg-blue-50\/70 { background-color: rgba(59, 130, 246, 0.16) !important; }
+html.dark .bg-rose-50\/70 { background-color: rgba(244, 63, 94, 0.16) !important; }
+html.dark .bg-emerald-50\/50 { background-color: rgba(16, 185, 129, 0.16) !important; }
+
+/* Viền còn sót */
+html.dark .border-indigo-300,
+html.dark .hover\:border-indigo-300:hover { border-color: rgba(129, 140, 248, 0.45) !important; }
+html.dark .hover\:border-amber-200:hover,
+html.dark .focus\:border-amber-400:focus { border-color: rgba(245, 158, 11, 0.45) !important; }
+html.dark .hover\:border-blue-200:hover { border-color: rgba(59, 130, 246, 0.45) !important; }
+html.dark .focus\:border-rose-400:focus { border-color: rgba(244, 63, 94, 0.45) !important; }
+/* slate-305 là shade KHÔNG tồn tại -> viền rơi về currentColor (trắng sáng) */
+html.dark .border-slate-200\/70,
+html.dark .border-slate-305 { border-color: #334155 !important; }
+
+/* ── BẢN XEM TRƯỚC BIỂU MẪU IN (tờ giấy) ──────────────────────────────────
+   Các khối mô phỏng TỜ GIẤY sắp in ra: bảng phúc lợi HCNS/BM/048, Giấy đề
+   nghị chuyển tiền HC-BM021/ĐNCT, Phiếu đề nghị thanh toán TCKT/BM/003.
+   Chúng ghim chữ màu đen/`text-[#1e293b]` cố định. Ở chế độ tối, nền trắng bị
+   đổi thành xám đậm mà chữ vẫn đen -> mất sạch nội dung.
+   Xử lý: GIỮ TỜ GIẤY MÀU TRẮNG đúng như khi in, đảo lại các rule tối bên
+   trong nó. Chỉ áp cho khối biểu mẫu (font-serif / khổ A4), không lan ra
+   phần còn lại của giao diện. */
+html.dark .font-serif,
+html.dark .w-\[210mm\] {
+  background-color: #ffffff !important;
+  background-image: none !important;
+  color: #1e293b;
+}
+html.dark .font-serif .bg-white,
+html.dark .w-\[210mm\] .bg-white { background-color: #ffffff !important; }
+html.dark .font-serif .bg-slate-50,
+html.dark .font-serif .hover\:bg-slate-50:hover,
+html.dark .w-\[210mm\] .bg-slate-50,
+html.dark .w-\[210mm\] .hover\:bg-slate-50:hover { background-color: #f8fafc !important; }
+html.dark .font-serif .bg-slate-100 { background-color: #f1f5f9 !important; }
+html.dark .font-serif .text-slate-900,
+html.dark .font-serif .text-slate-800,
+html.dark .font-serif .text-slate-700,
+html.dark .w-\[210mm\] .text-slate-900,
+html.dark .w-\[210mm\] .text-slate-800,
+html.dark .w-\[210mm\] .text-slate-700 { color: #1e293b !important; }
+html.dark .font-serif .text-slate-600,
+html.dark .font-serif .text-slate-500,
+html.dark .w-\[210mm\] .text-slate-600,
+html.dark .w-\[210mm\] .text-slate-500 { color: #64748b !important; }
+html.dark .font-serif .text-slate-400,
+html.dark .w-\[210mm\] .text-slate-400 { color: #94a3b8 !important; }
+html.dark .font-serif .text-\[\#005BAC\],
+html.dark .w-\[210mm\] .text-\[\#005BAC\] { color: #005bac !important; }
+html.dark .font-serif .text-\[\#A0522D\],
+html.dark .w-\[210mm\] .text-\[\#A0522D\] { color: #a0522d !important; }
+html.dark .font-serif .text-red-600,
+html.dark .w-\[210mm\] .text-red-600 { color: #dc2626 !important; }
+html.dark .font-serif .text-rose-600 { color: #e11d48 !important; }
+html.dark .font-serif .text-emerald-600 { color: #059669 !important; }
+html.dark .font-serif .border-slate-100,
+html.dark .font-serif .border-slate-200,
+html.dark .font-serif .border-slate-200\/50,
+html.dark .font-serif .border-slate-300,
+html.dark .w-\[210mm\] .border-slate-200\/50,
+html.dark .w-\[210mm\] .border-slate-200 { border-color: #e2e8f0 !important; }
 
 /* Smooth theme transition */
 body,
