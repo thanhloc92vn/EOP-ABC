@@ -345,6 +345,10 @@ export default function ProjectMap() {
     setSearchFocused(false);
   }
 
+  // Quyền gán toạ độ — dùng cả cho nút "Quản lý vị trí" lẫn việc chừa chỗ cho
+  // nó trên thanh tìm kiếm ở mobile.
+  const canManageLocations = user.isAdmin || user.perms.canManageProjectLocations;
+
   const directionsUrl = (l: Located) =>
     `https://www.google.com/maps/dir/?api=1&destination=${l.lat},${l.lng}`;
   const earthUrl = (l: Located) =>
@@ -356,40 +360,6 @@ export default function ProjectMap() {
       {/* Bản đồ */}
       <div ref={containerRef} className="absolute inset-0 z-0" />
 
-      {/* Thẻ thống kê (desktop) */}
-      <div className="hidden md:block absolute top-4 left-4 z-[500] glass rounded-2xl shadow-premium border border-slate-200/60 p-3.5 w-52">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-600 to-cyan-500 flex items-center justify-center shadow-md shadow-blue-500/25">
-            <MapPin size={15} className="text-white" />
-          </div>
-          <div className="min-w-0">
-            <p className="font-heading font-extrabold text-xs text-slate-800 leading-tight">Bản đồ dự án</p>
-            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Trung Nam E&C</p>
-          </div>
-        </div>
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          <div className="rounded-xl bg-slate-50 border border-slate-100 px-2.5 py-2 text-center">
-            <p className="text-xl font-heading font-extrabold text-slate-800 leading-none">{items.length}</p>
-            <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wide mt-1">Dự án</p>
-          </div>
-          <div className="rounded-xl bg-blue-50 border border-blue-100 px-2.5 py-2 text-center">
-            <p className="text-xl font-heading font-extrabold text-[#005BAC] leading-none">{locatedCount}</p>
-            <p className="text-[9px] text-[#005BAC]/70 font-bold uppercase tracking-wide mt-1">Đã định vị</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Nút quản lý vị trí (Admin hoặc tài khoản có cờ quản lý vị trí) */}
-      {(user.isAdmin || user.perms.canManageProjectLocations) && (
-        <button
-          onClick={() => setEditorOpen(true)}
-          className="absolute top-4 right-4 z-[500] flex items-center gap-2 glass border border-slate-200/60 shadow-premium rounded-xl px-3.5 py-2.5 text-xs font-bold text-[#005BAC] hover:bg-blue-50 transition-all active:scale-[0.97]"
-          title="Gán toạ độ / link cho dự án"
-        >
-          <Settings2 size={15} /> Quản lý vị trí
-        </button>
-      )}
-
       {/* Bảng gán vị trí */}
       {editorOpen && (
         <LocationEditor
@@ -400,9 +370,17 @@ export default function ProjectMap() {
         />
       )}
 
-      {/* Thanh tìm kiếm nổi phía trên */}
+      {/* Thanh tìm kiếm nổi phía trên. Đổ bóng đậm cho nổi khối trên nền bản đồ
+          sáng — phải đặt inline vì class `.glass` đã tự khai báo box-shadow và
+          đứng sau utility của Tailwind nên sẽ đè mất class shadow-[...]. */}
       <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[500] w-[92%] max-w-md">
-        <div className="glass rounded-2xl shadow-premium border border-slate-200/60 overflow-hidden">
+        <div
+          className="glass rounded-2xl border border-slate-200/60 overflow-hidden"
+          style={{
+            boxShadow:
+              "0 14px 36px -10px rgba(15,23,42,0.38), 0 4px 10px -4px rgba(15,23,42,0.18)",
+          }}
+        >
           <div className="flex items-center gap-2.5 px-4 py-3">
             <Search size={16} className="text-slate-400 shrink-0" />
             <input
@@ -493,6 +471,19 @@ export default function ProjectMap() {
 
       {/* Điều khiển góc trái-dưới: chọn nền bản đồ + chú thích trạng thái */}
       <div className="absolute bottom-4 left-4 z-[500] flex flex-col gap-2 items-start max-w-[calc(100%-2rem)]">
+        {/* Nút quản lý vị trí (Admin hoặc tài khoản có cờ quản lý vị trí).
+            Đặt ngay trên bộ chọn nền bản đồ để không bị thanh tìm kiếm đè
+            trên màn hình điện thoại. */}
+        {canManageLocations && (
+          <button
+            onClick={() => setEditorOpen(true)}
+            className="glass rounded-2xl shadow-premium border border-slate-200/60 flex items-center gap-2 px-3.5 py-2.5 text-xs font-bold text-[#005BAC] hover:bg-blue-50 transition-all active:scale-[0.97]"
+            title="Gán toạ độ / link cho dự án"
+          >
+            <Settings2 size={15} className="shrink-0" /> Quản lý vị trí
+          </button>
+        )}
+
         {/* Bộ chọn nền bản đồ (mọi người dùng) */}
         <div className="glass rounded-2xl shadow-premium border border-slate-200/60 p-1.5 flex flex-wrap gap-1">
           {(Object.keys(BASE_LAYERS) as BaseKey[]).map((k) => (
@@ -510,23 +501,52 @@ export default function ProjectMap() {
           ))}
         </div>
 
-        {/* Chú thích trạng thái (desktop) */}
-        <div className="hidden md:flex glass rounded-2xl shadow-premium border border-slate-200/60 px-4 py-3 flex-col gap-2">
-          <div className="flex items-center gap-1.5 text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">
-            <Layers size={12} /> Trạng thái
+        {/* Bảng tổng quan (desktop): thương hiệu + số liệu + chú thích trạng
+            thái gộp chung MỘT khối cho gọn. */}
+        <div className="hidden md:block glass rounded-2xl shadow-premium border border-slate-200/60 p-3.5 w-72">
+          {/* Thương hiệu */}
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-600 to-cyan-500 flex items-center justify-center shadow-md shadow-blue-500/25 shrink-0">
+              <MapPin size={15} className="text-white" />
+            </div>
+            <div className="min-w-0">
+              <p className="font-heading font-extrabold text-xs text-slate-800 leading-tight">Bản đồ dự án</p>
+              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Trung Nam E&C</p>
+            </div>
           </div>
-          {Object.entries(STATUS_META).map(([k, v]) => {
-            const count = items.filter(
-              (i) => i.loc && (i.loc.status || "active").toLowerCase() === k
-            ).length;
-            return (
-              <div key={k} className="flex items-center gap-2">
-                <CircleDot size={12} style={{ color: v.color }} />
-                <span className="text-[11px] font-semibold text-slate-600 flex-1">{v.label}</span>
-                <span className="text-[11px] font-bold text-slate-400 tabular-nums">{count}</span>
-              </div>
-            );
-          })}
+
+          {/* Số liệu tổng quan */}
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <div className="rounded-xl bg-slate-50 border border-slate-100 px-2.5 py-2 text-center">
+              <p className="text-xl font-heading font-extrabold text-slate-800 leading-none">{items.length}</p>
+              <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wide mt-1">Dự án</p>
+            </div>
+            <div className="rounded-xl bg-blue-50 border border-blue-100 px-2.5 py-2 text-center">
+              <p className="text-xl font-heading font-extrabold text-[#005BAC] leading-none">{locatedCount}</p>
+              <p className="text-[9px] text-[#005BAC]/70 font-bold uppercase tracking-wide mt-1">Đã định vị</p>
+            </div>
+          </div>
+
+          {/* Chú thích trạng thái — xếp 2 cột cho khối đỡ dài */}
+          <div className="mt-3 pt-3 border-t border-slate-200/60">
+            <div className="flex items-center gap-1.5 text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">
+              <Layers size={12} /> Trạng thái
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5">
+              {Object.entries(STATUS_META).map(([k, v]) => {
+                const count = items.filter(
+                  (i) => i.loc && (i.loc.status || "active").toLowerCase() === k
+                ).length;
+                return (
+                  <div key={k} className="flex items-center gap-1.5 min-w-0">
+                    <CircleDot size={12} style={{ color: v.color }} className="shrink-0" />
+                    <span className="text-[11px] font-semibold text-slate-600 flex-1 truncate">{v.label}</span>
+                    <span className="text-[11px] font-bold text-slate-400 tabular-nums shrink-0">{count}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -555,24 +575,24 @@ export default function ProjectMap() {
         <>
           <div
             onClick={() => setSelected(null)}
-            className="absolute inset-0 z-[700] bg-slate-900/20 backdrop-blur-[1px] md:bg-transparent md:backdrop-blur-0 md:pointer-events-none"
+            className="absolute inset-0 z-[700] bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-200"
           />
-          <div className="absolute z-[750] bottom-0 left-0 right-0 md:left-4 md:bottom-4 md:right-auto md:w-96 bg-white rounded-t-3xl md:rounded-2xl shadow-2xl border border-slate-100 animate-in slide-in-from-bottom duration-200 max-h-[70vh] overflow-y-auto">
+          <div className="absolute z-[750] left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[92%] max-w-xl bg-white rounded-3xl shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200 max-h-[85vh] overflow-y-auto">
             {/* Đầu panel */}
-            <div className="sticky top-0 bg-white/95 backdrop-blur px-5 pt-4 pb-3 border-b border-slate-100 flex items-start gap-3">
+            <div className="sticky top-0 bg-white/95 backdrop-blur px-6 pt-5 pb-4 border-b border-slate-100 flex items-start gap-3.5">
               <div
-                className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md"
+                className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-md"
                 style={{ backgroundColor: selected.loc ? statusMeta(selected.loc.status).color : "#94A3B8" }}
               >
-                <Building2 size={18} className="text-white" />
+                <Building2 size={22} className="text-white" />
               </div>
               <div className="min-w-0 flex-1">
-                <h3 className="font-heading font-extrabold text-sm text-slate-800 leading-tight">
+                <h3 className="font-heading font-extrabold text-base text-slate-800 leading-tight">
                   {displayName(selected)}
                 </h3>
                 {selected.loc ? (
                   <span
-                    className="inline-block mt-1 text-[9px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full"
+                    className="inline-block mt-1.5 text-[10px] font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-full"
                     style={{
                       color: statusMeta(selected.loc.status).color,
                       backgroundColor: `${statusMeta(selected.loc.status).color}14`,
@@ -581,24 +601,24 @@ export default function ProjectMap() {
                     {statusMeta(selected.loc.status).label}
                   </span>
                 ) : (
-                  <span className="inline-flex items-center gap-1 mt-1 text-[9px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full text-slate-500 bg-slate-100">
-                    <MapPinOff size={10} /> Chưa định vị
+                  <span className="inline-flex items-center gap-1 mt-1.5 text-[10px] font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-full text-slate-500 bg-slate-100">
+                    <MapPinOff size={11} /> Chưa định vị
                   </span>
                 )}
               </div>
               <button
                 onClick={() => setSelected(null)}
-                className="text-slate-400 hover:text-rose-500 transition-colors shrink-0"
+                className="text-slate-400 hover:text-rose-500 transition-colors shrink-0 p-1 -m-1"
                 title="Đóng"
               >
-                <X size={18} />
+                <X size={20} />
               </button>
             </div>
 
             {selected.loc ? (
               <>
                 {/* Thông tin */}
-                <div className="px-5 py-4 space-y-3">
+                <div className="px-6 py-5 space-y-3.5">
                   {[
                     { label: "Ban điều hành", value: selected.bdhName },
                     { label: "Gói thầu", value: selected.loc.package },
@@ -610,40 +630,40 @@ export default function ProjectMap() {
                     .filter((r) => r.value)
                     .map((r) => (
                       <div key={r.label} className="flex gap-3">
-                        <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider w-24 shrink-0 pt-0.5">
+                        <span className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider w-24 sm:w-28 shrink-0 pt-0.5">
                           {r.label}
                         </span>
-                        <span className="text-xs font-semibold text-slate-700 flex-1">{r.value}</span>
+                        <span className="text-sm font-semibold text-slate-700 flex-1">{r.value}</span>
                       </div>
                     ))}
                   <div className="flex gap-3">
-                    <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider w-24 shrink-0 pt-0.5">
+                    <span className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider w-24 sm:w-28 shrink-0 pt-0.5">
                       Toạ độ
                     </span>
-                    <span className="text-xs font-mono font-semibold text-slate-500 flex-1">
+                    <span className="text-sm font-mono font-semibold text-slate-500 flex-1">
                       {selected.loc.lat.toFixed(5)}, {selected.loc.lng.toFixed(5)}
                     </span>
                   </div>
                 </div>
 
                 {/* Nút hành động */}
-                <div className="px-5 pb-5 pt-1 space-y-2.5">
-                  <div className="grid grid-cols-2 gap-2.5">
+                <div className="px-6 pb-6 pt-1 space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <a
                       href={directionsUrl(selected.loc)}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex items-center justify-center gap-2 bg-[#005BAC] hover:bg-blue-700 active:scale-[0.98] text-white text-xs font-bold py-3 rounded-xl shadow-md shadow-blue-500/15 transition-all"
+                      className="flex items-center justify-center gap-2 bg-[#005BAC] hover:bg-blue-700 active:scale-[0.98] text-white text-sm font-bold py-3.5 rounded-xl shadow-md shadow-blue-500/15 transition-all"
                     >
-                      <Navigation size={15} /> Chỉ đường
+                      <Navigation size={16} /> Chỉ đường
                     </a>
                     <a
                       href={earthUrl(selected.loc)}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex items-center justify-center gap-2 bg-slate-100 hover:bg-slate-200 active:scale-[0.98] text-slate-700 text-xs font-bold py-3 rounded-xl transition-all"
+                      className="flex items-center justify-center gap-2 bg-slate-100 hover:bg-slate-200 active:scale-[0.98] text-slate-700 text-sm font-bold py-3.5 rounded-xl transition-all"
                     >
-                      <Globe size={15} /> Google Earth
+                      <Globe size={16} /> Google Earth
                     </a>
                   </div>
                   {selected.loc.kml_url && (
@@ -651,16 +671,16 @@ export default function ProjectMap() {
                       href={selected.loc.kml_url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex items-center justify-center gap-2 bg-gradient-to-r from-[#005BAC] to-[#00AEEF] hover:opacity-95 active:scale-[0.98] text-white text-xs font-bold py-3 rounded-xl shadow-md shadow-blue-500/15 transition-all"
+                      className="flex items-center justify-center gap-2 bg-gradient-to-r from-[#005BAC] to-[#00AEEF] hover:opacity-95 active:scale-[0.98] text-white text-sm font-bold py-3.5 rounded-xl shadow-md shadow-blue-500/15 transition-all"
                     >
-                      <MapIcon size={15} /> Bản đồ chi tiết (My Maps)
+                      <MapIcon size={16} /> Bản đồ chi tiết (My Maps)
                     </a>
                   )}
                 </div>
               </>
             ) : (
-              <div className="px-5 py-6 text-center">
-                <p className="text-xs text-slate-500 font-medium leading-relaxed">
+              <div className="px-6 py-8 text-center">
+                <p className="text-sm text-slate-500 font-medium leading-relaxed">
                   Dự án này chưa có toạ độ. Quản trị viên có thể thêm vị trí ở trang quản lý để
                   hiển thị marker và mở chỉ đường.
                 </p>
