@@ -163,7 +163,6 @@ export default function ProjectMap() {
   const [selected, setSelected] = useState<ProjectItem | null>(null);
   const [searchFocused, setSearchFocused] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
-  const [provinceFilter, setProvinceFilter] = useState("");
   const [baseLayer, setBaseLayer] = useState<BaseKey>("voyager");
 
   // ─── Nạp dữ liệu: danh sách BĐH (departments) + phần định vị (project_locations) ───
@@ -206,20 +205,11 @@ export default function ProjectMap() {
 
   const locatedCount = useMemo(() => items.filter((i) => i.loc).length, [items]);
 
-  // Các tỉnh/thành thực sự có dự án (dùng cho dropdown lọc) — theo danh sách sáp nhập 2025.
-  const availableProvinces = useMemo(() => {
-    const set = new Set<string>();
-    items.forEach((i) => {
-      if (i.loc?.province) set.add(i.loc.province);
-    });
-    return Array.from(set).sort((a, b) => a.localeCompare(b, "vi"));
-  }, [items]);
-
-  // ─── Lọc client-side theo tỉnh + từ khoá (tên BĐH / dự án / gói thầu / chủ đầu tư) ───
+  // ─── Lọc client-side theo từ khoá (tên BĐH / dự án / gói thầu / chủ đầu tư /
+  //     tỉnh thành) — gõ thẳng tên tỉnh vào ô tìm kiếm vẫn ra đúng dự án ───
   const filtered = useMemo(() => {
     const q = normalize(query);
     return items.filter((p) => {
-      if (provinceFilter && p.loc?.province !== provinceFilter) return false;
       if (!q) return true;
       const hay = normalize(
         [p.bdhName, p.loc?.name, p.loc?.package, p.loc?.investor, p.loc?.province, p.loc?.project_type]
@@ -228,7 +218,7 @@ export default function ProjectMap() {
       );
       return hay.includes(q);
     });
-  }, [items, query, provinceFilter]);
+  }, [items, query]);
 
   const locatedItems = useMemo(() => filtered.filter((i) => i.loc), [filtered]);
 
@@ -370,70 +360,36 @@ export default function ProjectMap() {
         />
       )}
 
-      {/* Thanh tìm kiếm nổi phía trên. Đổ bóng đậm cho nổi khối trên nền bản đồ
-          sáng — phải đặt inline vì class `.glass` đã tự khai báo box-shadow và
-          đứng sau utility của Tailwind nên sẽ đè mất class shadow-[...]. */}
-      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[500] w-[92%] max-w-md">
-        <div
-          className="glass rounded-2xl border border-slate-200/60 overflow-hidden"
-          style={{
-            boxShadow:
-              "0 14px 36px -10px rgba(15,23,42,0.38), 0 4px 10px -4px rgba(15,23,42,0.18)",
-          }}
-        >
-          <div className="flex items-center gap-2.5 px-4 py-3">
-            <Search size={16} className="text-slate-400 shrink-0" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onFocus={() => setSearchFocused(true)}
-              placeholder="Tìm dự án / BĐH / gói thầu / chủ đầu tư..."
-              className="flex-1 bg-transparent text-xs font-semibold text-slate-700 placeholder:text-slate-400 focus:outline-none"
-            />
-            {query && (
-              <button
-                onClick={() => setQuery("")}
-                className="text-slate-400 hover:text-rose-500 transition-colors"
-                title="Xoá tìm kiếm"
-              >
-                <X size={15} />
-              </button>
-            )}
-          </div>
+      {/* Cụm điều khiển góc trái-dưới: quản lý vị trí + nền bản đồ & tìm kiếm
+          + bảng tổng quan */}
+      <div className="absolute bottom-4 left-4 z-[500] flex flex-col gap-2 items-start max-w-[calc(100%-2rem)]">
+        {/* Nút quản lý vị trí (Admin hoặc tài khoản có cờ quản lý vị trí).
+            Đặt ngay trên bộ chọn nền bản đồ để không bị thanh tìm kiếm đè
+            trên màn hình điện thoại. */}
+        {canManageLocations && (
+          <button
+            onClick={() => setEditorOpen(true)}
+            className="glass rounded-2xl shadow-premium border border-slate-200/60 flex items-center gap-2 px-3.5 py-2.5 text-xs font-bold text-[#005BAC] hover:bg-blue-50 transition-all active:scale-[0.97]"
+            title="Gán toạ độ / link cho dự án"
+          >
+            <Settings2 size={15} className="shrink-0" /> Quản lý vị trí
+          </button>
+        )}
 
-          {/* Bộ đếm định vị */}
-          {!loading && items.length > 0 && (
-            <div className="px-4 pb-2 -mt-1">
-              <span className="text-[10px] font-bold text-slate-400">
-                Đã định vị <span className="text-[#005BAC]">{locatedCount}</span>/{items.length} dự án
-              </span>
-            </div>
-          )}
-
-          {/* Lọc theo tỉnh/thành (chỉ hiện tỉnh có dự án — danh sách sáp nhập 2025) */}
-          {availableProvinces.length > 0 && (
-            <div className="px-3 pb-3 pt-0.5">
-              <select
-                value={provinceFilter}
-                onChange={(e) => setProvinceFilter(e.target.value)}
-                className="w-full text-[11px] font-semibold text-slate-600 bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-2 focus:outline-none focus:border-[#00AEEF]"
-              >
-                <option value="">Tất cả tỉnh/thành ({locatedCount})</option>
-                {availableProvinces.map((pv) => {
-                  const c = items.filter((i) => i.loc?.province === pv).length;
-                  return (
-                    <option key={pv} value={pv}>
-                      {pv} ({c})
-                    </option>
-                  );
-                })}
-              </select>
-            </div>
-          )}
-
-          {/* Danh sách kết quả gợi ý (gồm cả dự án chưa định vị) */}
+        {/* Khối "nền bản đồ + tìm kiếm" gộp chung: chọn nền ở trên, ô tìm kiếm
+            ở dưới. Đổ bóng đậm đặt inline vì class `.glass` đã tự khai báo
+            box-shadow và đứng sau utility của Tailwind nên sẽ đè mất
+            class shadow-[...]. */}
+        <div className="relative w-72">
+          {/* Danh sách kết quả — bung LÊN TRÊN vì khối nằm sát đáy màn hình */}
           {searchFocused && query && (
-            <div className="max-h-64 overflow-y-auto border-t border-slate-100 bg-white/95">
+            <div
+              className="absolute bottom-full left-0 right-0 mb-2 glass rounded-2xl border border-slate-200/60 overflow-hidden max-h-64 overflow-y-auto"
+              style={{
+                boxShadow:
+                  "0 14px 36px -10px rgba(15,23,42,0.38), 0 4px 10px -4px rgba(15,23,42,0.18)",
+              }}
+            >
               {filtered.length === 0 ? (
                 <p className="text-slate-400 text-xs italic text-center py-5">
                   Không tìm thấy dự án phù hợp
@@ -466,39 +422,52 @@ export default function ProjectMap() {
               )}
             </div>
           )}
-        </div>
-      </div>
 
-      {/* Điều khiển góc trái-dưới: chọn nền bản đồ + chú thích trạng thái */}
-      <div className="absolute bottom-4 left-4 z-[500] flex flex-col gap-2 items-start max-w-[calc(100%-2rem)]">
-        {/* Nút quản lý vị trí (Admin hoặc tài khoản có cờ quản lý vị trí).
-            Đặt ngay trên bộ chọn nền bản đồ để không bị thanh tìm kiếm đè
-            trên màn hình điện thoại. */}
-        {canManageLocations && (
-          <button
-            onClick={() => setEditorOpen(true)}
-            className="glass rounded-2xl shadow-premium border border-slate-200/60 flex items-center gap-2 px-3.5 py-2.5 text-xs font-bold text-[#005BAC] hover:bg-blue-50 transition-all active:scale-[0.97]"
-            title="Gán toạ độ / link cho dự án"
+          <div
+            className="glass rounded-2xl border border-slate-200/60 overflow-hidden"
+            style={{
+              boxShadow:
+                "0 14px 36px -10px rgba(15,23,42,0.38), 0 4px 10px -4px rgba(15,23,42,0.18)",
+            }}
           >
-            <Settings2 size={15} className="shrink-0" /> Quản lý vị trí
-          </button>
-        )}
+            {/* Ô tìm kiếm */}
+            <div className="flex items-center gap-2.5 px-3.5 py-2.5">
+              <Search size={15} className="text-slate-400 shrink-0" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onFocus={() => setSearchFocused(true)}
+                placeholder="Tìm dự án / BĐH / gói thầu..."
+                className="flex-1 min-w-0 bg-transparent text-xs font-semibold text-slate-700 placeholder:text-slate-400 focus:outline-none"
+              />
+              {query && (
+                <button
+                  onClick={() => setQuery("")}
+                  className="text-slate-400 hover:text-rose-500 transition-colors shrink-0"
+                  title="Xoá tìm kiếm"
+                >
+                  <X size={15} />
+                </button>
+              )}
+            </div>
 
-        {/* Bộ chọn nền bản đồ (mọi người dùng) */}
-        <div className="glass rounded-2xl shadow-premium border border-slate-200/60 p-1.5 flex flex-wrap gap-1">
-          {(Object.keys(BASE_LAYERS) as BaseKey[]).map((k) => (
-            <button
-              key={k}
-              onClick={() => setBaseLayer(k)}
-              className={`text-[11px] font-bold px-2.5 py-1.5 rounded-xl transition-all active:scale-[0.97] ${
-                baseLayer === k
-                  ? "bg-gradient-to-r from-[#005BAC] to-[#00AEEF] text-white shadow-sm shadow-blue-500/20"
-                  : "text-slate-500 hover:bg-slate-100"
-              }`}
-            >
-              {BASE_LAYERS[k].label}
-            </button>
-          ))}
+            {/* Chọn nền bản đồ */}
+            <div className="p-1.5 flex flex-wrap gap-1 border-t border-slate-200/60">
+              {(Object.keys(BASE_LAYERS) as BaseKey[]).map((k) => (
+                <button
+                  key={k}
+                  onClick={() => setBaseLayer(k)}
+                  className={`text-[11px] font-bold px-2.5 py-1.5 rounded-xl transition-all active:scale-[0.97] ${
+                    baseLayer === k
+                      ? "bg-gradient-to-r from-[#005BAC] to-[#00AEEF] text-white shadow-sm shadow-blue-500/20"
+                      : "text-slate-500 hover:bg-slate-100"
+                  }`}
+                >
+                  {BASE_LAYERS[k].label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
         {/* Bảng tổng quan (desktop): thương hiệu + số liệu + chú thích trạng
