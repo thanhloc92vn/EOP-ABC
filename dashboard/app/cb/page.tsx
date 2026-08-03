@@ -119,6 +119,19 @@ interface Contract {
   department?: string;
 }
 
+// ── Số hợp đồng nội bộ (placeholder) ──────────────────────────────────────
+// Cột contracts.contract_number có ràng buộc UNIQUE, nhưng rất nhiều dòng
+// chưa có số HĐLĐ thật (đang thử việc, chưa ký chính thức). Với những dòng
+// đó ta sinh một số nội bộ DUY NHẤT để chúng vẫn vào DB như bản ghi riêng
+// thay vì đụng nhau. Giữ nguyên tiền tố "IMPORT-" vì mọi chỗ hiển thị và
+// đối chiếu trong trang này đang nhận diện "số không thật" bằng đúng tiền tố
+// đó (ô Số HĐLĐ để trống, không dùng làm số hợp đồng chính thức).
+const INTERNAL_CONTRACT_PREFIX = "IMPORT-";
+const generateInternalContractNumber = () =>
+  `${INTERNAL_CONTRACT_PREFIX}${crypto.randomUUID()}`;
+const isInternalContractNumber = (n?: string | null) =>
+  !!n && String(n).startsWith(INTERNAL_CONTRACT_PREFIX);
+
 // --- MOCK DATA FOR C&B SUBSECTIONS ---
 const MOCK_SALARY_INFO = [
   { id: "1", name: "Nguyễn Văn An", base: 18000000, insurance: 5000000, phone: 300000, lunch: 730000, gas: 500000, total: 19530000 },
@@ -2224,7 +2237,7 @@ export default function CBPage() {
         const usedNumbers = new Set<string>(
           contracts.map(c => (c.contract_number || "").trim()).filter(Boolean)
         );
-        const generateUniqueId = () => `IMPORT-${crypto.randomUUID()}`;
+        const generateUniqueId = generateInternalContractNumber;
 
         for (const item of hydrated) {
           // Skip completely empty rows (no name and no contract number)
@@ -2559,7 +2572,21 @@ export default function CBPage() {
       
       const newItems = tempContracts.filter(c => c.id.startsWith("new-"));
       const existingItems = tempContracts.filter(c => !c.id.startsWith("new-"));
-      
+
+      // contracts.contract_number là UNIQUE -> dựng sẵn bản đồ "số đang dùng ->
+      // id hợp đồng" để biết một số đã thuộc dòng khác hay chính dòng đang lưu.
+      const ownerOfNumber = new Map<string, string>();
+      for (const c of contracts) {
+        const n = (c.contract_number || "").trim();
+        if (n) ownerOfNumber.set(n, c.id);
+      }
+
+      // Lỗi của một dòng KHÔNG được làm hỏng cả lượt lưu: gom lại báo cuối cùng.
+      const failures: string[] = [];
+      let savedCount = 0;
+      const rowLabel = (item: Contract) =>
+        item.employee_name || item.employee_code || `dòng ${item.stt ?? "?"}`;
+
       for (const item of newItems) {
         let empId = item.employee_id;
         if (!empId && item.employee_name) {
@@ -2568,7 +2595,6 @@ export default function CBPage() {
         }
 
         const dbData: any = {
-          contract_number: item.contract_number || "CHƯA_CÓ",
           type: item.type || "Thử việc",
           sign_date: item.sign_date || null,
           expiration_date: item.expiration_date || null,
@@ -2591,8 +2617,28 @@ export default function CBPage() {
         };
         if (empId) dbData.employee_id = empId;
 
-        const { error } = await supabase.from("contracts").insert([dbData]);
-        if (error) throw error;
+        // Số HĐLĐ: chỉ giữ số thật khi có nhập và chưa ai dùng. Bỏ trống (dòng
+        // thử việc chưa ký chính thức) -> sinh số nội bộ, KHÔNG dùng chung một
+        // chuỗi cố định, vì dòng thứ hai sẽ đụng ràng buộc UNIQUE.
+        const typedNumber = (item.contract_number || "").trim();
+        dbData.contract_number =
+          typedNumber && !ownerOfNumber.has(typedNumber)
+            ? typedNumber
+            : generateInternalContractNumber();
+
+        let insertError = (await supabase.from("contracts").insert([dbData])).error;
+        // Vẫn đụng số (có người vừa thêm ở máy khác) -> thử lại 1 lần bằng số nội bộ.
+        if (insertError && insertError.message?.includes("duplicate key")) {
+          dbData.contract_number = generateInternalContractNumber();
+          insertError = (await supabase.from("contracts").insert([dbData])).error;
+        }
+
+        if (insertError) {
+          failures.push(`${rowLabel(item)}: ${insertError.message}`);
+        } else {
+          savedCount++;
+          ownerOfNumber.set(dbData.contract_number, item.id);
+        }
       }
 
       for (const item of existingItems) {
@@ -2629,8 +2675,26 @@ export default function CBPage() {
           if (emp) empId = emp.id;
         }
 
+        // Số HĐLĐ của dòng cũ: để trống thì giữ/sinh số nội bộ; nhập số đã
+        // thuộc hợp đồng khác thì báo đúng dòng đó thay vì để DB chặn cả lượt.
+        const typedNumber = (item.contract_number || "").trim();
+        let numberToSave: string;
+        if (!typedNumber) {
+          numberToSave = isInternalContractNumber(original.contract_number)
+            ? original.contract_number
+            : generateInternalContractNumber();
+        } else if (
+          ownerOfNumber.has(typedNumber) &&
+          ownerOfNumber.get(typedNumber) !== item.id
+        ) {
+          failures.push(`${rowLabel(item)}: số HĐLĐ "${typedNumber}" đã thuộc hợp đồng khác`);
+          continue;
+        } else {
+          numberToSave = typedNumber;
+        }
+
         const dbData: any = {
-          contract_number: item.contract_number,
+          contract_number: numberToSave,
           type: item.type,
           sign_date: item.sign_date || null,
           expiration_date: item.expiration_date || null,
@@ -2654,11 +2718,27 @@ export default function CBPage() {
         };
 
         const { error } = await supabase.from("contracts").update(dbData).eq("id", item.id);
-        if (error) throw error;
+        if (error) {
+          failures.push(`${rowLabel(item)}: ${error.message}`);
+        } else {
+          savedCount++;
+          ownerOfNumber.set(numberToSave, item.id);
+        }
       }
 
-      alert("Lưu toàn bộ danh sách hợp đồng nhân sự thành công!");
+      // Nạp lại TRƯỚC khi báo: dòng nào đã vào DB phải biến khỏi trạng thái
+      // "new-", nếu không người dùng bấm Lưu lần nữa sẽ thêm trùng người.
       await fetchContracts();
+
+      if (failures.length === 0) {
+        alert("Lưu toàn bộ danh sách hợp đồng nhân sự thành công!");
+      } else {
+        alert(
+          `Đã lưu ${savedCount} dòng, ${failures.length} dòng lỗi:\n` +
+          failures.slice(0, 5).join("\n") +
+          (failures.length > 5 ? `\n...và ${failures.length - 5} dòng khác` : "")
+        );
+      }
     } catch (err: any) {
       console.error("Lỗi khi lưu hàng loạt hợp đồng:", err);
       alert("Lỗi lưu hợp đồng: " + err.message);
