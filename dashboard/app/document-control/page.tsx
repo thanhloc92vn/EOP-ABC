@@ -1241,7 +1241,7 @@ export default function DocumentControlPage() {
                             <th className="p-3 w-40">Đơn vị gửi/nhận</th>
                             <th className="p-3 w-36">Người ký/nhận</th>
                             <th className="p-3 min-w-[180px]">Trích yếu nội dung chính</th>
-                            <th className="p-3 w-40">Link bản quét (scan)</th>
+                            <th className="p-3 w-40">Bản quét (scan)</th>
                             <th className="p-3 w-40">Link bản gốc</th>
                             <th className="p-3 text-center">Thao tác</th>
                           </tr>
@@ -1692,7 +1692,7 @@ export default function DocumentControlPage() {
                   {/* Scan File URL */}
                   <div className="space-y-1 col-span-2">
                     <label className="text-[10px] font-bold text-slate-400 uppercase flex items-center justify-between">
-                      <span>Link bản quét (scan) – Google Drive, OneDrive...</span>
+                      <span>Bản quét (scan) – tải file lên hoặc dán link Drive/OneDrive</span>
                       {uploadingScan && <span className="text-[9px] text-[#005BAC] animate-pulse normal-case font-bold">Đang tải lên...</span>}
                     </label>
                     <div className="flex gap-2">
@@ -1731,7 +1731,7 @@ export default function DocumentControlPage() {
                 {/* Original File URL */}
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-slate-400 uppercase flex items-center justify-between">
-                    <span>Link bản gốc (xem trực tiếp khi click icon 👁) – Google Drive, OneDrive...</span>
+                    <span>Bản gốc (xem trực tiếp khi click icon 👁) – tải file lên hoặc dán link</span>
                     {uploadingOriginal && <span className="text-[9px] text-[#005BAC] animate-pulse normal-case font-bold">Đang tải lên...</span>}
                   </label>
                   <div className="flex gap-2">

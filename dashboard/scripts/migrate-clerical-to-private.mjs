@@ -101,84 +101,139 @@ async function main() {
   );
 
   console.log(`Tổng số công văn        : ${rows?.length ?? 0}`);
-  console.log(`Còn ở kho công khai     : ${affected.length}\n`);
-
-  if (affected.length === 0) {
-    console.log("Không còn gì để chuyển. Xong.");
-    return;
-  }
+  console.log(`Còn ở kho công khai     : ${affected.length}`);
 
   // Nhiều dòng có thể trỏ chung một tệp (hệ thống điền cả scan lẫn bản gốc
-  // cùng một URL) -> gom theo đường dẫn để không tải/đẩy trùng.
+  // cùng một URL) -> gom theo đường dẫn để không xử lý trùng.
   const paths = new Set();
-  for (const r of affected) {
-    for (const v of [r.scan_file_url, r.original_file_url]) {
-      const p = v && v.includes(PUBLIC_MARKER) ? pathFromPublicUrl(v) : null;
-      if (p) paths.add(p);
+
+  if (deleteSource) {
+    // LƯỢT DỌN chạy SAU lượt chuyển, lúc đó CSDL đã trỏ hết sang "private:" nên
+    // không còn dòng nào mang dấu URL công khai. Vì vậy phải lấy danh sách từ
+    // chính các tham chiếu private, chứ không phải từ `affected` (sẽ rỗng).
+    //
+    // HAI ĐIỀU KIỆN BẮT BUỘC trước khi xoá một tệp bên kho công khai:
+    //   1. CSDL đang trỏ tới nó dưới dạng private: -> đúng là tệp của Văn thư
+    //   2. Bản sao CÓ THẬT trong kho riêng tư      -> chép lỗi thì tuyệt đối không xoá
+    // Tên tệp Văn thư nằm ở gốc bucket, còn Hành chính (invoices/) và Góp ý
+    // (suggestions/) nằm trong thư mục con, nên không thể xoá nhầm sang họ.
+    const refs = new Set();
+    for (const r of rows || []) {
+      for (const v of [r.scan_file_url, r.original_file_url]) {
+        if (v && v.startsWith("private:")) refs.add(v.slice("private:".length));
+      }
     }
+
+    const inPrivate = new Set();
+    let offset = 0;
+    while (true) {
+      const { data } = await db.storage.from(PRIVATE_BUCKET).list("", { limit: 100, offset });
+      if (!data || data.length === 0) break;
+      data.forEach((f) => inPrivate.add(f.name));
+      offset += data.length;
+      if (data.length < 100) break;
+    }
+
+    let khongCoBanSao = 0;
+    for (const p of refs) {
+      if (inPrivate.has(p)) paths.add(p);
+      else khongCoBanSao++;
+    }
+
+    console.log(`CSDL trỏ tới (private:) : ${refs.size}`);
+    console.log(`Có bản sao, sẽ xoá gốc  : ${paths.size}`);
+    if (khongCoBanSao > 0) {
+      console.log(`GIỮ LẠI (chưa có bản sao): ${khongCoBanSao}`);
+    }
+    console.log("");
+  } else {
+    if (affected.length === 0) {
+      console.log("\nKhông còn gì để chuyển. Xong.");
+      return;
+    }
+    for (const r of affected) {
+      for (const v of [r.scan_file_url, r.original_file_url]) {
+        const p = v && v.includes(PUBLIC_MARKER) ? pathFromPublicUrl(v) : null;
+        if (p) paths.add(p);
+      }
+    }
+    console.log(`\nSố tệp riêng biệt       : ${paths.size}\n`);
   }
-  console.log(`Số tệp riêng biệt       : ${paths.size}\n`);
+
+  if (paths.size === 0) {
+    console.log("Không có tệp nào cần xử lý. Xong.");
+    return;
+  }
 
   let copied = 0;
   let skipped = 0;
   let failed = 0;
   const movedOk = new Set();
 
-  for (const path of paths) {
-    if (dryRun) {
-      console.log(`  [thử] ${path}`);
-      movedOk.add(path);
-      continue;
-    }
+  // Xử lý MỘT tệp. Trả về true nếu tệp đó coi như đã nằm ở kho riêng tư.
+  async function handleOne(path) {
+    if (dryRun) return true;
 
     if (deleteSource) {
       const { error: delErr } = await db.storage.from(PUBLIC_BUCKET).remove([path]);
       if (delErr) {
         console.error(`  LỖI xoá  ${path}: ${delErr.message}`);
         failed++;
-      } else {
-        console.log(`  đã xoá   ${path}`);
-        copied++;
+        return false;
       }
-      continue;
+      copied++;
+      return true;
     }
 
-    // Đã có bên kho riêng tư rồi thì bỏ qua (chạy lại lần hai)
-    const { data: existing } = await db.storage.from(PRIVATE_BUCKET).list("", { search: path });
-    if (existing && existing.some((f) => f.name === path)) {
-      console.log(`  bỏ qua   ${path} (đã có ở kho riêng tư)`);
-      movedOk.add(path);
+    // SAO CHÉP NGAY TRÊN MÁY CHỦ SUPABASE.
+    // Trước đây script tải tệp về máy rồi đẩy lên lại — mỗi tệp đi hai vòng qua
+    // đường truyền của người chạy, 336 tệp là rất lâu. `copy` kèm
+    // destinationBucket khiến byte không bao giờ rời khỏi Supabase.
+    const { error: cpErr } = await db.storage
+      .from(PUBLIC_BUCKET)
+      .copy(path, path, { destinationBucket: PRIVATE_BUCKET });
+
+    if (!cpErr) {
+      copied++;
+      return true;
+    }
+
+    // Chạy lại lần hai: tệp đã có bên kho riêng tư -> coi như xong
+    if (/already exists|duplicate/i.test(cpErr.message || "")) {
       skipped++;
-      continue;
+      return true;
     }
 
-    const { data: blob, error: dlErr } = await db.storage.from(PUBLIC_BUCKET).download(path);
-    if (dlErr || !blob) {
-      console.error(`  LỖI tải  ${path}: ${dlErr?.message || "không có dữ liệu"}`);
-      failed++;
-      continue;
-    }
-
-    const buffer = Buffer.from(await blob.arrayBuffer());
-    const { error: upErr } = await db.storage.from(PRIVATE_BUCKET).upload(path, buffer, {
-      contentType: blob.type || "application/octet-stream",
-      upsert: true,
-    });
-
-    if (upErr) {
-      console.error(`  LỖI đẩy  ${path}: ${upErr.message}`);
-      failed++;
-      continue;
-    }
-
-    console.log(`  đã chuyển ${path}`);
-    movedOk.add(path);
-    copied++;
+    console.error(`  LỖI chép ${path}: ${cpErr.message}`);
+    failed++;
+    return false;
   }
+
+  // Chạy song song có giới hạn: nhanh hơn hẳn tuần tự mà không dội quá nhiều
+  // yêu cầu cùng lúc khiến Supabase chặn.
+  const CONCURRENCY = 10;
+  const list = [...paths];
+  let cursor = 0;
+  let done = 0;
+
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, list.length) }, async () => {
+      while (cursor < list.length) {
+        const path = list[cursor++];
+        const ok = await handleOne(path);
+        if (ok) movedOk.add(path);
+        done++;
+        if (done % 25 === 0 || done === list.length) {
+          console.log(`  ... ${done}/${list.length} tệp`);
+        }
+      }
+    })
+  );
 
   // ─── Cập nhật CSDL: chỉ đổi những dòng có tệp đã chuyển THÀNH CÔNG ───
   if (!deleteSource) {
-    let updated = 0;
+    // Gom sẵn việc cần làm rồi chạy song song — 335 lượt gọi tuần tự rất chậm.
+    const jobs = [];
     for (const r of affected) {
       const next = {};
       for (const col of ["scan_file_url", "original_file_url"]) {
@@ -187,20 +242,28 @@ async function main() {
         const p = pathFromPublicUrl(v);
         if (p && movedOk.has(p)) next[col] = `private:${p}`;
       }
-      if (Object.keys(next).length === 0) continue;
+      if (Object.keys(next).length > 0) jobs.push({ id: r.id, next });
+    }
 
-      if (dryRun) {
-        updated++;
-        continue;
-      }
-
-      const { error: updErr } = await db.from("clerical_documents").update(next).eq("id", r.id);
-      if (updErr) {
-        console.error(`  LỖI cập nhật dòng ${r.id}: ${updErr.message}`);
-        failed++;
-      } else {
-        updated++;
-      }
+    let updated = 0;
+    if (dryRun) {
+      updated = jobs.length;
+    } else {
+      let jc = 0;
+      await Promise.all(
+        Array.from({ length: Math.min(10, jobs.length) }, async () => {
+          while (jc < jobs.length) {
+            const job = jobs[jc++];
+            const { error: updErr } = await db.from("clerical_documents").update(job.next).eq("id", job.id);
+            if (updErr) {
+              console.error(`  LỖI cập nhật dòng ${job.id}: ${updErr.message}`);
+              failed++;
+            } else {
+              updated++;
+            }
+          }
+        })
+      );
     }
     console.log(`\nSố dòng CSDL đã đổi     : ${updated}`);
   }
