@@ -6,6 +6,7 @@ import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
 import { useCurrentUser } from "@/lib/useCurrentUser";
+import { uploadClericalFile, resolveClericalUrl, isPrivateRef, displayNameFromRef } from "@/lib/clericalFiles";
 import {
   FileDown,
   FileUp,
@@ -84,14 +85,26 @@ export default function DocumentControlPage() {
   const [previewTitle, setPreviewTitle] = useState("");
 
   // Handle open preview
-  const handleOpenPreview = (url: string, title: string) => {
-    setPreviewUrl(url);
+  // Tệp công văn nằm ở kho RIÊNG TƯ nên phải ký link mới xem được (migration 024).
+  // Link Drive/OneDrive người dùng dán và tệp cũ ở kho công khai đi qua nguyên vẹn.
+  const handleOpenPreview = async (url: string, title: string) => {
+    const resolved = await resolveClericalUrl(url);
+    if (!resolved) {
+      alert("Không mở được tệp này. Có thể tệp đã bị xoá, hoặc tài khoản của bạn chưa có quyền xem Văn thư.");
+      return;
+    }
+    setPreviewUrl(resolved);
     setPreviewTitle(title);
     setShowPreviewModal(true);
   };
 
   // Immediate download helper (CORS-friendly download bypass)
-  const downloadFile = async (url: string, filename: string) => {
+  const downloadFile = async (rawUrl: string, filename: string) => {
+    const url = await resolveClericalUrl(rawUrl);
+    if (!url) {
+      alert("Không tải được tệp này. Có thể tệp đã bị xoá, hoặc tài khoản của bạn chưa có quyền xem Văn thư.");
+      return;
+    }
     try {
       const response = await fetch(url);
       const blob = await response.blob();
@@ -148,23 +161,9 @@ export default function DocumentControlPage() {
         return null;
       }
 
-      const cleanFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
-      const filePath = `${Date.now()}_${cleanFileName}`;
-
-      const { data, error } = await supabase.storage
-        .from("clerical-documents")
-        .upload(filePath, file, {
-          cacheControl: "3600",
-          upsert: true,
-        });
-
-      if (error) throw error;
-
-      const { data: { publicUrl } } = supabase.storage
-        .from("clerical-documents")
-        .getPublicUrl(filePath);
-
-      return publicUrl;
+      // Kho RIÊNG TƯ (migration 024): trả về chuỗi "private:<đường dẫn>" chứ
+      // không phải URL — link phải ký lại mỗi lần mở, xem resolveClericalUrl.
+      return await uploadClericalFile(file);
     } catch (e) {
       console.error("Upload error:", e);
       alert("Lỗi khi tải file lên Supabase: " + (e as Error).message);
@@ -327,23 +326,7 @@ export default function DocumentControlPage() {
         let uploadedUrl = "";
         if (item.file.size <= 5 * 1024 * 1024) {
           try {
-            const cleanFileName = item.file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
-            const filePath = `${Date.now()}_${cleanFileName}`;
-
-            const { data: uploadData, error: uploadError } = await supabase.storage
-              .from("clerical-documents")
-              .upload(filePath, item.file, {
-                cacheControl: "3600",
-                upsert: true,
-              });
-
-            if (uploadError) throw uploadError;
-
-            const { data: { publicUrl } } = supabase.storage
-              .from("clerical-documents")
-              .getPublicUrl(filePath);
-            
-            uploadedUrl = publicUrl;
+            uploadedUrl = await uploadClericalFile(item.file);
           } catch (uploadErr) {
             console.error("Batch upload error for file:", item.fileName, uploadErr);
           }
@@ -1373,23 +1356,21 @@ export default function DocumentControlPage() {
                                 />
                               </td>
                               <td className="p-3">
-                                <input
-                                  type="text"
+                                <ClericalFileValue
                                   value={item.scan_file_url || ""}
                                   disabled={item.saved || item.status !== "success"}
                                   placeholder="Dán link hoặc tự sinh"
-                                  onChange={(e) => setBatchItems(prev => prev.map(p => p.id === item.id ? { ...p, scan_file_url: e.target.value } : p))}
-                                  className="px-2 py-1 border border-slate-200 rounded-lg w-full text-[11px] font-semibold text-slate-700"
+                                  onChange={(v) => setBatchItems(prev => prev.map(p => p.id === item.id ? { ...p, scan_file_url: v } : p))}
+                                  inputClassName="px-2 py-1 border border-slate-200 rounded-lg w-full text-[11px] font-semibold text-slate-700"
                                 />
                               </td>
                               <td className="p-3">
-                                <input
-                                  type="text"
+                                <ClericalFileValue
                                   value={item.original_file_url || ""}
                                   disabled={item.saved || item.status !== "success"}
                                   placeholder="Dán link bản gốc"
-                                  onChange={(e) => setBatchItems(prev => prev.map(p => p.id === item.id ? { ...p, original_file_url: e.target.value } : p))}
-                                  className="px-2 py-1 border border-slate-200 rounded-lg w-full text-[11px] font-semibold text-slate-700"
+                                  onChange={(v) => setBatchItems(prev => prev.map(p => p.id === item.id ? { ...p, original_file_url: v } : p))}
+                                  inputClassName="px-2 py-1 border border-slate-200 rounded-lg w-full text-[11px] font-semibold text-slate-700"
                                 />
                               </td>
                               <td className="p-3 text-center">
@@ -1715,13 +1696,14 @@ export default function DocumentControlPage() {
                       {uploadingScan && <span className="text-[9px] text-[#005BAC] animate-pulse normal-case font-bold">Đang tải lên...</span>}
                     </label>
                     <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={scanFileUrl}
-                        onChange={(e) => setScanFileUrl(e.target.value)}
-                        placeholder="https://drive.google.com/..."
-                        className="flex-1 min-w-0 px-3 py-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 placeholder-slate-300"
-                      />
+                      <div className="flex-1 min-w-0">
+                        <ClericalFileValue
+                          value={scanFileUrl}
+                          onChange={setScanFileUrl}
+                          placeholder="https://drive.google.com/..."
+                          inputClassName="w-full min-w-0 px-3 py-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 placeholder-slate-300"
+                        />
+                      </div>
                       <label className={`flex items-center gap-1.5 px-3 py-2 border border-slate-200 rounded-lg text-[10px] font-bold text-slate-600 bg-white hover:bg-slate-50 cursor-pointer active:scale-95 transition-all shadow-sm ${uploadingScan ? "opacity-50 pointer-events-none" : ""}`}>
                         <Upload size={13} className={uploadingScan ? "animate-bounce" : ""} />
                         <span>Tải file</span>
@@ -1753,13 +1735,14 @@ export default function DocumentControlPage() {
                     {uploadingOriginal && <span className="text-[9px] text-[#005BAC] animate-pulse normal-case font-bold">Đang tải lên...</span>}
                   </label>
                   <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={originalFileUrl}
-                      onChange={(e) => setOriginalFileUrl(e.target.value)}
-                      placeholder="https://drive.google.com/file/d/.../view"
-                      className="flex-1 min-w-0 px-3 py-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 placeholder-slate-300"
-                    />
+                    <div className="flex-1 min-w-0">
+                      <ClericalFileValue
+                        value={originalFileUrl}
+                        onChange={setOriginalFileUrl}
+                        placeholder="https://drive.google.com/file/d/.../view"
+                        inputClassName="w-full min-w-0 px-3 py-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 placeholder-slate-300"
+                      />
+                    </div>
                     <label className={`flex items-center gap-1.5 px-3 py-2 border border-slate-200 rounded-lg text-[10px] font-bold text-slate-600 bg-white hover:bg-slate-50 cursor-pointer active:scale-95 transition-all shadow-sm ${uploadingOriginal ? "opacity-50 pointer-events-none" : ""}`}>
                       <Upload size={13} className={uploadingOriginal ? "animate-bounce" : ""} />
                       <span>Tải file</span>
@@ -1887,5 +1870,64 @@ export default function DocumentControlPage() {
         </div>
       )}
     </div>
+  );
+}
+
+// ─── Ô "link tệp" của công văn ───
+// Cột scan_file_url / original_file_url chứa hai loại giá trị rất khác nhau:
+// link ngoài do người dùng dán (Drive, OneDrive) và tệp hệ thống đã lưu ở kho
+// riêng tư (chuỗi "private:..."). Đổ thẳng chuỗi "private:..." vào ô nhập text
+// thì nhân viên văn thư nhìn thấy một chuỗi lạ trong ô ghi "Dán link", dễ tưởng
+// hỏng rồi xoá đi — mất liên kết tới tệp. Nên khi là tệp hệ thống thì hiện thẻ
+// tên tệp chỉ đọc, muốn bỏ thì bấm nút gỡ.
+function ClericalFileValue({
+  value,
+  onChange,
+  placeholder,
+  disabled,
+  inputClassName,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  disabled?: boolean;
+  inputClassName: string;
+}) {
+  if (isPrivateRef(value)) {
+    return (
+      <div className="flex items-center gap-1.5 px-2.5 py-2 border border-emerald-200 bg-emerald-50/60 rounded-lg min-w-0">
+        <FileText size={12} className="text-emerald-600 shrink-0" />
+        <span
+          className="flex-1 min-w-0 truncate text-[11px] font-bold text-emerald-700"
+          title={displayNameFromRef(value)}
+        >
+          {displayNameFromRef(value)}
+        </span>
+        <span className="text-[9px] font-extrabold text-emerald-600/70 uppercase tracking-wider shrink-0">
+          đã lưu
+        </span>
+        {!disabled && (
+          <button
+            type="button"
+            onClick={() => onChange("")}
+            title="Gỡ tệp khỏi công văn này (tệp vẫn còn trong kho)"
+            className="p-0.5 text-emerald-600/60 hover:text-rose-600 hover:bg-rose-50 rounded transition-all cursor-pointer shrink-0"
+          >
+            <X size={12} />
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <input
+      type="text"
+      value={value}
+      disabled={disabled}
+      placeholder={placeholder}
+      onChange={(e) => onChange(e.target.value)}
+      className={inputClassName}
+    />
   );
 }
