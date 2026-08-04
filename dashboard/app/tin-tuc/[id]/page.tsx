@@ -69,6 +69,10 @@ export default function NewsDetailPage() {
 
   const [copied, setCopied] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  // Lời nhắn nằm ở đây (không nằm trong modal) để khi gửi lỗi, mở lại là chữ
+  // người dùng gõ vẫn còn nguyên.
+  const [shareNote, setShareNote] = useState("");
+  const [toast, setToast] = useState<{ state: "sending" | "ok" | "error"; text: string } | null>(null);
   const [lightbox, setLightbox] = useState<string | null>(null);
 
   const viewCounted = useRef(false);
@@ -131,6 +135,61 @@ export default function NewsDetailPage() {
       setTimeout(() => setCopied(false), 2000);
     } catch {
       window.prompt("Sao chép đường dẫn bài viết:", window.location.href);
+    }
+  };
+
+  /**
+   * Gửi bài cho đồng nghiệp.
+   *
+   * Đóng hộp thoại NGAY rồi mới gửi, thay vì bắt người dùng ngồi nhìn vòng
+   * xoay: một lượt gửi mất 2-5 giây vì phải đợi trọn cuộc bắt tay SMTP với
+   * máy chủ thư, không rút ngắn được. Kết quả báo bằng thông báo nổi ở góc.
+   * Gửi lỗi thì mở lại hộp thoại, lời nhắn vẫn còn nguyên.
+   */
+  const handleShareSend = async (target: { name: string; email: string }) => {
+    if (!post) return;
+    setShareOpen(false);
+    setToast({ state: "sending", text: `Đang gửi tới ${target.name}...` });
+
+    try {
+      const res = await apiFetch("/api/share-news-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          smtpConfig: readSmtpConfig(),
+          recipientName: target.name,
+          recipientEmails: target.email,
+          senderName: user.name,
+          note: shareNote.trim(),
+          post: {
+            id: post.id,
+            title: post.title,
+            category: post.category,
+            excerpt: post.summary || plainExcerpt(post.content_md, 220),
+          },
+          siteUrl: window.location.origin,
+        }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || "Không gửi được email.");
+
+      setShareNote("");
+      // Dùng câu trả về của máy chủ vì nó ghi kèm ĐỊA CHỈ THẬT đã gửi tới.
+      // Hồ sơ nhân sự hay có nhiều email (công ty + cá nhân), nhìn thấy địa chỉ
+      // cụ thể thì người gửi biết ngay thư đi đâu, khỏi phải đoán khi người
+      // nhận báo "chưa thấy thư".
+      setToast({
+        state: "ok",
+        text: json.message || `Đã gửi bài tới ${target.name}`,
+      });
+      setTimeout(() => setToast(null), 6000);
+    } catch (err: unknown) {
+      setToast({
+        state: "error",
+        text: err instanceof Error ? err.message : "Không gửi được email.",
+      });
+      setShareOpen(true); // mở lại để người dùng sửa và thử lại
     }
   };
 
@@ -376,7 +435,40 @@ export default function NewsDetailPage() {
       </article>
 
       {shareOpen && post && (
-        <ShareByEmailModal post={post} senderName={user.name} onClose={() => setShareOpen(false)} />
+        <ShareByEmailModal
+          post={post}
+          note={shareNote}
+          onNoteChange={setShareNote}
+          onSend={handleShareSend}
+          onClose={() => setShareOpen(false)}
+        />
+      )}
+
+      {/* Thông báo nổi — thay cho việc ngồi đợi trong hộp thoại */}
+      {toast && (
+        <div
+          className={`fixed bottom-6 right-6 z-50 flex items-start gap-2.5 max-w-sm px-4 py-3 rounded-2xl shadow-premium border animate-in fade-in slide-in-from-bottom-2 duration-200 ${
+            toast.state === "ok"
+              ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+              : toast.state === "error"
+              ? "bg-rose-50 border-rose-200 text-rose-700"
+              : "bg-white border-slate-200 text-slate-600"
+          }`}
+        >
+          {toast.state === "sending" && <Loader2 size={15} className="animate-spin text-[#005BAC] mt-0.5 shrink-0" />}
+          {toast.state === "ok" && <Check size={15} className="text-emerald-500 mt-0.5 shrink-0" />}
+          {toast.state === "error" && <AlertCircle size={15} className="text-rose-500 mt-0.5 shrink-0" />}
+          <p className="text-xs font-bold leading-relaxed">{toast.text}</p>
+          {toast.state !== "sending" && (
+            <button
+              onClick={() => setToast(null)}
+              className="p-0.5 opacity-50 hover:opacity-100 transition-opacity cursor-pointer shrink-0"
+              title="Đóng"
+            >
+              <X size={13} />
+            </button>
+          )}
+        </div>
       )}
 
       {lightbox && (
@@ -425,20 +517,21 @@ function Shell({ children, aside }: { children: React.ReactNode; aside?: React.R
 // khi gõ tiếng Việt có dấu (bộ gõ IME), lỗi đã gặp ở các module trước.
 function ShareByEmailModal({
   post,
-  senderName,
+  note,
+  onNoteChange,
+  onSend,
   onClose,
 }: {
   post: NewsPost;
-  senderName: string;
+  note: string;
+  onNoteChange: (v: string) => void;
+  onSend: (target: { name: string; email: string }) => void;
   onClose: () => void;
 }) {
   const [people, setPeople] = useState<{ name: string; email: string; department: string; role: string }[]>([]);
   const [picked, setPicked] = useState(""); // email người được chọn (khoá duy nhất)
   const [search, setSearch] = useState("");
   const [showDropdown, setShowDropdown] = useState(false);
-  const [note, setNote] = useState("");
-  const [sending, setSending] = useState(false);
-  const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
 
@@ -484,45 +577,14 @@ function ShareByEmailModal({
       .slice(0, 30);
   }, [people, search]);
 
-  const handleSend = async () => {
-    const target = selected;
-    if (!target) {
-      setError("Vui lòng chọn người nhận trong danh sách.");
+  // Modal chi chon nguoi va bam gui — viec goi API do trang cha lam, de dong
+  // duoc hop thoai ngay thay vi bat nguoi dung doi 2-5 giay bat tay SMTP.
+  const handleSend = () => {
+    if (!selected) {
+      setError("Vui long chon nguoi nhan trong danh sach.");
       return;
     }
-
-    setSending(true);
-    setError(null);
-    try {
-      const res = await apiFetch("/api/share-news-email", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          smtpConfig: readSmtpConfig(),
-          recipientName: target.name,
-          recipientEmails: target.email,
-          senderName,
-          note: note.trim(),
-          post: {
-            id: post.id,
-            title: post.title,
-            category: post.category,
-            excerpt: post.summary || plainExcerpt(post.content_md, 220),
-          },
-          siteUrl: window.location.origin,
-        }),
-      });
-
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json.error || "Không gửi được email.");
-
-      setDone(true);
-      setTimeout(onClose, 1400);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Không gửi được email.");
-    } finally {
-      setSending(false);
-    }
+    onSend({ name: selected.name, email: selected.email });
   };
 
   return (
@@ -545,15 +607,7 @@ function ShareByEmailModal({
         </div>
 
         <div className="p-6 space-y-4">
-          {done ? (
-            <div className="flex flex-col items-center gap-2.5 py-6 text-center">
-              <div className="w-12 h-12 rounded-2xl bg-emerald-50 flex items-center justify-center">
-                <Check size={22} className="text-emerald-500" />
-              </div>
-              <p className="text-sm font-bold text-slate-700">Đã gửi email</p>
-            </div>
-          ) : (
-            <>
+          <>
               {error && (
                 <div className="flex items-start gap-2 p-3 bg-rose-50 border border-rose-100 rounded-xl text-rose-600">
                   <AlertCircle size={14} className="mt-0.5 shrink-0" />
@@ -654,7 +708,7 @@ function ShareByEmailModal({
                 </label>
                 <textarea
                   value={note}
-                  onChange={(e) => setNote(e.target.value)}
+                  onChange={(e) => onNoteChange(e.target.value)}
                   rows={3}
                   placeholder="VD: Anh/Chị xem giúp em thông báo này nhé."
                   className="w-full px-4 py-2.5 text-xs bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40 transition-all font-medium resize-none"
@@ -663,14 +717,12 @@ function ShareByEmailModal({
 
               <button
                 onClick={handleSend}
-                disabled={sending}
-                className="w-full inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-bold text-white bg-gradient-to-r from-[#005BAC] to-[#00AEEF] rounded-xl shadow-md shadow-blue-500/20 hover:shadow-lg transition-all active:scale-[0.99] cursor-pointer disabled:opacity-60"
+                className="w-full inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-bold text-white bg-gradient-to-r from-[#005BAC] to-[#00AEEF] rounded-xl shadow-md shadow-blue-500/20 hover:shadow-lg transition-all active:scale-[0.99] cursor-pointer"
               >
-                {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                <Send size={14} />
                 Gửi email
               </button>
-            </>
-          )}
+          </>
         </div>
       </div>
     </div>
