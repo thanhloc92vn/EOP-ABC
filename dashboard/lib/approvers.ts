@@ -36,6 +36,9 @@ export type ApprovalPermissions = {
   canManageProjectLocations: boolean; // Quản lý vị trí dự án trên bản đồ (/vi-tri-du-an):
                                       // thấy nút "Quản lý vị trí" + ghi được project_locations
                                       // (RLS migration 017). Không có cờ -> chỉ xem bản đồ.
+  canManageNews: boolean; // Đăng/sửa/xoá tin nội bộ (/tin-tuc) + ghi bucket news-media
+                          // (RLS migration 023). XEM tin thì ai đăng nhập cũng được,
+                          // cờ này chỉ mở quyền ĐĂNG BÀI.
   // Quan hệ giám sát: tên hiển thị (khớp cột `assignee` dạng text) của người mà chủ
   // dòng này được thấy task, ngoài task của chính họ. VD: Như Quỳnh -> "Thanh Hằng".
   supervisesName: string | null;
@@ -59,6 +62,7 @@ export const NO_APPROVAL_PERMISSIONS: ApprovalPermissions = {
   canViewAllTasks: false,
   canManageVpp: false,
   canManageProjectLocations: false,
+  canManageNews: false,
   supervisesName: null,
 };
 
@@ -349,6 +353,7 @@ export async function fetchApprovalPermissions(email?: string | null): Promise<A
       canViewAllTasks: !!row.can_view_all_tasks,
       canManageVpp: !!row.can_manage_vpp,
       canManageProjectLocations: !!row.can_manage_project_locations,
+      canManageNews: !!row.can_manage_news,
       supervisesName: row.supervises_name || null,
     };
   } catch {

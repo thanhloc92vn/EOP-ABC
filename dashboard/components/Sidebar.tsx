@@ -21,7 +21,8 @@ import {
   CarFront,
   DoorOpen,
   ChevronDown,
-  MapPin
+  MapPin,
+  Newspaper
 } from "lucide-react";
 import { useSidebar } from "./SidebarContext";
 import ThemeToggle from "./ThemeToggle";
@@ -43,6 +44,7 @@ function SidebarLinks({ isApprover, pathname, setSidebarOpen }: { isApprover: bo
 
   const navItems = [
     { label: "Dashboard", href: "/", icon: LayoutDashboard },
+    { label: "Tin tức", href: "/tin-tuc", icon: Newspaper },
     { label: "Vị trí dự án", href: "/vi-tri-du-an", icon: MapPin },
     { label: "Quản lý Công việc", href: "/tasks", icon: ClipboardList },
     { label: "Lịch công việc", href: "/calendar", icon: CalendarRange },

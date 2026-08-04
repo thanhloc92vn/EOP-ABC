@@ -6,6 +6,7 @@ import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
 import { useTenantConfig } from "@/lib/tenantConfig";
 import { useCurrentUser } from "@/lib/useCurrentUser";
+import LatestNewsSection from "@/components/news/LatestNewsSection";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 import {
   Users,
@@ -372,6 +373,9 @@ export default function DashboardPage() {
             </div>
           ) : (
             <>
+              {/* ── Tin mới nhất (module Tin tức) — tự ẩn khi chưa có bài ── */}
+              <LatestNewsSection />
+
               {/* ── Chi phí hành chính tổng hợp 2 khối (chỉ Admin/HCNS) ── */}
               {isHcnsViewer && (
                 <section className="space-y-4 animate-in fade-in duration-200">

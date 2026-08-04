@@ -66,6 +66,7 @@ const FLAG_GROUPS: { title: string; flags: { key: string; label: string; desc: s
       { key: "can_view_all_tasks", label: "Xem toàn bộ công việc", desc: "Thấy mọi thẻ Kanban thay vì chỉ việc của mình" },
       { key: "can_manage_vpp", label: "Phụ trách VPP", desc: "Thấy mọi phiếu VPP của tất cả phòng ban" },
       { key: "can_manage_project_locations", label: "Quản lý vị trí dự án", desc: "Thêm/sửa/xoá toạ độ dự án trên bản đồ Vị trí dự án" },
+      { key: "can_manage_news", label: "Tin tức — Đăng bài", desc: "Đăng, sửa, xoá tin nội bộ (thông báo, giới thiệu, sự kiện)" },
     ],
   },
 ];

@@ -55,6 +55,7 @@ export function isDirectorRole(role?: string | null): boolean {
 export type ModuleKey =
   | "dashboard"
   | "project_locations"
+  | "news"
   | "tasks"
   | "calendar"
   | "booking"
@@ -83,6 +84,10 @@ export const MODULE_REGISTRY: Record<ModuleKey, ModuleDef> = {
   administration: { minPlan: "basic", route: "/administration", grantFlag: "canViewInvoices" },
   meeting:        { minPlan: "basic", route: "/meeting-team" },
   project_locations: { minPlan: "basic", route: "/vi-tri-du-an" },
+  // Tin tức: ai đăng nhập cũng ĐỌC được (kênh truyền thông nội bộ). grantFlag ở
+  // đây chỉ để người được cấp quyền đăng bài vẫn vào được trang khi phòng của họ
+  // bị hạ gói — quyền ĐĂNG kiểm ở RLS (caller_can_manage_news, migration 023).
+  news:           { minPlan: "basic", route: "/tin-tuc", grantFlag: "canManageNews" },
   // Module C&B mở từ Basic, NHƯNG lương/BHXH/HĐLĐ bên trong vẫn khoá theo cờ
   // can_view_salary (app/cb/page.tsx > hasFullAccess) — gói không mở khoá lương.
   cb:             { minPlan: "basic", route: "/cb", grantFlag: "canViewSalary" },

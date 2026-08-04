@@ -32,7 +32,8 @@ export function isPlanAtLeast(current: Plan, min: Plan): boolean {
 // ─── PHÂN GÓI THEO ROUTE ───
 // Khớp theo prefix dài nhất; route không liệt kê = basic (luôn mở).
 // Basic:        Dashboard, Công việc, Lịch, Đăng ký xe/phòng họp, Hành chính & Tài sản,
-//                 Biên bản họp, Phòng ban, Cài đặt, Vị trí dự án, Lương & Phúc lợi (C&B)
+//                 Biên bản họp, Phòng ban, Cài đặt, Vị trí dự án, Lương & Phúc lợi (C&B),
+//                 Tin tức
 // Professional: + Danh sách nhân viên, Góp ý & Kiến nghị, Tuyển dụng,
 //                 Văn thư, Tổng hợp (= tất cả, trừ Tìm kiếm AI)
 // Enterprise:   + Tìm kiếm AI thông minh
@@ -42,6 +43,7 @@ export function isPlanAtLeast(current: Plan, min: Plan): boolean {
 // lương. Xem app/cb/page.tsx (hasFullAccess) và RLS bảng contracts.
 export const ROUTE_MIN_PLAN: { prefix: string; min: Plan }[] = [
   { prefix: "/vi-tri-du-an", min: "basic" },
+  { prefix: "/tin-tuc", min: "basic" },
   { prefix: "/cb", min: "basic" },
   { prefix: "/employees", min: "professional" },
   { prefix: "/suggestions", min: "professional" },
