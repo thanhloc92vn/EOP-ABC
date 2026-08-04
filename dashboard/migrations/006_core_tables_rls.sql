@@ -21,6 +21,17 @@
 -- ⇒ Chạy trên production TNEC = KHÔNG ĐỔI GÌ (no-op an toàn).
 -- ⇒ Chạy trên project mới = thiết lập mức bảo vệ tối thiểu đúng đắn.
 --
+-- ⚠ QUAN HỆ VỚI MIGRATION 010 (sửa 04/08/2026):
+-- Bản đầu của file này tạo cho `tasks` MỘT policy `FOR ALL using(true)`. Trong
+-- `pg_policies` policy đó mang `cmd = 'ALL'`, mà vòng dọn dẹp của migration 010
+-- chỉ lọc `cmd = 'DELETE'` -> nó không bị gỡ, và vì các permissive policy được
+-- OR với nhau nên `using(true)` vẫn cho phép XOÁ. Hệ quả: trên một project chạy
+-- tuần tự 001->022, khoá xoá của 010 bị vô hiệu HOÀN TOÀN.
+-- Nay tách thành 3 policy riêng SELECT / INSERT / UPDATE, KHÔNG có DELETE, để
+-- 010 là nơi duy nhất định đoạt quyền xoá.
+-- (Production TNEC không dính lỗi này: policy `tasks` ở đó do người vận hành
+-- tạo tay, đã tách sẵn theo lệnh — kiểm chứng bằng pg_policies ngày 04/08/2026.)
+--
 -- CÁCH CHẠY: Supabase Dashboard -> SQL Editor -> New Query -> dán và Run.
 -- An toàn chạy lại nhiều lần.
 -- ============================================================
@@ -105,9 +116,18 @@ begin
       -- viên cần tạo đơn và cập nhật việc của mình, việc lọc ai thấy gì đang
       -- xử lý ở UI (can_view_all_tasks / supervises_name). Ở tầng RLS chỉ cần
       -- chặn anon.
-      execute 'create policy "authenticated_all_tasks" on public.tasks
-                 for all to authenticated using (true) with check (true)';
-      raise notice 'Đã tạo policy mặc định cho tasks';
+      -- TÁCH THEO LỆNH, KHÔNG DÙNG `FOR ALL` — xem ghi chú đầu file: `FOR ALL`
+      -- sẽ nuốt luôn quyền DELETE và vô hiệu hoá migration 010.
+      execute 'create policy "authenticated_select_tasks" on public.tasks
+                 for select to authenticated using (true)';
+      execute 'create policy "authenticated_insert_tasks" on public.tasks
+                 for insert to authenticated with check (true)';
+      execute 'create policy "authenticated_update_tasks" on public.tasks
+                 for update to authenticated using (true) with check (true)';
+      -- Cố ý KHÔNG tạo policy DELETE ở đây: migration 010 tạo, giới hạn về
+      -- cấp quản lý / người phụ trách. Chưa chạy 010 = không ai xoá được, đó
+      -- là hướng fail an toàn.
+      raise notice 'Đã tạo policy mặc định cho tasks (select/insert/update)';
 
     elsif t = 'allowed_users' then
       -- AuthWrapper đọc bảng này ngay sau khi đăng nhập để xác định Admin.
@@ -122,6 +142,55 @@ begin
   end loop;
 end $$;
 
+-- ─── VÁ NGƯỢC: gỡ policy `FOR ALL` do BẢN CŨ của chính file này tạo ───
+-- Chỉ chạm vào đúng một policy mang tên `authenticated_all_tasks` — dấu vết
+-- riêng của bản cũ. Project nào không có nó (kể cả production TNEC) thì khối
+-- này là no-op tuyệt đối.
+-- Gỡ xong phải cấp bù SELECT/INSERT/UPDATE, nếu không thì tenant nào đã chạy
+-- cả 006 cũ lẫn 010 sẽ chỉ còn mỗi policy DELETE và bảng `tasks` chết hẳn.
+do $$
+begin
+  if not exists (
+    select 1 from pg_tables where schemaname = 'public' and tablename = 'tasks'
+  ) then
+    return;
+  end if;
+
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'tasks'
+      and policyname = 'authenticated_all_tasks'
+  ) then
+    raise notice 'tasks: không có policy FOR ALL cũ — không cần vá';
+    return;
+  end if;
+
+  execute 'drop policy if exists "authenticated_all_tasks" on public.tasks';
+  raise notice 'tasks: ĐÃ GỠ policy FOR ALL cũ (nó vô hiệu hoá migration 010)';
+
+  -- Cấp bù theo từng lệnh, chỉ khi lệnh đó chưa có policy nào khác phủ.
+  if not exists (select 1 from pg_policies
+                 where schemaname='public' and tablename='tasks' and cmd='SELECT') then
+    execute 'create policy "authenticated_select_tasks" on public.tasks
+               for select to authenticated using (true)';
+    raise notice 'tasks: đã cấp bù policy SELECT';
+  end if;
+
+  if not exists (select 1 from pg_policies
+                 where schemaname='public' and tablename='tasks' and cmd='INSERT') then
+    execute 'create policy "authenticated_insert_tasks" on public.tasks
+               for insert to authenticated with check (true)';
+    raise notice 'tasks: đã cấp bù policy INSERT';
+  end if;
+
+  if not exists (select 1 from pg_policies
+                 where schemaname='public' and tablename='tasks' and cmd='UPDATE') then
+    execute 'create policy "authenticated_update_tasks" on public.tasks
+               for update to authenticated using (true) with check (true)';
+    raise notice 'tasks: đã cấp bù policy UPDATE';
+  end if;
+end $$;
+
 -- ─── KIỂM TRA KẾT QUẢ ───
 -- rls_bat phải = true cho cả 3 bảng.
 select
@@ -134,3 +203,10 @@ join pg_namespace n on n.oid = c.relnamespace
 where n.nspname = 'public'
   and c.relname in ('employees', 'tasks', 'allowed_users')
 order by c.relname;
+
+-- Riêng `tasks`: cột `cmd` KHÔNG được có giá trị 'ALL'. Nếu thấy 'ALL' nghĩa là
+-- còn một policy nuốt trọn mọi lệnh và migration 010 đang bị vô hiệu.
+select policyname, cmd, permissive, coalesce(qual, '—') as dieu_kien_using
+from pg_policies
+where schemaname = 'public' and tablename = 'tasks'
+order by cmd, policyname;
