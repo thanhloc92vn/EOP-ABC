@@ -418,6 +418,16 @@ export default function AdministrationPage() {
   // cách cũ khiến lần render đầu hiện số tồn kho cũ của máy rồi mới bị server
   // đè lên, người dùng thấy số sai thoáng qua.
   const [supplies, setSupplies] = useState<SupplyItem[]>([]);
+  // Sổ nhập kho: mỗi lần nhập/điều chỉnh một dòng, có ngày. Dùng cho mục
+  // "VPP nhập trong tháng" của Báo cáo tổng hợp.
+  const [stockEntries, setStockEntries] = useState<{
+    id: string;
+    supply_id: string;
+    qty: number;
+    entry_date: string;
+    note: string;
+    created_by: string;
+  }[]>([]);
   // Danh tính người dùng — hook chung (thay khối allowed_users + employees +
   // fetchApprovalPermissions từng copy-paste ở mỗi trang).
   const user = useCurrentUser();
@@ -735,6 +745,22 @@ export default function AdministrationPage() {
   const [vppSourceViewer, setVppSourceViewer] = useState<{ url: string; name: string } | null>(null);
 
   // VPP Slip Preview & Download States
+  // Báo cáo tổng hợp VPP theo tháng (4 mục: nhập / định mức / xuất / đề xuất mua)
+  const [showVppReportModal, setShowVppReportModal] = useState(false);
+  const [vppReportMonth, setVppReportMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  // Định mức (migration 025): phòng ban × vật tư × tháng, hành chính nhập tay
+  const [quotas, setQuotas] = useState<{
+    id: string;
+    department: string;
+    supply_id: string;
+    month: string;
+    qty: number;
+  }[]>([]);
+  const [quotaDept, setQuotaDept] = useState("");
+  // Bản nháp đang gõ, tách khỏi `quotas` đã lưu để biết dòng nào thật sự đổi
+  const [quotaDraft, setQuotaDraft] = useState<Record<string, string>>({});
+  const [savingQuota, setSavingQuota] = useState(false);
+
   const [showSlipPreviewModal, setShowSlipPreviewModal] = useState(false);
   const [slipPreviewTargetType, setSlipPreviewTargetType] = useState<"phongban" | "duan">("phongban");
   const [slipPreviewTargetName, setSlipPreviewTargetName] = useState("");
@@ -1096,6 +1122,194 @@ export default function AdministrationPage() {
       .sort((a, b) => (b.month || "").localeCompare(a.month || ""));
   }, [deptRequests]);
 
+  // ─── Báo cáo tổng hợp, mục "Đề xuất mua VPP" ───
+  // Bám đúng ngưỡng cảnh báo vàng của bảng tồn kho (số dư cuối kỳ < 15) để hai
+  // màn hình không nói hai chuyện khác nhau. Đặt thành hằng số có tên thay vì
+  // rải số 15 ở nhiều nơi.
+  const VPP_LOW_STOCK_THRESHOLD = 15;
+  const VPP_PURCHASE_TRIGGER_RATIO = 0.5; // quá 50% danh mục cảnh báo thì đề xuất mua
+
+  const vppPurchaseSuggestion = useMemo(() => {
+    const total = suppliesWithDynamicAllocated.length;
+    const lowStock = suppliesWithDynamicAllocated
+      .filter(s => s.ending < VPP_LOW_STOCK_THRESHOLD)
+      .map(s => {
+        // Lượng đã cấp trong tháng đang xem — số tham khảo để người lập tự
+        // quyết mua bao nhiêu; hệ thống cố ý KHÔNG tự tính hộ.
+        const usedThisMonth = deptRequests
+          .filter(r =>
+            r.status === "Đã cấp phát" &&
+            monthOfRequest(r) === vppReportMonth &&
+            findMatchingSupply(r.item)?.id === s.id
+          )
+          .reduce((sum, r) => sum + r.qty, 0);
+        return { supply: s, usedThisMonth };
+      })
+      .sort((a, b) => a.supply.ending - b.supply.ending);
+
+    const ratio = total > 0 ? lowStock.length / total : 0;
+    return {
+      total,
+      lowStock,
+      ratio,
+      shouldBuy: total > 0 && ratio > VPP_PURCHASE_TRIGGER_RATIO,
+    };
+  }, [suppliesWithDynamicAllocated, deptRequests, vppReportMonth]);
+
+  // ─── Báo cáo tổng hợp, mục "Định mức VPP theo tháng" ───
+  // Mỗi vật tư một dòng: định mức đã lưu của phòng đang chọn, đối chiếu với
+  // lượng THỰC CẤP cho chính phòng đó trong tháng. Khớp phiếu với danh mục bằng
+  // findMatchingSupply (so gần đúng, bỏ dấu) vì tên trên phiếu do người dùng gõ.
+  const quotaRowsOfDept = useMemo(() => {
+    const savedBySupply = new Map<string, number>();
+    quotas.forEach(q => {
+      if (q.month !== vppReportMonth) return;
+      if (q.department.trim().toLowerCase() !== quotaDept.trim().toLowerCase()) return;
+      savedBySupply.set(q.supply_id, q.qty);
+    });
+
+    const usedBySupply = new Map<string, number>();
+    deptRequests.forEach(r => {
+      if (r.status !== "Đã cấp phát") return;
+      if (monthOfRequest(r) !== vppReportMonth) return;
+      if ((r.targetName || "").trim().toLowerCase() !== quotaDept.trim().toLowerCase()) return;
+      const supply = findMatchingSupply(r.item);
+      if (!supply) return;
+      usedBySupply.set(supply.id, (usedBySupply.get(supply.id) || 0) + r.qty);
+    });
+
+    return supplies.map(s => {
+      const quota = savedBySupply.get(s.id) ?? 0;
+      const used = usedBySupply.get(s.id) || 0;
+      return {
+        supply: s,
+        quota,
+        used,
+        // Chỉ coi là vượt khi CÓ đặt định mức; chưa đặt (0) thì không kết luận gì
+        over: quota > 0 && used > quota,
+      };
+    });
+  }, [quotas, quotaDept, vppReportMonth, deptRequests, supplies]);
+
+  // Mở bản nháp theo phòng/tháng đang chọn — gõ dở ở phòng này rồi đổi sang
+  // phòng khác thì phải nạp lại số của phòng mới, không mang số cũ theo.
+  useEffect(() => {
+    const draft: Record<string, string> = {};
+    quotaRowsOfDept.forEach(r => {
+      draft[r.supply.id] = String(r.quota);
+    });
+    setQuotaDraft(draft);
+    // Chỉ nạp lại khi đổi phòng/tháng hoặc khi dữ liệu đã lưu thay đổi
+  }, [quotaDept, vppReportMonth, quotas, supplies]);
+
+  /** Lưu định mức: chỉ ghi những dòng thật sự đổi so với số đã lưu. */
+  const handleSaveQuotas = async () => {
+    if (!quotaDept) {
+      alert("Vui lòng chọn phòng ban / ban điều hành trước khi lưu định mức.");
+      return;
+    }
+    setSavingQuota(true);
+    try {
+      for (const row of quotaRowsOfDept) {
+        const nextQty = Math.max(0, Number(quotaDraft[row.supply.id] ?? 0) || 0);
+        if (nextQty === row.quota) continue;
+
+        const existing = quotas.find(
+          q => q.month === vppReportMonth
+            && q.supply_id === row.supply.id
+            && q.department.trim().toLowerCase() === quotaDept.trim().toLowerCase()
+        );
+
+        // Insert/update thủ công thay vì upsert: chỉ mục duy nhất của bảng đặt
+        // trên BIỂU THỨC lower(btrim(department)), mà tham số on_conflict của
+        // PostgREST chỉ nhận tên cột trần nên không trỏ tới chỉ mục đó được.
+        if (existing) {
+          const { error } = await supabase
+            .from("vpp_quotas")
+            .update({ qty: nextQty })
+            .eq("id", existing.id);
+          if (error) throw error;
+        } else {
+          const { error } = await supabase.from("vpp_quotas").insert([{
+            department: quotaDept,
+            supply_id: row.supply.id,
+            month: vppReportMonth,
+            qty: nextQty,
+          }]);
+          if (error) throw error;
+        }
+      }
+      await fetchQuotas();
+      alert(`Đã lưu định mức ${formatMonthLabel(vppReportMonth).toLowerCase()} cho ${quotaDept}.`);
+    } catch (err: any) {
+      console.error("Error saving VPP quotas:", err);
+      alert("Không lưu được định mức: " + (err.message || err) + "\n" + NO_VPP_PERMISSION_MSG);
+    } finally {
+      setSavingQuota(false);
+    }
+  };
+
+  // ─── Báo cáo tổng hợp, mục "VPP nhập trong tháng" ───
+  // Cộng các dòng sổ có `entry_date` rơi vào tháng đang chọn. Dòng âm là điều
+  // chỉnh giảm nên cứ cộng thẳng, kết quả ra đúng lượng nhập ròng của tháng.
+  const vppImportedInMonth = useMemo(() => {
+    const bySupply = new Map<string, { item: string; unit: string; qty: number; times: number }>();
+
+    stockEntries.forEach(e => {
+      if (!(e.entry_date || "").startsWith(vppReportMonth)) return;
+      const supply = supplies.find(s => s.id === e.supply_id);
+      // Vật tư đã bị xoá khỏi danh mục thì dòng sổ cũng bị xoá theo (khoá ngoại
+      // on delete cascade), nên tới đây gần như luôn tìm thấy.
+      const name = supply?.name || "(vật tư đã xoá)";
+      const existing = bySupply.get(e.supply_id);
+      if (!existing) {
+        bySupply.set(e.supply_id, { item: name, unit: supply?.unit || "", qty: e.qty, times: 1 });
+        return;
+      }
+      existing.qty += e.qty;
+      existing.times += 1;
+    });
+
+    return Array.from(bySupply.values())
+      .filter(r => r.qty !== 0)
+      .sort((a, b) => b.qty - a.qty);
+  }, [stockEntries, supplies, vppReportMonth]);
+
+  // ─── Báo cáo tổng hợp, mục "VPP xuất trong tháng" ───
+  // Gom TOÀN BỘ phiếu đã cấp phát của cả công ty trong tháng đang chọn, quy về
+  // mỗi vật tư một dòng. Không cần dữ liệu mới: phiếu nằm trong `tasks` và đã
+  // có ngày cấp phát, `monthOfRequest` lo phần đọc ngày ở mọi định dạng.
+  const vppExportedInMonth = useMemo(() => {
+    const byItem = new Map<string, { item: string; unit: string; qty: number; targets: Set<string>; slips: Set<string> }>();
+
+    deptRequests.forEach(r => {
+      if (r.status !== "Đã cấp phát") return;
+      if (monthOfRequest(r) !== vppReportMonth) return;
+
+      const key = r.item.trim().toLowerCase();
+      const supply = findMatchingSupply(r.item);
+      const existing = byItem.get(key);
+      const slipId = r.id.includes("__") ? r.id.split("__")[0] : r.id;
+
+      if (!existing) {
+        byItem.set(key, {
+          item: r.item,
+          unit: r.unit || supply?.unit || "",
+          qty: r.qty,
+          targets: new Set([r.targetName || r.dept || "Chưa rõ"]),
+          slips: new Set([slipId]),
+        });
+        return;
+      }
+      existing.qty += r.qty;
+      existing.targets.add(r.targetName || r.dept || "Chưa rõ");
+      existing.slips.add(slipId);
+      if (!existing.unit && (r.unit || supply?.unit)) existing.unit = r.unit || supply?.unit || "";
+    });
+
+    return Array.from(byItem.values()).sort((a, b) => b.qty - a.qty);
+  }, [deptRequests, vppReportMonth, supplies]);
+
   const formatMonthLabel = (month: string) => {
     if (!month) return "Chưa rõ tháng";
     const [y, m] = month.split("-");
@@ -1264,6 +1478,63 @@ export default function AdministrationPage() {
       setSupplies((data || []).map(mapSupplyRow));
     } catch (err) {
       console.error("Error fetching supplies catalog from Supabase:", err);
+    }
+  };
+
+  // Sổ nhập kho (migration 025) — chỉ dùng để bóc tách "nhập trong tháng".
+  // Số dư cuối kỳ vẫn tính từ `vpp_supplies.imported` như cũ, không đổi.
+  const fetchStockEntries = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("vpp_stock_entries")
+        .select("id, supply_id, qty, entry_date, note, created_by")
+        .order("entry_date", { ascending: false });
+
+      if (error) throw error;
+      setStockEntries(data || []);
+    } catch (err) {
+      console.error("Error fetching VPP stock entries from Supabase:", err);
+    }
+  };
+
+  /**
+   * Ghi một dòng sổ nhập kho.
+   *
+   * `qty` là PHẦN CHÊNH LỆCH, không phải số tổng: dương là nhập thêm, âm là
+   * điều chỉnh giảm khi sửa lại số gõ nhầm (migration 026 cho phép số âm).
+   * Chênh lệch bằng 0 thì không ghi — dòng sổ không nói lên điều gì.
+   *
+   * Cố ý KHÔNG chặn luồng khi ghi sổ hỏng: số dư cuối kỳ đã được cập nhật ở
+   * `vpp_supplies.imported` rồi, tồn kho vẫn đúng. Chỉ báo cáo theo tháng thiếu
+   * dòng này, nên báo nhẹ thay vì dựng người dùng dậy giữa chừng.
+   */
+  const logStockEntry = async (supplyId: string, qty: number, note: string) => {
+    if (!qty) return;
+    try {
+      const { error } = await supabase.from("vpp_stock_entries").insert([{
+        supply_id: supplyId,
+        qty,
+        entry_date: new Date().toISOString().slice(0, 10),
+        note,
+        created_by: currentUser?.email || "",
+      }]);
+      if (error) throw error;
+      fetchStockEntries();
+    } catch (err) {
+      console.error("Error writing VPP stock entry:", err);
+    }
+  };
+
+  const fetchQuotas = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("vpp_quotas")
+        .select("id, department, supply_id, month, qty");
+
+      if (error) throw error;
+      setQuotas(data || []);
+    } catch (err) {
+      console.error("Error fetching VPP quotas from Supabase:", err);
     }
   };
 
@@ -1470,6 +1741,8 @@ export default function AdministrationPage() {
       fetchDeptRequests();
       fetchSuppliers();
       fetchSuppliesCatalog();
+      fetchStockEntries();
+      fetchQuotas();
       fetchReportRows();
       fetchChecklist();
 
@@ -3226,7 +3499,18 @@ export default function AdministrationPage() {
 
   const handleSaveImported = async (item: SupplyItem) => {
     setEditingImportedName(null);
-    await updateSupply(item, { imported: Math.max(0, editingImportedVal) });
+    const nextImported = Math.max(0, editingImportedVal);
+    // Ô này sửa SỐ TỔNG, còn sổ ghi theo PHẦN CHÊNH LỆCH — có vậy báo cáo mới
+    // biết tháng nào nhập bao nhiêu.
+    const delta = nextImported - (item.imported || 0);
+    await updateSupply(item, { imported: nextImported });
+    if (delta !== 0) {
+      await logStockEntry(
+        item.id,
+        delta,
+        delta > 0 ? "Nhập kho" : "Điều chỉnh giảm số nhập kho"
+      );
+    }
   };
 
   // VPP Edit category handlers
@@ -4462,6 +4746,7 @@ export default function AdministrationPage() {
                   )}
 
                   {/* VPP Sub-navigation (Modern Capsule Segmented Style) */}
+                  <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="bg-slate-100/90 p-1 rounded-xl flex flex-wrap gap-1.5 w-fit border border-slate-200/50 shadow-sm">
                     {isHcnsViewer && (
                     <button
@@ -4507,6 +4792,22 @@ export default function AdministrationPage() {
                       <Briefcase size={13} />
                       3. VPP cấp cho Ban điều hành dự án
                     </button>
+                  </div>
+
+                  {/* Báo cáo tổng hợp — số liệu TOÀN CÔNG TY nên chỉ HCNS xem */}
+                  {isHcnsViewer && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        // Mồi sẵn phòng đầu danh sách để mục Định mức có gì mà hiện
+                        if (!quotaDept && allocationTargets.length > 0) setQuotaDept(allocationTargets[0].name);
+                        setShowVppReportModal(true);
+                      }}
+                      className="flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-bold px-4 py-2.5 rounded-xl shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200"
+                    >
+                      <BarChart3 size={14} className="text-[#005BAC]" /> Báo cáo tổng hợp
+                    </button>
+                  )}
                   </div>
 
                   {/* Sub-tab 1: Inventory Table — chỉ HCNS */}
@@ -4906,9 +5207,9 @@ export default function AdministrationPage() {
                                   {/* Trạng thái tồn kho */}
                                   <td className="py-3.5 px-4 text-center">
                                     <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold ${
-                                      item.ending < 15 ? "bg-amber-100 text-amber-700 animate-pulse" : "bg-emerald-100 text-emerald-700"
+                                      item.ending < VPP_LOW_STOCK_THRESHOLD ? "bg-amber-100 text-amber-700 animate-pulse" : "bg-emerald-100 text-emerald-700"
                                     }`}>
-                                      {item.ending < 15 ? "Cảnh báo" : "Bình thường"}
+                                      {item.ending < VPP_LOW_STOCK_THRESHOLD ? "Cảnh báo" : "Bình thường"}
                                     </span>
                                   </td>
                                   {canDeleteSupplies && (
@@ -6042,6 +6343,324 @@ export default function AdministrationPage() {
                               </div>
                             );
                           })()}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Báo cáo tổng hợp VPP theo tháng */}
+                  {showVppReportModal && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+                      <div className="bg-slate-100 rounded-2xl max-w-4xl w-full p-6 border border-slate-200 shadow-2xl relative flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200">
+                        <button
+                          onClick={() => setShowVppReportModal(false)}
+                          className="absolute right-4 top-4 p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-200/50 rounded-lg transition-all"
+                        >
+                          <X size={16} />
+                        </button>
+
+                        <div className="border-b border-slate-200/80 pb-3 shrink-0 flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-xl bg-blue-50 flex items-center justify-center text-[#005BAC]">
+                            <BarChart3 size={18} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h3 className="font-heading font-extrabold text-sm text-slate-800">Báo cáo tổng hợp Văn phòng phẩm</h3>
+                            <p className="text-[10px] text-slate-400 font-semibold mt-0.5">Số liệu toàn công ty theo từng tháng</p>
+                          </div>
+                          <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl px-3 py-1.5 shrink-0 mr-8">
+                            <Calendar size={12} className="text-slate-400" />
+                            <input
+                              type="month"
+                              value={vppReportMonth}
+                              onChange={(e) => setVppReportMonth(e.target.value)}
+                              className="bg-transparent border-none outline-none font-bold text-slate-700 text-xs cursor-pointer"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="py-4 overflow-y-auto flex-1 pr-1 space-y-5">
+                          {/* ── Mục: VPP nhập trong tháng ── */}
+                          <section className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm space-y-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <h4 className="font-heading font-bold text-slate-800 text-xs">VPP nhập trong tháng</h4>
+                                <p className="text-[10px] text-slate-400 font-semibold mt-0.5">
+                                  Ghi nhận từ sổ nhập kho — số dư cuối kỳ tháng trước là đầu kỳ tháng này, phần cộng thêm nằm ở đây
+                                </p>
+                              </div>
+                              <span className="inline-flex items-center px-3 py-1.5 rounded-xl text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-100 shrink-0">
+                                {vppImportedInMonth.length} vật tư · {vppImportedInMonth.reduce((s, r) => s + r.qty, 0)} đã nhập
+                              </span>
+                            </div>
+
+                            <div className="overflow-x-auto rounded-xl border border-slate-100">
+                              <table className="w-full text-xs text-left">
+                                <thead>
+                                  <tr className="bg-slate-50/75 border-b border-slate-100 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                                    <th className="py-2.5 px-3 w-10 text-center">TT</th>
+                                    <th className="py-2.5 px-3">Vật tư</th>
+                                    <th className="py-2.5 px-3 w-20 text-center">Đơn vị</th>
+                                    <th className="py-2.5 px-3 w-24 text-center">Số lượng nhập</th>
+                                    <th className="py-2.5 px-3 w-24 text-center">Số lần nhập</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100 font-semibold text-slate-600">
+                                  {vppImportedInMonth.length === 0 ? (
+                                    <tr>
+                                      <td colSpan={5} className="py-8 text-center text-slate-400 font-medium italic">
+                                        Tháng này chưa nhập kho vật tư nào.
+                                      </td>
+                                    </tr>
+                                  ) : (
+                                    vppImportedInMonth.map((row, idx) => (
+                                      <tr key={row.item} className="hover:bg-slate-50/50 transition-colors">
+                                        <td className="py-2.5 px-3 text-center font-mono text-slate-400">{idx + 1}</td>
+                                        <td className="py-2.5 px-3 font-bold text-slate-800">{row.item}</td>
+                                        <td className="py-2.5 px-3 text-center text-slate-500">{row.unit || "—"}</td>
+                                        <td className="py-2.5 px-3 text-center font-black text-blue-700">{row.qty}</td>
+                                        <td className="py-2.5 px-3 text-center text-slate-500">{row.times}</td>
+                                      </tr>
+                                    ))
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
+                          </section>
+
+                          {/* ── Mục: Định mức VPP theo tháng ── */}
+                          <section className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm space-y-3">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <h4 className="font-heading font-bold text-slate-800 text-xs">Định mức VPP theo tháng</h4>
+                                <p className="text-[10px] text-slate-400 font-semibold mt-0.5">
+                                  Hành chính nhập tay để theo dõi. Hệ thống chỉ đối chiếu và báo khi vượt, không tự chặn phiếu.
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs">
+                                  <Building2 size={12} className="text-slate-400" />
+                                  <select
+                                    value={quotaDept}
+                                    onChange={(e) => setQuotaDept(e.target.value)}
+                                    className="bg-transparent border-none outline-none font-semibold text-slate-700 cursor-pointer text-xs max-w-[200px]"
+                                  >
+                                    {allocationTargets.length === 0 ? (
+                                      <option value="">-- Chưa có phòng ban --</option>
+                                    ) : (
+                                      allocationTargets.map(t => (
+                                        <option key={t.id} value={t.name}>{t.name}</option>
+                                      ))
+                                    )}
+                                  </select>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={handleSaveQuotas}
+                                  disabled={savingQuota || !quotaDept}
+                                  className="flex items-center gap-1.5 bg-[#005BAC] hover:bg-blue-700 disabled:bg-slate-300 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-sm transition-all active:scale-95"
+                                >
+                                  {savingQuota ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                                  {savingQuota ? "Đang lưu..." : "Lưu định mức"}
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="overflow-x-auto rounded-xl border border-slate-100">
+                              <table className="w-full text-xs text-left">
+                                <thead>
+                                  <tr className="bg-slate-50/75 border-b border-slate-100 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                                    <th className="py-2.5 px-3 w-10 text-center">TT</th>
+                                    <th className="py-2.5 px-3">Vật tư</th>
+                                    <th className="py-2.5 px-3 w-20 text-center">Đơn vị</th>
+                                    <th className="py-2.5 px-3 w-24 text-center">Định mức</th>
+                                    <th className="py-2.5 px-3 w-24 text-center">Đã cấp</th>
+                                    <th className="py-2.5 px-3 w-28 text-center">Đối chiếu</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100 font-semibold text-slate-600">
+                                  {quotaRowsOfDept.length === 0 ? (
+                                    <tr>
+                                      <td colSpan={6} className="py-8 text-center text-slate-400 font-medium italic">
+                                        Kho chưa có vật tư nào để đặt định mức.
+                                      </td>
+                                    </tr>
+                                  ) : (
+                                    quotaRowsOfDept.map((row, idx) => (
+                                      <tr key={row.supply.id} className={`transition-colors ${row.over ? "bg-rose-50/40" : "hover:bg-slate-50/50"}`}>
+                                        <td className="py-2 px-3 text-center font-mono text-slate-400">{idx + 1}</td>
+                                        <td className="py-2 px-3 font-bold text-slate-800">{row.supply.name}</td>
+                                        <td className="py-2 px-3 text-center text-slate-500">{row.supply.unit || "—"}</td>
+                                        <td className="py-2 px-3 text-center">
+                                          <input
+                                            type="number"
+                                            min={0}
+                                            value={quotaDraft[row.supply.id] ?? ""}
+                                            onChange={(e) =>
+                                              setQuotaDraft(prev => ({ ...prev, [row.supply.id]: e.target.value }))
+                                            }
+                                            className="w-16 px-2 py-1 text-center border border-slate-200 rounded-lg text-xs font-bold text-slate-800 focus:border-blue-500 focus:outline-none bg-white"
+                                          />
+                                        </td>
+                                        <td className={`py-2 px-3 text-center font-black ${row.over ? "text-rose-600" : "text-slate-700"}`}>
+                                          {row.used}
+                                        </td>
+                                        <td className="py-2 px-3 text-center">
+                                          {row.quota === 0 ? (
+                                            <span className="text-[10px] text-slate-400 italic">Chưa đặt</span>
+                                          ) : row.over ? (
+                                            <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-rose-100 text-rose-700">
+                                              Vượt {row.used - row.quota}
+                                            </span>
+                                          ) : (
+                                            <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-100 text-emerald-700">
+                                              Còn {row.quota - row.used}
+                                            </span>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    ))
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
+                          </section>
+
+                          {/* ── Mục: VPP xuất trong tháng ── */}
+                          <section className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm space-y-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <h4 className="font-heading font-bold text-slate-800 text-xs">VPP xuất trong tháng</h4>
+                                <p className="text-[10px] text-slate-400 font-semibold mt-0.5">
+                                  Gom toàn bộ phiếu đã cấp phát của mọi phòng ban và ban điều hành trong {formatMonthLabel(vppReportMonth).toLowerCase()}
+                                </p>
+                              </div>
+                              <span className="inline-flex items-center px-3 py-1.5 rounded-xl text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 shrink-0">
+                                {vppExportedInMonth.length} vật tư · {vppExportedInMonth.reduce((s, r) => s + r.qty, 0)} đã xuất
+                              </span>
+                            </div>
+
+                            <div className="overflow-x-auto rounded-xl border border-slate-100">
+                              <table className="w-full text-xs text-left">
+                                <thead>
+                                  <tr className="bg-slate-50/75 border-b border-slate-100 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                                    <th className="py-2.5 px-3 w-10 text-center">TT</th>
+                                    <th className="py-2.5 px-3">Vật tư</th>
+                                    <th className="py-2.5 px-3 w-20 text-center">Đơn vị</th>
+                                    <th className="py-2.5 px-3 w-24 text-center">Số lượng xuất</th>
+                                    <th className="py-2.5 px-3 w-24 text-center">Số phiếu</th>
+                                    <th className="py-2.5 px-3">Bộ phận nhận</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100 font-semibold text-slate-600">
+                                  {vppExportedInMonth.length === 0 ? (
+                                    <tr>
+                                      <td colSpan={6} className="py-8 text-center text-slate-400 font-medium italic">
+                                        Tháng này chưa cấp phát vật tư nào.
+                                      </td>
+                                    </tr>
+                                  ) : (
+                                    vppExportedInMonth.map((row, idx) => (
+                                      <tr key={row.item} className="hover:bg-slate-50/50 transition-colors">
+                                        <td className="py-2.5 px-3 text-center font-mono text-slate-400">{idx + 1}</td>
+                                        <td className="py-2.5 px-3 font-bold text-slate-800">{row.item}</td>
+                                        <td className="py-2.5 px-3 text-center text-slate-500">{row.unit || "—"}</td>
+                                        <td className="py-2.5 px-3 text-center font-black text-blue-700">{row.qty}</td>
+                                        <td className="py-2.5 px-3 text-center text-slate-500">{row.slips.size}</td>
+                                        <td className="py-2.5 px-3 text-[11px] text-slate-500 font-medium">
+                                          {Array.from(row.targets).join(", ")}
+                                        </td>
+                                      </tr>
+                                    ))
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
+                          </section>
+
+                          {/* ── Mục: Đề xuất mua VPP ── */}
+                          <section className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm space-y-3">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <h4 className="font-heading font-bold text-slate-800 text-xs">Đề xuất mua VPP</h4>
+                                <p className="text-[10px] text-slate-400 font-semibold mt-0.5">
+                                  Bật khi quá {Math.round(VPP_PURCHASE_TRIGGER_RATIO * 100)}% danh mục trong kho rơi vào mức cảnh báo
+                                  (số dư cuối kỳ dưới {VPP_LOW_STOCK_THRESHOLD})
+                                </p>
+                              </div>
+                              <span className={`inline-flex items-center px-3 py-1.5 rounded-xl text-[10px] font-bold border shrink-0 ${
+                                vppPurchaseSuggestion.shouldBuy
+                                  ? "text-rose-700 bg-rose-50 border-rose-100"
+                                  : "text-emerald-700 bg-emerald-50 border-emerald-100"
+                              }`}>
+                                {vppPurchaseSuggestion.lowStock.length}/{vppPurchaseSuggestion.total} vật tư cảnh báo
+                                {vppPurchaseSuggestion.total > 0 && ` · ${Math.round(vppPurchaseSuggestion.ratio * 100)}%`}
+                              </span>
+                            </div>
+
+                            {vppPurchaseSuggestion.total === 0 ? (
+                              <p className="py-6 text-center text-slate-400 text-[11px] font-medium italic">
+                                Kho chưa có vật tư nào trong danh mục.
+                              </p>
+                            ) : !vppPurchaseSuggestion.shouldBuy ? (
+                              <div className="flex items-start gap-2 p-3 bg-emerald-50/60 border border-emerald-100 rounded-xl">
+                                <CheckCircle size={14} className="text-emerald-600 mt-0.5 shrink-0" />
+                                <p className="text-[11px] font-semibold text-emerald-800">
+                                  Chưa cần đề xuất mua. Mới {vppPurchaseSuggestion.lowStock.length}/{vppPurchaseSuggestion.total} vật tư ở mức cảnh báo,
+                                  chưa quá {Math.round(VPP_PURCHASE_TRIGGER_RATIO * 100)}% danh mục.
+                                </p>
+                              </div>
+                            ) : (
+                              <>
+                                <div className="flex items-start gap-2 p-3 bg-rose-50/70 border border-rose-100 rounded-xl">
+                                  <AlertTriangle size={14} className="text-rose-600 mt-0.5 shrink-0 animate-pulse" />
+                                  <p className="text-[11px] font-semibold text-rose-800">
+                                    Đề nghị mua bổ sung — {vppPurchaseSuggestion.lowStock.length}/{vppPurchaseSuggestion.total} vật tư đã xuống mức cảnh báo.
+                                    Số lượng mua do Hành chính tự quyết, cột &quot;Đã cấp trong tháng&quot; bên dưới để tham khảo.
+                                  </p>
+                                </div>
+
+                                <div className="overflow-x-auto rounded-xl border border-slate-100">
+                                  <table className="w-full text-xs text-left">
+                                    <thead>
+                                      <tr className="bg-slate-50/75 border-b border-slate-100 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                                        <th className="py-2.5 px-3 w-10 text-center">TT</th>
+                                        <th className="py-2.5 px-3">Vật tư cần mua</th>
+                                        <th className="py-2.5 px-3">Danh mục</th>
+                                        <th className="py-2.5 px-3 w-20 text-center">Đơn vị</th>
+                                        <th className="py-2.5 px-3 w-24 text-center">Còn lại</th>
+                                        <th className="py-2.5 px-3 w-28 text-center">Đã cấp trong tháng</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100 font-semibold text-slate-600">
+                                      {vppPurchaseSuggestion.lowStock.map((row, idx) => (
+                                        <tr key={row.supply.id} className="hover:bg-slate-50/50 transition-colors">
+                                          <td className="py-2.5 px-3 text-center font-mono text-slate-400">{idx + 1}</td>
+                                          <td className="py-2.5 px-3 font-bold text-slate-800">{row.supply.name}</td>
+                                          <td className="py-2.5 px-3 text-slate-500">{row.supply.cat}</td>
+                                          <td className="py-2.5 px-3 text-center text-slate-500">{row.supply.unit || "—"}</td>
+                                          <td className="py-2.5 px-3 text-center">
+                                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold text-amber-700 bg-amber-100">
+                                              {row.supply.ending}
+                                            </span>
+                                          </td>
+                                          <td className="py-2.5 px-3 text-center text-slate-600 font-bold">{row.usedThisMonth}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </>
+                            )}
+                          </section>
+                        </div>
+
+                        <div className="border-t border-slate-200/80 pt-3 shrink-0 flex justify-end bg-slate-100">
+                          <button
+                            onClick={() => setShowVppReportModal(false)}
+                            className="px-4 py-2 border border-slate-200 rounded-xl font-bold text-slate-500 hover:bg-slate-200/60 bg-white text-xs transition-all active:scale-[0.98] shadow-sm cursor-pointer"
+                          >
+                            Đóng lại
+                          </button>
                         </div>
                       </div>
                     </div>
