@@ -1593,12 +1593,23 @@ export default function AdministrationPage() {
         if (reqId.includes("__")) {
           const [parentTaskId, itemIdStr] = reqId.split("__");
           const itemId = Number(itemIdStr);
+          // maybeSingle chứ KHÔNG phải single: single() bắt buộc đúng 1 dòng, không
+          // đọc được dòng nào là ném "Cannot coerce the result to a single JSON
+          // object" — câu lỗi kỹ thuật đó đập thẳng vào mặt người dùng mà không
+          // nói được chuyện gì đã xảy ra. Phiếu gốc có thể đã bị người khác xoá,
+          // hoặc RLS không cho tài khoản này đọc đúng dòng đó.
           const { data: taskData, error: fetchErr } = await supabase
             .from("tasks")
             .select("*")
             .eq("id", parentTaskId)
-            .single();
+            .maybeSingle();
           if (fetchErr) throw fetchErr;
+          if (!taskData) {
+            alert("Không mở được phiếu gốc của yêu cầu này — có thể phiếu vừa bị xoá ở nơi khác. Danh sách sẽ được tải lại.");
+            fetchDeptRequests();
+            fetchChecklist();
+            return;
+          }
 
           let notesObj = JSON.parse(taskData.notes || "{}");
           if (notesObj.items && Array.isArray(notesObj.items)) {
@@ -1608,12 +1619,19 @@ export default function AdministrationPage() {
             });
 
             if (updatedItems.length === 0) {
-              // Delete parent task completely
-              const { error: deleteErr } = await supabase
+              // Delete parent task completely.
+              // `.select("id")` để BIẾT có thực sự xoá được dòng nào không: RLS chặn
+              // thì Supabase trả về không lỗi mà cũng không đụng dòng nào, thiếu chỗ
+              // này là hệ thống báo "Đã xóa thành công" trong khi phiếu còn nguyên.
+              const { data: deletedRows, error: deleteErr } = await supabase
                 .from("tasks")
                 .delete()
-                .eq("id", parentTaskId);
+                .eq("id", parentTaskId)
+                .select("id");
               if (deleteErr) throw deleteErr;
+              if (!deletedRows || deletedRows.length === 0) {
+                throw new Error("Tài khoản của bạn không có quyền xoá phiếu này ở tầng cơ sở dữ liệu.");
+              }
             } else {
               // Calculate status of the remaining items
               const allApproved = updatedItems.every((itemObj: any) => itemObj.status === "Đã cấp phát");
@@ -1622,24 +1640,32 @@ export default function AdministrationPage() {
 
               notesObj.items = updatedItems;
 
-              const { error: updateErr } = await supabase
+              const { data: updatedRows, error: updateErr } = await supabase
                 .from("tasks")
                 .update({
                   status: allApproved ? "Hoàn thành" : "Chờ duyệt",
                   progress: progressPercent,
                   notes: JSON.stringify(notesObj)
                 })
-                .eq("id", parentTaskId);
+                .eq("id", parentTaskId)
+                .select("id");
               if (updateErr) throw updateErr;
+              if (!updatedRows || updatedRows.length === 0) {
+                throw new Error("Tài khoản của bạn không có quyền sửa phiếu này ở tầng cơ sở dữ liệu.");
+              }
             }
           }
         } else {
           // Legacy task delete
-          const { error } = await supabase
+          const { data: deletedRows, error } = await supabase
             .from("tasks")
             .delete()
-            .eq("id", reqId);
+            .eq("id", reqId)
+            .select("id");
           if (error) throw error;
+          if (!deletedRows || deletedRows.length === 0) {
+            throw new Error("Tài khoản của bạn không có quyền xoá phiếu này ở tầng cơ sở dữ liệu.");
+          }
         }
 
         // Không cần hoàn kho thủ công: số cấp phát được tính lại từ danh sách
