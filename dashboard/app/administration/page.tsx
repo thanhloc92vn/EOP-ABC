@@ -1106,8 +1106,11 @@ export default function AdministrationPage() {
   // Dùng chung cho cả tab Phòng ban và tab Ban điều hành dự án.
   const renderAllocatedSummary = (type: "phongban" | "duan") => {
     const targetFilter = type === "phongban" ? selectedDeptFilter : selectedProjectFilter;
+    // canSeeVppRequest: người ngoài HCNS chỉ thấy phiếu đã cấp của CHÍNH PHÒNG
+    // MÌNH. Thiếu phép lọc này thì tài khoản BĐH dự án nhìn thấy cả phiếu đã
+    // cấp cho phòng HCNS.
     const scoped = allocatedGroups.filter(
-      g => g.target === type && (targetFilter === "Tất cả" || g.targetName === targetFilter)
+      g => g.target === type && canSeeVppRequest(g.targetName) && (targetFilter === "Tất cả" || g.targetName === targetFilter)
     );
     // Danh sách năm: các năm đã có phiếu + năm hiện tại (để chọn được cả tháng chưa phát sinh)
     const years = Array.from(
