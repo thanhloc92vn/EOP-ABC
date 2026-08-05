@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { smtpConfig, post, recipientName, recipientEmails, senderName, note } = body;
+    const { smtpConfig, post, recipients, recipientName, recipientEmails, senderName, note } = body;
 
     const envConfigured = !!(process.env.SMTP_USER && process.env.SMTP_PASS);
     const smtpUser = envConfigured ? (process.env.SMTP_USER as string) : (smtpConfig?.user || "");
@@ -61,22 +61,38 @@ export async function POST(request: NextRequest) {
     // Sắp email công ty lên trước để nó là địa chỉ chính, các địa chỉ còn lại
     // nhận kèm.
     const senderDomain = (smtpUser.split("@")[1] || "").toLowerCase();
-    const candidates: string[] = Array.from(
-      new Set(
-        String(recipientEmails || "")
-          .split(/[,;\s]+/)
-          .map((e: string) => e.trim().toLowerCase())
-          .filter((e: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e))
-      )
-    );
+    const orderEmails = (raw: unknown): string => {
+      const candidates: string[] = Array.from(
+        new Set(
+          String(raw || "")
+            .split(/[,;\s]+/)
+            .map((e: string) => e.trim().toLowerCase())
+            .filter((e: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e))
+        )
+      );
+      return [
+        ...candidates.filter((e) => e.endsWith(`@${senderDomain}`)),
+        ...candidates.filter((e) => !e.endsWith(`@${senderDomain}`)),
+      ].join(", ");
+    };
 
-    const companyFirst = [
-      ...candidates.filter((e) => e.endsWith(`@${senderDomain}`)),
-      ...candidates.filter((e) => !e.endsWith(`@${senderDomain}`)),
-    ];
-    const recipient = companyFirst.join(", ");
+    // Nhiều người nhận: gửi MỖI NGƯỜI MỘT THƯ RIÊNG, không gộp chung một thư.
+    // Gộp chung thì dòng "Kính gửi Anh/Chị: <tên>" chỉ đúng với một người, và
+    // mọi người nhận sẽ nhìn thấy địa chỉ email của nhau.
+    // Vẫn nhận dạng cũ (recipientName/recipientEmails) để tab đang mở bản JS cũ
+    // không gãy ngay lúc triển khai bản mới.
+    const rawTargets: unknown[] = Array.isArray(recipients) && recipients.length
+      ? recipients
+      : [{ name: recipientName, emails: recipientEmails }];
 
-    if (!recipient) {
+    const targets = rawTargets
+      .map((r) => {
+        const item = (r || {}) as { name?: unknown; emails?: unknown };
+        return { name: String(item.name || "").trim(), to: orderEmails(item.emails) };
+      })
+      .filter((t) => t.to);
+
+    if (targets.length === 0) {
       return NextResponse.json({ error: "Người nhận chưa có email hợp lệ trong Danh sách nhân viên!" }, { status: 400 });
     }
 
@@ -101,7 +117,7 @@ export async function POST(request: NextRequest) {
          </div>`
       : "";
 
-    const html = `
+    const buildHtml = (toName: string) => `
       <!DOCTYPE html>
       <html>
       <head><meta charset="utf-8"><title>${esc(post.title)}</title></head>
@@ -115,7 +131,7 @@ export async function POST(request: NextRequest) {
 
           <div style="padding: 28px 40px 12px 40px;">
             <p style="margin: 0 0 10px 0; font-size: 15px; line-height: 1.6; color: #334155;">
-              Kính gửi Anh/Chị: <strong style="color: #005BAC; font-size: 16px;">${esc(recipientName)}</strong>,
+              Kính gửi Anh/Chị: <strong style="color: #005BAC; font-size: 16px;">${esc(toName)}</strong>,
             </p>
             <p style="margin: 0; font-size: 14px; line-height: 1.7; color: #475569;">
               <strong style="color: #005BAC;">${esc(senderName) || "Một đồng nghiệp"}</strong> vừa chia sẻ với Anh/Chị một bài trên bảng tin nội bộ.
@@ -156,16 +172,38 @@ export async function POST(request: NextRequest) {
       </html>
     `;
 
-    await transporter.sendMail({
-      from: `"${cfg.email_sender_name}" <${smtpUser}>`,
-      to: recipient,
-      subject: `[${cfg.company_name}] 📰 ${categoryLabel}: ${post.title}`,
-      html,
-    });
+    // Gửi tuần tự trên CÙNG một kết nối SMTP đã bắt tay: nhanh hơn nhiều so với
+    // mỗi người một lượt gọi API. Một người lỗi thì vẫn gửi tiếp cho người sau,
+    // rồi báo rõ ai được ai không.
+    const sent: string[] = [];
+    const failed: string[] = [];
+    for (const t of targets) {
+      try {
+        await transporter.sendMail({
+          from: `"${cfg.email_sender_name}" <${smtpUser}>`,
+          to: t.to,
+          subject: `[${cfg.company_name}] 📰 ${categoryLabel}: ${post.title}`,
+          html: buildHtml(t.name),
+        });
+        sent.push(`${t.name} (${t.to})`);
+      } catch (err: unknown) {
+        console.error(`Error sharing news post to ${t.to}:`, err);
+        failed.push(t.name || t.to);
+      }
+    }
+
+    if (sent.length === 0) {
+      return NextResponse.json(
+        { error: `Không gửi được email tới: ${failed.join(", ")}` },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json({
       success: true,
-      message: `Đã gửi bài viết tới ${recipientName} (${recipient})`,
+      message:
+        `Đã gửi bài viết tới ${sent.join("; ")}` +
+        (failed.length ? ` — KHÔNG gửi được tới: ${failed.join(", ")}` : ""),
     });
   } catch (error: unknown) {
     console.error("Error sharing news post by email:", error);

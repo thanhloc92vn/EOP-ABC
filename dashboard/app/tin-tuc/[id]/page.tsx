@@ -146,10 +146,16 @@ export default function NewsDetailPage() {
    * máy chủ thư, không rút ngắn được. Kết quả báo bằng thông báo nổi ở góc.
    * Gửi lỗi thì mở lại hộp thoại, lời nhắn vẫn còn nguyên.
    */
-  const handleShareSend = async (target: { name: string; email: string }) => {
-    if (!post) return;
+  const handleShareSend = async (targets: { name: string; email: string }[]) => {
+    if (!post || targets.length === 0) return;
     setShareOpen(false);
-    setToast({ state: "sending", text: `Đang gửi tới ${target.name}...` });
+    setToast({
+      state: "sending",
+      text:
+        targets.length === 1
+          ? `Đang gửi tới ${targets[0].name}...`
+          : `Đang gửi tới ${targets.length} người...`,
+    });
 
     try {
       const res = await apiFetch("/api/share-news-email", {
@@ -157,8 +163,7 @@ export default function NewsDetailPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           smtpConfig: readSmtpConfig(),
-          recipientName: target.name,
-          recipientEmails: target.email,
+          recipients: targets.map((t) => ({ name: t.name, emails: t.email })),
           senderName: user.name,
           note: shareNote.trim(),
           post: {
@@ -181,7 +186,7 @@ export default function NewsDetailPage() {
       // nhận báo "chưa thấy thư".
       setToast({
         state: "ok",
-        text: json.message || `Đã gửi bài tới ${target.name}`,
+        text: json.message || `Đã gửi bài tới ${targets.length} người`,
       });
       setTimeout(() => setToast(null), 6000);
     } catch (err: unknown) {
@@ -513,8 +518,30 @@ function Shell({ children, aside }: { children: React.ReactNode; aside?: React.R
 }
 
 // ─── Gửi bài cho đồng nghiệp qua email ───
-// Chọn người bằng <datalist> để TRÌNH DUYỆT tự lọc: ô lọc bằng React sẽ mất chữ
-// khi gõ tiếng Việt có dấu (bộ gõ IME), lỗi đã gặp ở các module trước.
+// Ô chọn người bê nguyên ô "Nhân viên tham dự" ở trang Đăng ký phòng họp
+// (dang-ky/page.tsx): chọn nhiều người, nguồn là Danh sách nhân viên, lọc theo
+// tên hoặc phòng ban, cắt 30 dòng. Kể cả khoá React của mỗi dòng cũng lấy đúng
+// `name + email` như bên đó — khoá chỉ bằng email thì những hồ sơ để email
+// "N/A" đụng khoá nhau, React dựng lại nhầm dòng và hiện ra tên lặp.
+type DirectoryPerson = { name: string; email: string; department: string; role: string };
+
+/** Khoá React của một dòng — giống hệt bên Đăng ký phòng họp. */
+const personKey = (p: DirectoryPerson) => p.name + p.email;
+
+/**
+ * Người này có gửi thư tới được không?
+ *
+ * Cột `employees.email` KHÔNG phải lúc nào cũng là email: hồ sơ chưa có thư
+ * điện tử đang để chuỗi "N/A". Phép kiểm cũ chỉ hỏi "cột có rỗng không" nên
+ * "N/A" lọt qua, người đó vẫn hiện trong ô chọn dù không gửi tới đâu được.
+ * Cột chứa được nhiều địa chỉ ngăn bằng dấu phẩy — chỉ cần MỘT địa chỉ thật.
+ */
+function hasSendableEmail(raw: unknown): boolean {
+  return String(raw || "")
+    .split(/[,;\s]+/)
+    .some((addr) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(addr.trim()));
+}
+
 function ShareByEmailModal({
   post,
   note,
@@ -525,11 +552,11 @@ function ShareByEmailModal({
   post: NewsPost;
   note: string;
   onNoteChange: (v: string) => void;
-  onSend: (target: { name: string; email: string }) => void;
+  onSend: (targets: { name: string; email: string }[]) => void;
   onClose: () => void;
 }) {
-  const [people, setPeople] = useState<{ name: string; email: string; department: string; role: string }[]>([]);
-  const [picked, setPicked] = useState(""); // email người được chọn (khoá duy nhất)
+  const [people, setPeople] = useState<DirectoryPerson[]>([]);
+  const [selected, setSelected] = useState<DirectoryPerson[]>([]);
   const [search, setSearch] = useState("");
   const [showDropdown, setShowDropdown] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -554,8 +581,8 @@ function ShareByEmailModal({
       .then(({ data }) => {
         setPeople(
           (data || [])
-            // Bỏ người chưa có email (không gửi tới đâu được) và người đã nghỉ việc
-            .filter((e) => e.email && !String(e.status || "").toLowerCase().includes("nghỉ"))
+            // Bỏ người đã nghỉ việc và người chưa có email gửi tới được
+            .filter((e) => e.name && hasSendableEmail(e.email) && !String(e.status || "").toLowerCase().includes("nghỉ"))
             .map((e) => ({
               name: e.name as string,
               email: e.email as string,
@@ -566,25 +593,25 @@ function ShareByEmailModal({
       });
   }, []);
 
-  // `picked` giữ EMAIL vì email là khoá duy nhất — hai nhân viên có thể trùng tên.
-  const selected = people.find((p) => p.email === picked) || null;
-
-  // Lọc theo tên hoặc phòng ban, cắt 30 dòng — cùng cách làm với ô giao việc
+  // Lọc theo tên hoặc phòng ban, bỏ người đã chọn, cắt 30 dòng — y hệt
+  // filteredEmployees của ô "Nhân viên tham dự" bên Đăng ký phòng họp.
   const filteredPeople = useMemo(() => {
     const q = search.trim().toLowerCase();
+    const chosen = new Set(selected.map(personKey));
     return people
+      .filter((p) => !chosen.has(personKey(p)))
       .filter((p) => !q || p.name.toLowerCase().includes(q) || p.department.toLowerCase().includes(q))
       .slice(0, 30);
-  }, [people, search]);
+  }, [people, search, selected]);
 
   // Modal chi chon nguoi va bam gui — viec goi API do trang cha lam, de dong
   // duoc hop thoai ngay thay vi bat nguoi dung doi 2-5 giay bat tay SMTP.
   const handleSend = () => {
-    if (!selected) {
-      setError("Vui long chon nguoi nhan trong danh sach.");
+    if (selected.length === 0) {
+      setError("Vui long chon it nhat mot nguoi nhan trong danh sach.");
       return;
     }
-    onSend({ name: selected.name, email: selected.email });
+    onSend(selected.map((p) => ({ name: p.name, email: p.email })));
   };
 
   return (
@@ -619,47 +646,45 @@ function ShareByEmailModal({
                 <label className="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-1.5">
                   Người nhận
                 </label>
-                {/* Ô chọn người nhận — dựng theo đúng ô "Người nhận việc" ở trang
-                    Quản lý công việc: gõ để lọc, danh sách hiện avatar chữ viết
-                    tắt + tên + phòng ban/chức danh, chọn xong thành thẻ có nút X.
-                    Nguồn dữ liệu là Danh sách nhân viên (employees_directory) nên
+                {/* Nguồn dữ liệu là Danh sách nhân viên (employees_directory) nên
                     tên và email đã cấu hình sẵn, không phải nhập tay. */}
                 <div className="relative" ref={pickerRef}>
                   <div className="w-full min-h-[42px] px-3 py-2 border border-slate-200 rounded-xl flex flex-wrap items-center gap-1.5 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500/40 bg-white">
-                    {selected ? (
-                      <span className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 border border-blue-200 rounded-full px-2.5 py-1 text-[10px] font-bold">
-                        {selected.name}
+                    {selected.map((p) => (
+                      <span
+                        key={personKey(p)}
+                        className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 border border-blue-200 rounded-full px-2.5 py-1 text-[10px] font-bold"
+                      >
+                        {p.name}
                         <button
                           type="button"
-                          onClick={() => {
-                            setPicked("");
-                            setSearch("");
-                            setShowDropdown(true);
-                          }}
+                          onClick={() => setSelected((prev) => prev.filter((x) => personKey(x) !== personKey(p)))}
                           className="hover:text-rose-500 transition-colors cursor-pointer"
                         >
                           <X size={10} />
                         </button>
                       </span>
-                    ) : (
-                      <div className="flex items-center gap-1.5 flex-1 min-w-[160px]">
-                        <Search size={12} className="text-slate-400 shrink-0" />
-                        <input
-                          type="text"
-                          value={search}
-                          onChange={(e) => {
-                            setSearch(e.target.value);
-                            setShowDropdown(true);
-                          }}
-                          onFocus={() => setShowDropdown(true)}
-                          placeholder="Tìm tên nhân viên hoặc bấm để chọn nhanh..."
-                          className="flex-1 min-w-0 py-1 outline-none text-xs font-semibold placeholder:font-normal"
-                        />
-                      </div>
-                    )}
+                    ))}
+                    {/* Ô tìm luôn hiện, kể cả khi đã chọn — để thêm tiếp người nữa */}
+                    <div className="flex items-center gap-1.5 flex-1 min-w-[160px]">
+                      <Search size={12} className="text-slate-400 shrink-0" />
+                      <input
+                        type="text"
+                        value={search}
+                        onChange={(e) => {
+                          setSearch(e.target.value);
+                          setShowDropdown(true);
+                        }}
+                        onFocus={() => setShowDropdown(true)}
+                        placeholder={
+                          selected.length === 0 ? "Tìm tên nhân viên hoặc bấm để chọn nhanh..." : "Thêm người..."
+                        }
+                        className="flex-1 min-w-0 py-1 outline-none text-xs font-semibold placeholder:font-normal"
+                      />
+                    </div>
                   </div>
 
-                  {showDropdown && !selected && (
+                  {showDropdown && (
                     <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-premium z-20 max-h-56 overflow-y-auto animate-in fade-in duration-150">
                       {filteredPeople.length === 0 ? (
                         <p className="text-center text-slate-400 text-[11px] italic py-4">
@@ -668,12 +693,13 @@ function ShareByEmailModal({
                       ) : (
                         filteredPeople.map((p) => (
                           <button
-                            key={p.email}
+                            key={personKey(p)}
                             type="button"
                             onClick={() => {
-                              setPicked(p.email);
+                              // Không đóng danh sách: chọn xong còn chọn tiếp người khác
+                              setSelected((prev) => [...prev, p]);
                               setSearch("");
-                              setShowDropdown(false);
+                              setError(null);
                             }}
                             className="w-full flex items-center gap-2.5 px-4 py-2 hover:bg-slate-50 transition-colors text-left cursor-pointer"
                           >
@@ -694,11 +720,16 @@ function ShareByEmailModal({
                   )}
                 </div>
 
-                {/* Email đã cấu hình sẵn của người vừa chọn — để đối chiếu trước khi gửi */}
-                {selected && (
-                  <p className="mt-1.5 text-[10px] font-semibold text-slate-400 truncate" title={selected.email}>
-                    Gửi tới: <span className="text-[#005BAC]">{selected.email}</span>
-                  </p>
+                {/* Email đã cấu hình sẵn của từng người đã chọn — để đối chiếu trước khi gửi.
+                    Mỗi người nhận MỘT THƯ RIÊNG, không ai thấy địa chỉ của ai. */}
+                {selected.length > 0 && (
+                  <div className="mt-1.5 space-y-0.5 max-h-24 overflow-y-auto">
+                    {selected.map((p) => (
+                      <p key={personKey(p)} className="text-[10px] font-semibold text-slate-400 truncate" title={p.email}>
+                        Gửi tới {p.name}: <span className="text-[#005BAC]">{p.email}</span>
+                      </p>
+                    ))}
+                  </div>
                 )}
               </div>
 
@@ -720,7 +751,7 @@ function ShareByEmailModal({
                 className="w-full inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-bold text-white bg-gradient-to-r from-[#005BAC] to-[#00AEEF] rounded-xl shadow-md shadow-blue-500/20 hover:shadow-lg transition-all active:scale-[0.99] cursor-pointer"
               >
                 <Send size={14} />
-                Gửi email
+                {selected.length > 1 ? `Gửi email cho ${selected.length} người` : "Gửi email"}
               </button>
           </>
         </div>
