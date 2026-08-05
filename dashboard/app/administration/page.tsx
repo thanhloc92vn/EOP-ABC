@@ -34,7 +34,7 @@ import {
   Building2,
   Briefcase
 } from "lucide-react";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { docSoVietNam, exportDeNghiChuyenTien, downloadDocFile } from "@/lib/wordExporter";
 import { supabase } from "@/lib/supabase";
 import { useDepartments } from "@/lib/departments";
@@ -576,7 +576,10 @@ export default function AdministrationPage() {
   const [newSupplyName, setNewSupplyName] = useState("");
   const [newSupplyCat, setNewSupplyCat] = useState("Giấy in");
   const [newSupplyUnit, setNewSupplyUnit] = useState("");
-  const [newSupplyStock, setNewSupplyStock] = useState(0);
+  // Giữ CHUỖI chứ không phải số: ô nhập cần phân biệt "chưa nhập gì" (rỗng, để
+  // hiện placeholder) với "nhập số 0". Lưu bằng số thì hai trạng thái đó trùng
+  // nhau, gõ 0 xong ô tự xoá trắng — không nhập được vật tư tồn 0.
+  const [newSupplyStock, setNewSupplyStock] = useState("");
 
   // Dynamic unique categories extracted from supplies list
   const uniqueCategories = useMemo(() => {
@@ -648,8 +651,14 @@ export default function AdministrationPage() {
   const [showNewPYCModal, setShowNewPYCModal] = useState(false);
   const [newPYCTarget, setNewPYCTarget] = useState<"phongban" | "duan">("phongban");
   const [newPYCTargetName, setNewPYCTargetName] = useState("");
-  const [newPYCItem, setNewPYCItem] = useState("");
-  const [newPYCQty, setNewPYCQty] = useState(1);
+  // Các món của phiếu đang soạn. Một phiếu khai được NHIỀU món — trước đây mỗi
+  // lần mở hộp thoại chỉ khai được một món, muốn ba món phải mở lại ba lần.
+  // Chỗ lưu vốn đã chứa mảng `items` trong ghi chú của phiếu, nên đây chỉ là
+  // chuyện của giao diện.
+  const [newPYCLines, setNewPYCLines] = useState<{ name: string; unit: string; qty: number }[]>([]);
+  const [pycItemSearch, setPycItemSearch] = useState("");
+  const [showPycItemDropdown, setShowPycItemDropdown] = useState(false);
+  const pycItemPickerRef = useRef<HTMLDivElement>(null);
   const [newPYCRequesterName, setNewPYCRequesterName] = useState("");
 
   // Invoice Reader Batch States
@@ -948,6 +957,51 @@ export default function AdministrationPage() {
       };
     });
   }, [supplies, deptRequests]);
+
+  // ─── Tầm nhìn VPP của người ngoài HCNS ───
+  // Họ vào tab VPP để tự đặt hàng, nhưng chỉ được thấy phiếu của CHÍNH PHÒNG
+  // MÌNH và không đụng được vào kho hay nút duyệt. Tên phòng lấy từ hồ sơ nhân
+  // sự, so không phân biệt hoa thường và khoảng trắng thừa.
+  const myVppTargetName = (currentUser?.department || "").trim();
+  const canSeeVppRequest = useCallback(
+    (targetName?: string) => {
+      if (isHcnsViewer) return true;
+      // Hồ sơ chưa xếp phòng thì không khớp với ai — thà không thấy gì còn hơn
+      // thấy nhầm phiếu của bộ phận có tên cũng đang để trống.
+      if (!myVppTargetName) return false;
+      return (targetName || "").trim().toLowerCase() === myVppTargetName.toLowerCase();
+    },
+    [isHcnsViewer, myVppTargetName]
+  );
+
+  // Người ngoài HCNS không có mục tồn kho — nếu state còn đọng ở đó thì đẩy sang
+  // mục phòng ban, không thì tab VPP hiện ra trống trơn.
+  useEffect(() => {
+    if (!permsLoaded || isHcnsViewer) return;
+    if (vppSubTab === "inventory") setVppSubTab("phongban");
+  }, [permsLoaded, isHcnsViewer, vppSubTab]);
+
+  // Gợi ý cho ô tìm vật tư trong hộp thoại tạo phiếu: lọc theo tên hoặc danh
+  // mục, bỏ món đã chọn, cắt 30 dòng — cùng khuôn với ô chọn người ở các trang
+  // khác. Bấm ra ngoài thì đóng danh sách (useEffect bên dưới).
+  const filteredPycSupplies = useMemo(() => {
+    const q = pycItemSearch.trim().toLowerCase();
+    const chosen = new Set(newPYCLines.map(l => l.name));
+    return suppliesWithDynamicAllocated
+      .filter(s => !chosen.has(s.name))
+      .filter(s => !q || s.name.toLowerCase().includes(q) || (s.cat || "").toLowerCase().includes(q))
+      .slice(0, 30);
+  }, [suppliesWithDynamicAllocated, pycItemSearch, newPYCLines]);
+
+  useEffect(() => {
+    const onClickOutside = (e: MouseEvent) => {
+      if (pycItemPickerRef.current && !pycItemPickerRef.current.contains(e.target as Node)) {
+        setShowPycItemDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
 
   // Tháng của một dòng yêu cầu (YYYY-MM): ưu tiên ngày cấp phát, không đọc được thì lấy ngày yêu cầu
   const monthOfRequest = (r: DeptRequest): string => {
@@ -1414,11 +1468,13 @@ export default function AdministrationPage() {
     }
   }, [payMonth]);
 
-  // Nhân viên không phải HCNS không được ở các tab chỉ dành cho HCNS (checklist/report/vpp)
+  // Nhân viên không phải HCNS không được ở các tab chỉ dành cho HCNS (checklist/report)
   // — đưa họ về công cụ tạo & theo dõi thanh toán của chính họ.
+  // VPP KHÔNG nằm trong danh sách này: mọi phòng ban đều vào được để tự đặt hàng,
+  // phần kho và phần duyệt bên trong tab đó tự ẩn theo isHcnsViewer.
   useEffect(() => {
     if (!permsLoaded || isHcnsViewer) return;
-    if (activeTab === "checklist" || activeTab === "report" || activeTab === "vpp") {
+    if (activeTab === "checklist" || activeTab === "report") {
       setActiveTab("recurring");
     }
   }, [permsLoaded, isHcnsViewer, activeTab]);
@@ -1496,7 +1552,20 @@ export default function AdministrationPage() {
     const request = deptRequests.find(r => r.id === reqId);
     if (!request) return;
 
-    if (window.confirm("Bạn có chắc chắn muốn xóa yêu cầu cấp phát này không?")) {
+    // Người ngoài HCNS chỉ huỷ được yêu cầu của CHÍNH PHÒNG MÌNH và chỉ khi còn
+    // "Chờ duyệt" — đã cấp phát rồi thì kho đã trừ, xoá đi là số liệu lệch.
+    if (!isHcnsViewer) {
+      if (!canSeeVppRequest(request.targetName) || request.status !== "Chờ duyệt") {
+        alert("Chỉ huỷ được yêu cầu của phòng bạn khi còn ở trạng thái Chờ duyệt.");
+        return;
+      }
+    }
+
+    const confirmText = isHcnsViewer
+      ? "Bạn có chắc chắn muốn xóa yêu cầu cấp phát này không?"
+      : `Huỷ yêu cầu "${request.item}" (${request.qty} ${request.unit || ""}) của phòng bạn?`;
+
+    if (window.confirm(confirmText)) {
       try {
         if (reqId.includes("__")) {
           const [parentTaskId, itemIdStr] = reqId.split("__");
@@ -3079,7 +3148,8 @@ export default function AdministrationPage() {
       name: newSupplyName.trim(),
       cat: newSupplyCat,
       unit: newSupplyUnit.trim(),
-      initialStock: Number(newSupplyStock),
+      // Ô để rỗng thì hiểu là 0 (Number("") = 0); `|| 0` chặn nốt NaN
+      initialStock: Number(newSupplyStock) || 0,
       imported: 0,
     });
     if (!created) return;
@@ -3087,7 +3157,7 @@ export default function AdministrationPage() {
     setShowAddSupply(false);
     setNewSupplyName("");
     setNewSupplyUnit("");
-    setNewSupplyStock(0);
+    setNewSupplyStock("");
     alert("Đã thêm vật tư mới vào kho thành công.");
   };
 
@@ -3126,17 +3196,31 @@ export default function AdministrationPage() {
   // VPP Create new PYC handler
   const handleCreatePYC = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newPYCTargetName || !newPYCItem || newPYCQty <= 0) {
-      alert("Vui lòng điền đầy đủ thông tin yêu cầu.");
+    // Chốt chặn: người ngoài HCNS luôn ghi phiếu về phòng của chính họ, bất kể
+    // state trên giao diện đang là gì.
+    const targetName = isHcnsViewer ? newPYCTargetName : myVppTargetName;
+    if (!targetName) {
+      alert(
+        isHcnsViewer
+          ? "Vui lòng chọn bộ phận nhận cấp phát."
+          : "Hồ sơ của bạn chưa có phòng ban nên chưa tạo được phiếu. Vui lòng báo Hành chính Nhân sự cập nhật giúp."
+      );
+      return;
+    }
+    // Bỏ dòng số lượng <= 0 thay vì chặn cả phiếu — người dùng xoá số trong một
+    // ô rồi quên là chuyện thường, không đáng bắt làm lại từ đầu.
+    const lines = newPYCLines.filter(l => l.name && Number(l.qty) > 0);
+    if (lines.length === 0) {
+      alert("Vui lòng chọn ít nhất một vật tư và nhập số lượng lớn hơn 0.");
       return;
     }
 
-    const deptName = newPYCTarget === "phongban" ? newPYCTargetName : `Ban điều hành ${newPYCTargetName}`;
+    const deptName = newPYCTarget === "phongban" ? targetName : `Ban điều hành ${targetName}`;
     const dateStr = new Date().toISOString().split("T")[0];
 
     try {
       const currentMonthStr = new Date().toLocaleDateString("vi-VN", { month: "numeric" });
-      const title = `Cấp phát VPP cho ${newPYCTargetName} tháng ${currentMonthStr}`;
+      const title = `Cấp phát VPP cho ${targetName} tháng ${currentMonthStr}`;
 
       // Check if there is already an active grouped VPP task for this department/project in "Chờ duyệt" status for the current month
       const { data: existingTasks, error: checkErr } = await supabase
@@ -3144,7 +3228,7 @@ export default function AdministrationPage() {
         .select("*")
         .eq("title", title)
         .eq("status", "Chờ duyệt")
-        .eq("assignee", newPYCTargetName);
+        .eq("assignee", targetName);
 
       if (checkErr) throw checkErr;
 
@@ -3159,16 +3243,18 @@ export default function AdministrationPage() {
           notesObj.items = [];
         }
 
-        const nextId = notesObj.items.reduce((max: number, item: any) => Math.max(max, item.id || 0), 0) + 1;
-        notesObj.items.push({
-          id: nextId,
-          item: newPYCItem,
-          qty: Number(newPYCQty),
-          status: "Chờ duyệt",
-          allocationTime: "",
-          cat: "",
-          unit: "Cái"
-        });
+        let nextId = notesObj.items.reduce((max: number, item: any) => Math.max(max, item.id || 0), 0) + 1;
+        for (const line of lines) {
+          notesObj.items.push({
+            id: nextId++,
+            item: line.name,
+            qty: Number(line.qty),
+            status: "Chờ duyệt",
+            allocationTime: "",
+            cat: "",
+            unit: line.unit || "Cái"
+          });
+        }
 
         const approvedCount = notesObj.items.filter((itemObj: any) => itemObj.status === "Đã cấp phát").length;
         const progressPercent = Math.round((approvedCount / notesObj.items.length) * 100);
@@ -3183,22 +3269,24 @@ export default function AdministrationPage() {
 
         if (updateErr) throw updateErr;
 
-        alert(`Đã thêm vật tư vào phiếu yêu cầu cấp phát VPP tháng ${currentMonthStr} của ${newPYCTargetName}.`);
+        alert(
+          `Đã thêm ${lines.length} vật tư vào phiếu yêu cầu cấp phát VPP tháng ${currentMonthStr} của ${targetName}.`
+        );
       } else {
-        const items = [{
-          id: 1,
-          item: newPYCItem,
-          qty: Number(newPYCQty),
+        const items = lines.map((line, i) => ({
+          id: i + 1,
+          item: line.name,
+          qty: Number(line.qty),
           status: "Chờ duyệt",
           allocationTime: "",
           cat: "",
-          unit: "Cái"
-        }];
+          unit: line.unit || "Cái"
+        }));
 
         const notes = JSON.stringify({
           dept: deptName,
           target: newPYCTarget,
-          targetName: newPYCTargetName,
+          targetName: targetName,
           requesterName: newPYCRequesterName.trim(),
           frequency: "Cấp phát",
           date: dateStr,
@@ -3209,7 +3297,7 @@ export default function AdministrationPage() {
           .from("tasks")
           .insert([{
             title: title,
-            assignee: newPYCTargetName,
+            assignee: targetName,
             start_date: dateStr,
             due_date: dateStr,
             priority: "Thấp",
@@ -3220,14 +3308,14 @@ export default function AdministrationPage() {
 
         if (error) throw error;
 
-        alert(`Đã tạo thành công Phiếu yêu cầu cấp phát VPP cho ${deptName}.`);
+        alert(`Đã tạo thành công Phiếu yêu cầu cấp phát VPP (${lines.length} vật tư) cho ${deptName}.`);
       }
 
       setShowNewPYCModal(false);
-      
+
       // Reset fields
-      setNewPYCItem("");
-      setNewPYCQty(1);
+      setNewPYCLines([]);
+      setPycItemSearch("");
       setNewPYCRequesterName("");
       
       // Refresh list from Supabase
@@ -4192,7 +4280,9 @@ export default function AdministrationPage() {
                   { id: "invoice", label: "2. Đọc hóa đơn thanh toán", restrictedLabel: "Đọc hóa đơn thanh toán", icon: Receipt, desc: "AI trích xuất làm HS thanh toán", hcnsOnly: false },
                   { id: "recurring", label: "3. HS thanh toán định kỳ", restrictedLabel: "Tạo & theo dõi thanh toán", icon: RefreshCw, desc: "Ghi nhớ TK ngân hàng định kỳ", hcnsOnly: false },
                   { id: "report", label: "4. Báo cáo chi phí tháng", restrictedLabel: "Báo cáo chi phí tháng", icon: BarChart3, desc: "Tổng hợp toàn bộ HS thanh toán", hcnsOnly: true },
-                  { id: "vpp", label: "5. VPP (Văn phòng phẩm)", restrictedLabel: "VPP (Văn phòng phẩm)", icon: Package, desc: "Tồn kho & cấp phát phòng ban", hcnsOnly: true }
+                  // VPP mở cho mọi phòng ban để họ tự đặt hàng. Người ngoài HCNS chỉ
+                  // thấy phần đặt + phiếu của phòng mình (xem isHcnsViewer bên dưới).
+                  { id: "vpp", label: "5. VPP (Văn phòng phẩm)", restrictedLabel: "VPP (Văn phòng phẩm)", icon: Package, desc: "Đặt và theo dõi văn phòng phẩm", hcnsOnly: false }
                 ].filter((item) => isHcnsViewer || !item.hcnsOnly).map((item) => {
                   const Icon = item.icon;
                   const isActive = activeTab === item.id;
@@ -4228,9 +4318,10 @@ export default function AdministrationPage() {
             <div className="lg:col-span-3 space-y-6">
               
               {/* ─── TAB 5: VPP (Văn phòng phẩm) ─── */}
-              {activeTab === "vpp" && isHcnsViewer && (
+              {activeTab === "vpp" && (
                 <div className="space-y-6 animate-in fade-in-50 slide-in-from-bottom-2 duration-300">
-                  {/* KPI Cards (5 Columns with Modern Gradients & Shadow Glows) */}
+                  {/* Thẻ số liệu kho — việc của HCNS, phòng ban khác không cần thấy */}
+                  {isHcnsViewer && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
                     {/* Tồn kho Card */}
                     <div className="relative overflow-hidden glass bg-gradient-to-br from-blue-50/40 to-indigo-50/20 rounded-2xl p-5 border border-blue-100/50 shadow-sm flex items-center gap-4 group hover:shadow-md transition-all duration-300">
@@ -4321,9 +4412,11 @@ export default function AdministrationPage() {
                       </div>
                     </div>
                   </div>
+                  )}
 
                   {/* VPP Sub-navigation (Modern Capsule Segmented Style) */}
                   <div className="bg-slate-100/90 p-1 rounded-xl flex flex-wrap gap-1.5 w-fit border border-slate-200/50 shadow-sm">
+                    {isHcnsViewer && (
                     <button
                       onClick={() => {
                         setVppSubTab("inventory");
@@ -4338,6 +4431,7 @@ export default function AdministrationPage() {
                       <Package size={13} />
                       1. Mục tồn kho của Hành chính
                     </button>
+                    )}
                     <button
                       onClick={() => {
                         setVppSubTab("phongban");
@@ -4368,8 +4462,8 @@ export default function AdministrationPage() {
                     </button>
                   </div>
 
-                  {/* Sub-tab 1: Inventory Table */}
-                  {vppSubTab === "inventory" && (
+                  {/* Sub-tab 1: Inventory Table — chỉ HCNS */}
+                  {vppSubTab === "inventory" && isHcnsViewer && (
                     <div className="glass bg-white rounded-2xl p-5 border border-slate-200/50 shadow-premium space-y-4 animate-in fade-in-40 duration-200">
                       <div className="flex justify-between items-center gap-4">
                         <div className="relative w-64">
@@ -4477,8 +4571,8 @@ export default function AdministrationPage() {
                                   <input
                                     type="number"
                                     required
-                                    value={newSupplyStock === 0 ? "" : newSupplyStock}
-                                    onChange={(e) => setNewSupplyStock(Number(e.target.value))}
+                                    value={newSupplyStock}
+                                    onChange={(e) => setNewSupplyStock(e.target.value)}
                                     placeholder="Ví dụ: 100"
                                     min={0}
                                     className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 bg-white text-xs font-semibold text-slate-800"
@@ -4591,7 +4685,7 @@ export default function AdministrationPage() {
                               <input
                                 type="number"
                                 value={newSupplyStock}
-                                onChange={(e) => setNewSupplyStock(Number(e.target.value))}
+                                onChange={(e) => setNewSupplyStock(e.target.value)}
                                 className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-semibold focus:border-blue-500 focus:outline-none bg-white"
                                 min={0}
                                 required
@@ -4814,20 +4908,30 @@ export default function AdministrationPage() {
                         </div>
                         
                         <div className="flex items-center gap-2">
-                          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs">
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Phòng ban:</span>
-                            <select
-                              value={selectedDeptFilter}
-                              onChange={(e) => setSelectedDeptFilter(e.target.value)}
-                              className="bg-transparent border-none outline-none font-semibold text-slate-700 cursor-pointer text-xs"
-                            >
-                              <option value="Tất cả">-- Tất cả --</option>
-                              {allocationTargets.filter(t => t.type === "phongban").map((t) => (
-                                <option key={t.id} value={t.name}>{t.name}</option>
-                              ))}
-                            </select>
-                          </div>
-                          
+                          {isHcnsViewer ? (
+                            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Phòng ban:</span>
+                              <select
+                                value={selectedDeptFilter}
+                                onChange={(e) => setSelectedDeptFilter(e.target.value)}
+                                className="bg-transparent border-none outline-none font-semibold text-slate-700 cursor-pointer text-xs"
+                              >
+                                <option value="Tất cả">-- Tất cả --</option>
+                                {allocationTargets.filter(t => t.type === "phongban").map((t) => (
+                                  <option key={t.id} value={t.name}>{t.name}</option>
+                                ))}
+                              </select>
+                            </div>
+                          ) : (
+                            // Không phải ô lọc mà là lời nhắc: người ngoài HCNS chỉ có
+                            // phiếu của phòng mình, không đổi sang phòng khác được.
+                            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Phòng ban:</span>
+                              <span className="font-semibold text-slate-700 text-xs">{myVppTargetName || "Chưa xếp phòng"}</span>
+                            </div>
+                          )}
+
+                          {isHcnsViewer && (
                           <button
                             type="button"
                             onClick={() => {
@@ -4839,6 +4943,7 @@ export default function AdministrationPage() {
                           >
                             <Eye size={14} /> Xem trước phiếu cấp phát
                           </button>
+                          )}
 
                           {canApproveRequests && (
                             <button
@@ -4854,10 +4959,12 @@ export default function AdministrationPage() {
                             type="button"
                             onClick={() => {
                               setNewPYCTarget("phongban");
+                              // Người ngoài HCNS chỉ đặt được cho phòng mình
                               const pbs = allocationTargets.filter(t => t.type === "phongban");
-                              setNewPYCTargetName(pbs.length > 0 ? pbs[0].name : "");
-                              if (supplies.length > 0) setNewPYCItem(supplies[0].name);
-                              setNewPYCQty(1);
+                              setNewPYCTargetName(isHcnsViewer ? (pbs.length > 0 ? pbs[0].name : "") : myVppTargetName);
+                              // Mở phiếu trắng — người dùng tự chọn món, không mồi sẵn món đầu kho
+                              setNewPYCLines([]);
+                              setPycItemSearch("");
                               setShowNewPYCModal(true);
                             }}
                             className="flex items-center gap-1.5 bg-[#005BAC] hover:bg-blue-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200"
@@ -4865,6 +4972,7 @@ export default function AdministrationPage() {
                             <Plus size={14} /> Tạo yêu cầu cấp
                           </button>
 
+                          {isHcnsViewer && (
                           <button
                             type="button"
                             onClick={() => {
@@ -4881,7 +4989,9 @@ export default function AdministrationPage() {
                             )}
                             {vppFileUploading ? "Đang phân tích..." : "Nhập file yêu cầu"}
                           </button>
+                          )}
 
+                          {isHcnsViewer && (
                           <button
                             type="button"
                             onClick={() => setShowAiSettingsModal(true)}
@@ -4890,6 +5000,7 @@ export default function AdministrationPage() {
                           >
                             <Settings size={14} />
                           </button>
+                          )}
                         </div>
                       </div>
 
@@ -4911,7 +5022,7 @@ export default function AdministrationPage() {
                           </thead>
                           <tbody className="divide-y divide-slate-100 font-semibold text-slate-600">
                             {deptRequests
-                              .filter(r => r.target === "phongban" && (selectedDeptFilter === "Tất cả" || r.targetName === selectedDeptFilter))
+                              .filter(r => r.target === "phongban" && canSeeVppRequest(r.targetName) && (selectedDeptFilter === "Tất cả" || r.targetName === selectedDeptFilter))
                               .map((req) => (
                                 <tr key={req.id} className="hover:bg-slate-50/50 hover:translate-x-[2px] transition-all duration-150">
                                   <td className="py-2 px-4">
@@ -4919,8 +5030,9 @@ export default function AdministrationPage() {
                                       type="text"
                                       value={req.allocationTime || ""}
                                       onChange={(e) => updateVppRequestField(req.id, "allocationTime", e.target.value)}
-                                      placeholder="Điền ngày/giờ..."
-                                      className="w-full px-2 py-1 border border-slate-200 rounded-lg outline-none focus:border-[#005BAC] text-xs font-semibold bg-white text-slate-700"
+                                      placeholder={isHcnsViewer ? "Điền ngày/giờ..." : "Chờ hành chính cấp"}
+                                      readOnly={!isHcnsViewer}
+                                      className={`w-full px-2 py-1 border rounded-lg outline-none text-xs font-semibold text-slate-700 ${isHcnsViewer ? "border-slate-200 focus:border-[#005BAC] bg-white" : "border-transparent bg-slate-50 cursor-default"}`}
                                     />
                                   </td>
                                   <td className="py-3.5 px-4 text-slate-800 font-bold">{req.targetName}</td>
@@ -4929,7 +5041,8 @@ export default function AdministrationPage() {
                                       type="text"
                                       value={req.item}
                                       onChange={(e) => updateVppRequestField(req.id, "item", e.target.value)}
-                                      className="w-full px-2 py-1 border border-slate-200 rounded-lg outline-none focus:border-[#005BAC] text-xs font-semibold bg-white text-slate-700"
+                                      readOnly={!isHcnsViewer}
+                                      className={`w-full px-2 py-1 border rounded-lg outline-none text-xs font-semibold text-slate-700 ${isHcnsViewer ? "border-slate-200 focus:border-[#005BAC] bg-white" : "border-transparent bg-slate-50 cursor-default"}`}
                                     />
                                   </td>
                                   {(() => {
@@ -4944,7 +5057,8 @@ export default function AdministrationPage() {
                                             type="text"
                                             value={cat}
                                             onChange={(e) => updateVppRequestField(req.id, "cat", e.target.value)}
-                                            className="w-full px-2 py-1 border border-slate-200 rounded-lg outline-none focus:border-[#005BAC] text-xs font-semibold bg-white text-slate-700"
+                                            readOnly={!isHcnsViewer}
+                                            className={`w-full px-2 py-1 border rounded-lg outline-none text-xs font-semibold text-slate-700 ${isHcnsViewer ? "border-slate-200 focus:border-[#005BAC] bg-white" : "border-transparent bg-slate-50 cursor-default"}`}
                                           />
                                         </td>
                                         <td className="py-2 px-4">
@@ -4952,7 +5066,8 @@ export default function AdministrationPage() {
                                             type="text"
                                             value={unit}
                                             onChange={(e) => updateVppRequestField(req.id, "unit", e.target.value)}
-                                            className="w-full px-2 py-1 border border-slate-200 rounded-lg outline-none focus:border-[#005BAC] text-xs font-semibold bg-white text-slate-700"
+                                            readOnly={!isHcnsViewer}
+                                            className={`w-full px-2 py-1 border rounded-lg outline-none text-xs font-semibold text-slate-700 ${isHcnsViewer ? "border-slate-200 focus:border-[#005BAC] bg-white" : "border-transparent bg-slate-50 cursor-default"}`}
                                           />
                                         </td>
                                         <td className="py-2 px-4 text-center">
@@ -5000,7 +5115,8 @@ export default function AdministrationPage() {
                                       value={req.qty}
                                       min={1}
                                       onChange={(e) => updateVppRequestField(req.id, "qty", parseInt(e.target.value) || 0)}
-                                      className="w-16 px-1.5 py-1 text-center border border-slate-200 rounded-lg outline-none focus:border-[#005BAC] text-xs font-bold bg-white text-slate-800"
+                                      readOnly={!isHcnsViewer}
+                                      className={`w-16 px-1.5 py-1 text-center border rounded-lg outline-none text-xs font-bold text-slate-800 ${isHcnsViewer ? "border-slate-200 focus:border-[#005BAC] bg-white" : "border-transparent bg-slate-50 cursor-default"}`}
                                     />
                                   </td>
                                   <td className="py-3.5 px-4 font-mono text-slate-500">{req.date}</td>
@@ -5027,22 +5143,28 @@ export default function AdministrationPage() {
                                       ) : (
                                         <span className="text-slate-350 text-[10px] font-normal italic shrink-0">Đã bàn giao</span>
                                       )}
-                                      <button
-                                        type="button"
-                                        onClick={() => handleDeleteRequest(req.id)}
-                                        className="p-1.5 text-rose-500 hover:bg-rose-50 hover:text-rose-700 rounded-lg transition-colors cursor-pointer shrink-0"
-                                        title="Xóa yêu cầu"
-                                      >
-                                        <Trash2 size={13} />
-                                      </button>
+                                      {/* Phòng ban tự huỷ được yêu cầu của mình khi còn chờ duyệt;
+                                          đã cấp phát rồi thì chỉ HCNS mới xoá được. */}
+                                      {(isHcnsViewer || req.status === "Chờ duyệt") && (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleDeleteRequest(req.id)}
+                                          className="p-1.5 text-rose-500 hover:bg-rose-50 hover:text-rose-700 rounded-lg transition-colors cursor-pointer shrink-0"
+                                          title={isHcnsViewer ? "Xóa yêu cầu" : "Huỷ yêu cầu này"}
+                                        >
+                                          <Trash2 size={13} />
+                                        </button>
+                                      )}
                                     </div>
                                   </td>
                                 </tr>
                               ))}
-                            {deptRequests.filter(r => r.target === "phongban" && (selectedDeptFilter === "Tất cả" || r.targetName === selectedDeptFilter)).length === 0 && (
+                            {deptRequests.filter(r => r.target === "phongban" && canSeeVppRequest(r.targetName) && (selectedDeptFilter === "Tất cả" || r.targetName === selectedDeptFilter)).length === 0 && (
                               <tr>
                                 <td colSpan={10} className="py-8 text-center text-slate-400 font-medium italic">
-                                  Không có yêu cầu cấp phát nào của phòng ban phù hợp với bộ lọc.
+                                  {isHcnsViewer
+                                    ? "Không có yêu cầu cấp phát nào của phòng ban phù hợp với bộ lọc."
+                                    : "Phòng bạn chưa có yêu cầu cấp phát nào. Bấm \"Tạo yêu cầu cấp\" để đặt văn phòng phẩm."}
                                 </td>
                               </tr>
                             )}
@@ -5064,20 +5186,28 @@ export default function AdministrationPage() {
                         </div>
                         
                         <div className="flex items-center gap-2">
-                          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs">
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Dự án:</span>
-                            <select
-                              value={selectedProjectFilter}
-                              onChange={(e) => setSelectedProjectFilter(e.target.value)}
-                              className="bg-transparent border-none outline-none font-semibold text-slate-700 cursor-pointer text-xs"
-                            >
-                              <option value="Tất cả">-- Tất cả --</option>
-                              {allocationTargets.filter(t => t.type === "duan").map((t) => (
-                                <option key={t.id} value={t.name}>{t.name}</option>
-                              ))}
-                            </select>
-                          </div>
-                          
+                          {isHcnsViewer ? (
+                            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Dự án:</span>
+                              <select
+                                value={selectedProjectFilter}
+                                onChange={(e) => setSelectedProjectFilter(e.target.value)}
+                                className="bg-transparent border-none outline-none font-semibold text-slate-700 cursor-pointer text-xs"
+                              >
+                                <option value="Tất cả">-- Tất cả --</option>
+                                {allocationTargets.filter(t => t.type === "duan").map((t) => (
+                                  <option key={t.id} value={t.name}>{t.name}</option>
+                                ))}
+                              </select>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Bộ phận:</span>
+                              <span className="font-semibold text-slate-700 text-xs">{myVppTargetName || "Chưa xếp phòng"}</span>
+                            </div>
+                          )}
+
+                          {isHcnsViewer && (
                           <button
                             type="button"
                             onClick={() => {
@@ -5089,6 +5219,7 @@ export default function AdministrationPage() {
                           >
                             <Eye size={14} /> Xem trước phiếu cấp phát
                           </button>
+                          )}
 
                           {canApproveRequests && (
                             <button
@@ -5104,10 +5235,12 @@ export default function AdministrationPage() {
                             type="button"
                             onClick={() => {
                               setNewPYCTarget("duan");
+                              // Người ngoài HCNS chỉ đặt được cho bộ phận mình
                               const das = allocationTargets.filter(t => t.type === "duan");
-                              setNewPYCTargetName(das.length > 0 ? das[0].name : "");
-                              if (supplies.length > 0) setNewPYCItem(supplies[0].name);
-                              setNewPYCQty(1);
+                              setNewPYCTargetName(isHcnsViewer ? (das.length > 0 ? das[0].name : "") : myVppTargetName);
+                              // Mở phiếu trắng — người dùng tự chọn món, không mồi sẵn món đầu kho
+                              setNewPYCLines([]);
+                              setPycItemSearch("");
                               setShowNewPYCModal(true);
                             }}
                             className="flex items-center gap-1.5 bg-[#005BAC] hover:bg-blue-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200"
@@ -5115,6 +5248,7 @@ export default function AdministrationPage() {
                             <Plus size={14} /> Tạo yêu cầu cấp
                           </button>
 
+                          {isHcnsViewer && (
                           <button
                             type="button"
                             onClick={() => {
@@ -5131,7 +5265,9 @@ export default function AdministrationPage() {
                             )}
                             {vppFileUploading ? "Đang phân tích..." : "Nhập file yêu cầu"}
                           </button>
+                          )}
 
+                          {isHcnsViewer && (
                           <button
                             type="button"
                             onClick={() => setShowAiSettingsModal(true)}
@@ -5140,6 +5276,7 @@ export default function AdministrationPage() {
                           >
                             <Settings size={14} />
                           </button>
+                          )}
                         </div>
                       </div>
 
@@ -5161,7 +5298,7 @@ export default function AdministrationPage() {
                           </thead>
                           <tbody className="divide-y divide-slate-100 font-semibold text-slate-600">
                             {deptRequests
-                              .filter(r => r.target === "duan" && (selectedProjectFilter === "Tất cả" || r.targetName === selectedProjectFilter))
+                              .filter(r => r.target === "duan" && canSeeVppRequest(r.targetName) && (selectedProjectFilter === "Tất cả" || r.targetName === selectedProjectFilter))
                               .map((req) => (
                                 <tr key={req.id} className="hover:bg-slate-50/50 hover:translate-x-[2px] transition-all duration-150">
                                   <td className="py-2 px-4">
@@ -5169,8 +5306,9 @@ export default function AdministrationPage() {
                                       type="text"
                                       value={req.allocationTime || ""}
                                       onChange={(e) => updateVppRequestField(req.id, "allocationTime", e.target.value)}
-                                      placeholder="Điền ngày/giờ..."
-                                      className="w-full px-2 py-1 border border-slate-200 rounded-lg outline-none focus:border-[#005BAC] text-xs font-semibold bg-white text-slate-700"
+                                      placeholder={isHcnsViewer ? "Điền ngày/giờ..." : "Chờ hành chính cấp"}
+                                      readOnly={!isHcnsViewer}
+                                      className={`w-full px-2 py-1 border rounded-lg outline-none text-xs font-semibold text-slate-700 ${isHcnsViewer ? "border-slate-200 focus:border-[#005BAC] bg-white" : "border-transparent bg-slate-50 cursor-default"}`}
                                     />
                                   </td>
                                   <td className="py-3.5 px-4 text-slate-800 font-bold">{req.dept}</td>
@@ -5179,7 +5317,8 @@ export default function AdministrationPage() {
                                       type="text"
                                       value={req.item}
                                       onChange={(e) => updateVppRequestField(req.id, "item", e.target.value)}
-                                      className="w-full px-2 py-1 border border-slate-200 rounded-lg outline-none focus:border-[#005BAC] text-xs font-semibold bg-white text-slate-700"
+                                      readOnly={!isHcnsViewer}
+                                      className={`w-full px-2 py-1 border rounded-lg outline-none text-xs font-semibold text-slate-700 ${isHcnsViewer ? "border-slate-200 focus:border-[#005BAC] bg-white" : "border-transparent bg-slate-50 cursor-default"}`}
                                     />
                                   </td>
                                   {(() => {
@@ -5194,7 +5333,8 @@ export default function AdministrationPage() {
                                             type="text"
                                             value={cat}
                                             onChange={(e) => updateVppRequestField(req.id, "cat", e.target.value)}
-                                            className="w-full px-2 py-1 border border-slate-200 rounded-lg outline-none focus:border-[#005BAC] text-xs font-semibold bg-white text-slate-700"
+                                            readOnly={!isHcnsViewer}
+                                            className={`w-full px-2 py-1 border rounded-lg outline-none text-xs font-semibold text-slate-700 ${isHcnsViewer ? "border-slate-200 focus:border-[#005BAC] bg-white" : "border-transparent bg-slate-50 cursor-default"}`}
                                           />
                                         </td>
                                         <td className="py-2 px-4">
@@ -5202,7 +5342,8 @@ export default function AdministrationPage() {
                                             type="text"
                                             value={unit}
                                             onChange={(e) => updateVppRequestField(req.id, "unit", e.target.value)}
-                                            className="w-full px-2 py-1 border border-slate-200 rounded-lg outline-none focus:border-[#005BAC] text-xs font-semibold bg-white text-slate-700"
+                                            readOnly={!isHcnsViewer}
+                                            className={`w-full px-2 py-1 border rounded-lg outline-none text-xs font-semibold text-slate-700 ${isHcnsViewer ? "border-slate-200 focus:border-[#005BAC] bg-white" : "border-transparent bg-slate-50 cursor-default"}`}
                                           />
                                         </td>
                                         <td className="py-2 px-4 text-center">
@@ -5250,7 +5391,8 @@ export default function AdministrationPage() {
                                       value={req.qty}
                                       min={1}
                                       onChange={(e) => updateVppRequestField(req.id, "qty", parseInt(e.target.value) || 0)}
-                                      className="w-16 px-1.5 py-1 text-center border border-slate-200 rounded-lg outline-none focus:border-[#005BAC] text-xs font-bold bg-white text-slate-800"
+                                      readOnly={!isHcnsViewer}
+                                      className={`w-16 px-1.5 py-1 text-center border rounded-lg outline-none text-xs font-bold text-slate-800 ${isHcnsViewer ? "border-slate-200 focus:border-[#005BAC] bg-white" : "border-transparent bg-slate-50 cursor-default"}`}
                                     />
                                   </td>
                                   <td className="py-3.5 px-4 font-mono text-slate-500">{req.date}</td>
@@ -5277,22 +5419,28 @@ export default function AdministrationPage() {
                                       ) : (
                                         <span className="text-slate-350 text-[10px] font-normal italic shrink-0">Đã bàn giao</span>
                                       )}
-                                      <button
-                                        type="button"
-                                        onClick={() => handleDeleteRequest(req.id)}
-                                        className="p-1.5 text-rose-500 hover:bg-rose-50 hover:text-rose-700 rounded-lg transition-colors cursor-pointer shrink-0"
-                                        title="Xóa yêu cầu"
-                                      >
-                                        <Trash2 size={13} />
-                                      </button>
+                                      {/* Phòng ban tự huỷ được yêu cầu của mình khi còn chờ duyệt;
+                                          đã cấp phát rồi thì chỉ HCNS mới xoá được. */}
+                                      {(isHcnsViewer || req.status === "Chờ duyệt") && (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleDeleteRequest(req.id)}
+                                          className="p-1.5 text-rose-500 hover:bg-rose-50 hover:text-rose-700 rounded-lg transition-colors cursor-pointer shrink-0"
+                                          title={isHcnsViewer ? "Xóa yêu cầu" : "Huỷ yêu cầu này"}
+                                        >
+                                          <Trash2 size={13} />
+                                        </button>
+                                      )}
                                     </div>
                                   </td>
                                 </tr>
                               ))}
-                            {deptRequests.filter(r => r.target === "duan" && (selectedProjectFilter === "Tất cả" || r.targetName === selectedProjectFilter)).length === 0 && (
+                            {deptRequests.filter(r => r.target === "duan" && canSeeVppRequest(r.targetName) && (selectedProjectFilter === "Tất cả" || r.targetName === selectedProjectFilter)).length === 0 && (
                               <tr>
                                 <td colSpan={10} className="py-8 text-center text-slate-400 font-medium italic">
-                                  Không có yêu cầu cấp phát nào của dự án phù hợp với bộ lọc.
+                                  {isHcnsViewer
+                                    ? "Không có yêu cầu cấp phát nào của dự án phù hợp với bộ lọc."
+                                    : "Bộ phận bạn chưa có yêu cầu cấp phát nào. Bấm \"Tạo yêu cầu cấp\" để đặt văn phòng phẩm."}
                                 </td>
                               </tr>
                             )}
@@ -5844,7 +5992,11 @@ export default function AdministrationPage() {
                     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
                       <div className="bg-white rounded-2xl max-w-md w-full p-6 border border-slate-100 shadow-2xl relative space-y-4 animate-in zoom-in-95 duration-200">
                         <button
-                          onClick={() => setShowNewPYCModal(false)}
+                          onClick={() => {
+                            setShowNewPYCModal(false);
+                            setNewPYCLines([]);
+                            setPycItemSearch("");
+                          }}
                           className="absolute right-4 top-4 p-1 text-slate-400 hover:bg-slate-50 rounded-lg transition-all"
                         >
                           <X size={16} />
@@ -5856,7 +6008,9 @@ export default function AdministrationPage() {
                         </div>
 
                         <form onSubmit={handleCreatePYC} className="space-y-4 text-xs font-semibold text-slate-700">
-                          {/* Target Type Selector */}
+                          {/* Đối tượng nhận cấp phát — chỉ HCNS mới đổi được. Người phòng
+                              ban khác luôn đặt cho chính phòng mình, không đặt hộ phòng khác. */}
+                          {isHcnsViewer ? (
                           <div className="space-y-1">
                             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Đối tượng nhận cấp phát</label>
                             <div className="grid grid-cols-2 gap-2 mt-1">
@@ -5892,8 +6046,18 @@ export default function AdministrationPage() {
                               </button>
                             </div>
                           </div>
+                          ) : (
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Đối tượng nhận cấp phát</label>
+                              <div className="w-full px-3 py-2.5 border border-slate-200 rounded-lg bg-slate-50 font-semibold text-slate-700 mt-1">
+                                {myVppTargetName || "Chưa xếp phòng"}
+                              </div>
+                              <p className="text-[10px] text-slate-400 font-medium">Phiếu luôn ghi về phòng ban của bạn.</p>
+                            </div>
+                          )}
 
                           {/* Specific Department/Project Selection */}
+                          {isHcnsViewer && (
                           <div className="space-y-1">
                             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                               {newPYCTarget === "phongban" ? "Chọn Phòng Ban VP" : "Chọn Dự Án BĐH"}
@@ -5912,40 +6076,117 @@ export default function AdministrationPage() {
                                   ))}
                             </select>
                           </div>
+                          )}
 
-                          {/* Supply Item Selector */}
+                          {/* Chọn vật tư — gõ để lọc, bấm chọn bao nhiêu món cũng được.
+                              Mỗi món chọn xong rơi xuống danh sách bên dưới, có ô số lượng riêng. */}
                           <div className="space-y-1">
                             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Chọn vật tư yêu cầu</label>
-                            <select
-                              value={newPYCItem}
-                              onChange={(e) => setNewPYCItem(e.target.value)}
-                              className="w-full px-3 py-2.5 border border-slate-200 rounded-lg bg-white font-semibold text-slate-700 focus:border-blue-500 focus:outline-none mt-1 cursor-pointer"
-                              required
-                            >
-                              {suppliesWithDynamicAllocated.length === 0 ? (
-                                <option value="">-- Không có vật tư nào trong kho --</option>
-                              ) : (
-                                suppliesWithDynamicAllocated.map((item, i) => (
-                                  <option key={i} value={item.name}>
-                                    {item.name} (Còn lại: {item.ending} {item.unit})
-                                  </option>
-                                ))
+                            <div className="relative mt-1" ref={pycItemPickerRef}>
+                              <div className="w-full min-h-[42px] px-3 py-2 border border-slate-200 rounded-lg flex items-center gap-1.5 focus-within:border-blue-500 bg-white">
+                                <Search size={13} className="text-slate-400 shrink-0" />
+                                <input
+                                  type="text"
+                                  value={pycItemSearch}
+                                  onChange={(e) => {
+                                    setPycItemSearch(e.target.value);
+                                    setShowPycItemDropdown(true);
+                                  }}
+                                  onFocus={() => setShowPycItemDropdown(true)}
+                                  placeholder={
+                                    suppliesWithDynamicAllocated.length === 0
+                                      ? "Kho chưa có vật tư nào..."
+                                      : "Tìm tên vật tư hoặc bấm để chọn nhanh..."
+                                  }
+                                  className="flex-1 min-w-0 py-1 outline-none text-xs font-semibold placeholder:font-normal bg-transparent"
+                                />
+                              </div>
+
+                              {showPycItemDropdown && (
+                                <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-premium z-20 max-h-56 overflow-y-auto animate-in fade-in duration-150">
+                                  {filteredPycSupplies.length === 0 ? (
+                                    <p className="text-center text-slate-400 text-[11px] italic py-4">
+                                      {suppliesWithDynamicAllocated.length === 0
+                                        ? "Kho chưa có vật tư nào."
+                                        : "Không tìm thấy vật tư phù hợp."}
+                                    </p>
+                                  ) : (
+                                    filteredPycSupplies.map((item) => (
+                                      <button
+                                        key={item.name}
+                                        type="button"
+                                        onClick={() => {
+                                          // Không đóng danh sách: chọn xong còn chọn tiếp món khác
+                                          setNewPYCLines((prev) => [
+                                            ...prev,
+                                            { name: item.name, unit: item.unit, qty: 1 },
+                                          ]);
+                                          setPycItemSearch("");
+                                        }}
+                                        className="w-full flex items-center gap-2.5 px-4 py-2 hover:bg-slate-50 transition-colors text-left cursor-pointer"
+                                      >
+                                        <span className="flex-1 min-w-0">
+                                          <span className="block text-xs font-bold text-slate-700 truncate">{item.name}</span>
+                                          <span className="block text-[10px] text-slate-400 font-semibold truncate">
+                                            Còn lại: {item.ending} {item.unit}
+                                            {item.cat ? ` • ${item.cat}` : ""}
+                                          </span>
+                                        </span>
+                                        <Plus size={13} className="text-[#005BAC] shrink-0" />
+                                      </button>
+                                    ))
+                                  )}
+                                </div>
                               )}
-                            </select>
+                            </div>
                           </div>
 
-                          {/* Quantity Input */}
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Số lượng yêu cầu</label>
-                            <input
-                              type="number"
-                              min={1}
-                              value={newPYCQty}
-                              onChange={(e) => setNewPYCQty(Number(e.target.value))}
-                              className="w-full px-3 py-2.5 border border-slate-200 rounded-lg font-semibold text-slate-700 focus:border-blue-500 focus:outline-none mt-1 bg-white"
-                              required
-                            />
-                          </div>
+                          {/* Các món đã chọn — sửa số lượng và bỏ bớt ngay tại đây */}
+                          {newPYCLines.length > 0 && (
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                                Đã chọn ({newPYCLines.length} vật tư)
+                              </label>
+                              <div className="mt-1 border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-52 overflow-y-auto">
+                                {newPYCLines.map((line, idx) => {
+                                  const supply = suppliesWithDynamicAllocated.find(s => s.name === line.name);
+                                  const overStock = !!supply && line.qty > supply.ending;
+                                  return (
+                                    <div key={line.name} className="flex items-center gap-2 px-3 py-2">
+                                      <span className="flex-1 min-w-0">
+                                        <span className="block text-xs font-bold text-slate-700 truncate">{line.name}</span>
+                                        <span className={`block text-[10px] font-semibold truncate ${overStock ? "text-amber-600" : "text-slate-400"}`}>
+                                          {supply ? `Còn lại: ${supply.ending} ${supply.unit}` : line.unit}
+                                          {overStock ? " • yêu cầu vượt tồn kho" : ""}
+                                        </span>
+                                      </span>
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        value={line.qty}
+                                        onChange={(e) => {
+                                          const qty = Number(e.target.value);
+                                          setNewPYCLines((prev) =>
+                                            prev.map((l, i) => (i === idx ? { ...l, qty } : l))
+                                          );
+                                        }}
+                                        className="w-16 shrink-0 px-2 py-1.5 border border-slate-200 rounded-lg text-xs font-bold text-slate-700 text-center focus:border-blue-500 focus:outline-none bg-white"
+                                      />
+                                      <span className="text-[10px] font-semibold text-slate-400 w-10 shrink-0 truncate">{line.unit}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => setNewPYCLines((prev) => prev.filter((_, i) => i !== idx))}
+                                        className="p-1 text-slate-300 hover:text-rose-500 transition-colors shrink-0"
+                                        title="Bỏ vật tư này khỏi phiếu"
+                                      >
+                                        <X size={13} />
+                                      </button>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
 
                           {/* Requester Input */}
                           <div className="space-y-1">
@@ -5963,17 +6204,21 @@ export default function AdministrationPage() {
                           <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-100">
                             <button
                               type="button"
-                              onClick={() => setShowNewPYCModal(false)}
+                              onClick={() => {
+                                setShowNewPYCModal(false);
+                                setNewPYCLines([]);
+                                setPycItemSearch("");
+                              }}
                               className="px-4 py-2 border border-slate-200 rounded-xl font-bold text-slate-500 hover:bg-slate-100 transition-all active:scale-95"
                             >
                               Hủy bỏ
                             </button>
                             <button
                               type="submit"
-                              disabled={supplies.length === 0}
+                              disabled={supplies.length === 0 || newPYCLines.length === 0}
                               className="px-4 py-2 bg-[#005BAC] disabled:bg-slate-300 hover:bg-blue-700 text-white rounded-xl font-bold shadow-sm transition-all active:scale-95"
                             >
-                              Tạo phiếu yêu cầu
+                              {newPYCLines.length > 1 ? `Tạo phiếu (${newPYCLines.length} vật tư)` : "Tạo phiếu yêu cầu"}
                             </button>
                           </div>
                         </form>
