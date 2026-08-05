@@ -48,8 +48,10 @@ export default function LatestNewsSection() {
 
   if (posts.length === 0) return null;
 
+  // max-w: trên màn hình rộng, 3 thẻ chia đều cả trang sẽ bị kéo giãn và ảnh bìa
+  // (object-cover) cắt mất chữ trên banner — chặn bề ngang để thẻ giữ khổ nhỏ.
   return (
-    <section className="space-y-4 animate-in fade-in duration-200">
+    <section className="space-y-4 animate-in fade-in duration-200 max-w-[1080px]">
       <div className="flex items-center justify-between">
         <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Tin mới nhất</h2>
         <Link href="/tin-tuc" className="text-xs text-blue-600 font-semibold hover:underline flex items-center gap-1">

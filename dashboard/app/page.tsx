@@ -4,7 +4,6 @@ import { useState, useEffect, useMemo } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
-import { useTenantConfig } from "@/lib/tenantConfig";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import LatestNewsSection from "@/components/news/LatestNewsSection";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
@@ -156,7 +155,6 @@ const monthLastDay = (mk: string) => {
 const fmtD = (iso: string) => (iso ? iso.split("-").reverse().join("/") : "");
 
 export default function DashboardPage() {
-  const tenantCfg = useTenantConfig();
   const [loading, setLoading] = useState(true);
   const [employees, setEmployees] = useState<any[]>([]);
   const [candidates, setCandidates] = useState<any[]>([]);
@@ -363,7 +361,7 @@ export default function DashboardPage() {
     <div className="flex min-h-screen bg-[#F7F9FC]">
       <Sidebar />
       <div className="ml-60 flex-1 flex flex-col min-w-0">
-        <Header title="Dashboard Hành chính Nhân sự" subtitle={`Hệ thống quản trị Hành chính Nhân sự ${tenantCfg.company_name}`} />
+        <Header title="Dashboard" />
 
         <main className="flex-1 p-8 space-y-8 overflow-y-auto">
           {loading ? (
