@@ -52,18 +52,32 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Thiếu thông tin bài viết cần chia sẻ!" }, { status: 400 });
     }
 
-    // Nhân viên có thể có nhiều email (công ty + cá nhân) — ưu tiên email cùng
-    // tên miền với hộp thư đang gửi, không gắn cứng tên miền của công ty nào.
+    // GỬI TỚI MỌI ĐỊA CHỈ CÓ TRONG HỒ SƠ, không chỉ email công ty.
+    //
+    // Các route email khác (giao việc, đăng ký xe) chỉ chọn MỘT địa chỉ, ưu
+    // tiên email cùng tên miền hộp thư gửi. Với thông báo nội bộ thì cách đó
+    // hỏng việc: thư vào hộp thư công ty mà người nhận ít mở, còn Gmail họ dùng
+    // hằng ngày lại không nhận được gì — đúng tình huống đã gặp trong thực tế.
+    // Sắp email công ty lên trước để nó là địa chỉ chính, các địa chỉ còn lại
+    // nhận kèm.
     const senderDomain = (smtpUser.split("@")[1] || "").toLowerCase();
-    const candidates = String(recipientEmails || "")
-      .split(/[,;\s]+/)
-      .map((e: string) => e.trim())
-      .filter(Boolean);
-    const recipient =
-      candidates.find((e: string) => e.toLowerCase().endsWith(`@${senderDomain}`)) || candidates[0] || "";
+    const candidates: string[] = Array.from(
+      new Set(
+        String(recipientEmails || "")
+          .split(/[,;\s]+/)
+          .map((e: string) => e.trim().toLowerCase())
+          .filter((e: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e))
+      )
+    );
+
+    const companyFirst = [
+      ...candidates.filter((e) => e.endsWith(`@${senderDomain}`)),
+      ...candidates.filter((e) => !e.endsWith(`@${senderDomain}`)),
+    ];
+    const recipient = companyFirst.join(", ");
 
     if (!recipient) {
-      return NextResponse.json({ error: "Người nhận chưa có email trong Danh sách nhân viên!" }, { status: 400 });
+      return NextResponse.json({ error: "Người nhận chưa có email hợp lệ trong Danh sách nhân viên!" }, { status: 400 });
     }
 
     const cfg = await getTenantConfigServer();
