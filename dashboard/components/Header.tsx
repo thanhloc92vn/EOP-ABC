@@ -366,6 +366,23 @@ export default function Header({ title, subtitle }: Props) {
         console.warn("Could not fetch benefit claims for header:", err);
       }
 
+      // 5. Phiếu yêu cầu cấp phát VPP đang chờ — task tiêu đề "Cấp phát VPP cho ..."
+      // do trang Hành chính tạo. Khác các loại trên ở chỗ trạng thái là tiếng Việt
+      // "Chờ duyệt" chứ không phải "pending_approval".
+      let vppTasksData: any[] = [];
+      try {
+        const { data, error } = await supabase
+          .from("tasks")
+          .select("*")
+          .eq("status", "Chờ duyệt")
+          .like("title", "Cấp phát VPP%");
+        if (!error && data) {
+          vppTasksData = data;
+        }
+      } catch (err) {
+        console.warn("Could not fetch VPP requests for header:", err);
+      }
+
       const isUserAdmin = userObj.isAdmin || (userObj.role || "").toLowerCase() === "admin";
       // Dùng chung isManagerRole() của lib/approvers.ts — trước đây Header giữ
       // một bản chép riêng và nó thiếu "Kế toán trưởng"/"Chỉ huy trưởng", nên
@@ -381,10 +398,11 @@ export default function Header({ title, subtitle }: Props) {
       // Per-user approval grants from approval_permissions table
       const perms = await fetchApprovalPermissions(userObj.email);
 
-      // canApproveBenefit tính riêng: cờ này KHÔNG nằm trong hasAnyApprovalPermission()
-      // (nó không mở menu "Duyệt yêu cầu" ở Cài đặt vì duyệt phúc lợi nằm ở trang C&B),
-      // nhưng người chỉ có mỗi cờ này vẫn phải nhận được thông báo.
-      const hasApprovalPrivileges = isUserAdmin || isUserManager || isUserHR || hasAnyApprovalPermission(perms) || perms.canApproveBenefit || isMarketingTeamLeader(userObj.name);
+      // canApproveBenefit và canManageVpp tính riêng: hai cờ này KHÔNG nằm trong
+      // hasAnyApprovalPermission() (chúng không mở menu "Duyệt yêu cầu" ở Cài đặt vì
+      // duyệt phúc lợi nằm ở trang C&B, còn cấp phát VPP nằm ở trang Hành chính),
+      // nhưng người chỉ có mỗi một trong hai cờ đó vẫn phải nhận được thông báo.
+      const hasApprovalPrivileges = isUserAdmin || isUserManager || isUserHR || hasAnyApprovalPermission(perms) || perms.canApproveBenefit || perms.canManageVpp || isMarketingTeamLeader(userObj.name);
       if (!hasApprovalPrivileges) {
         setNotifications([]);
         return;
@@ -531,8 +549,44 @@ export default function Header({ title, subtitle }: Props) {
           })
         : [];
 
+      // Phiếu VPP chờ cấp phát: chỉ báo cho người PHỤ TRÁCH VPP (cờ can_manage_vpp)
+      // hoặc Admin — đúng người bấm được nút Duyệt & Cấp phát bên trang Hành chính.
+      const mappedVppRequests = (isUserAdmin || perms.canManageVpp)
+        ? vppTasksData
+            .map((t) => {
+              let targetName = t.assignee || "";
+              let target = "phongban";
+              // Phiếu kiểu cũ không có mảng items thì coi như một món
+              let pending = 1;
+              try {
+                const notesObj = JSON.parse(t.notes || "{}");
+                if (notesObj.targetName) targetName = notesObj.targetName;
+                if (notesObj.target) target = notesObj.target;
+                if (Array.isArray(notesObj.items)) {
+                  pending = notesObj.items.filter(
+                    (it: any) => (it.status || "Chờ duyệt") !== "Đã cấp phát"
+                  ).length;
+                }
+              } catch (err) {
+                // Ghi chú hỏng thì vẫn báo, còn hơn nuốt mất phiếu
+              }
+              return { t, targetName, target, pending };
+            })
+            // Phiếu đã cấp hết món nhưng trạng thái chưa kịp đổi thì thôi, khỏi báo
+            .filter((x) => x.pending > 0)
+            .map(({ t, targetName, target, pending }) => ({
+              id: t.id,
+              type: "vpp",
+              vppTarget: target,
+              typeText: "Yêu cầu VPP",
+              message: `${targetName} đề nghị cấp ${pending} loại văn phòng phẩm`,
+              time: t.created_at ? new Date(t.created_at).toLocaleTimeString("vi-VN", { hour: '2-digit', minute: '2-digit' }) + " " + new Date(t.created_at).toLocaleDateString("vi-VN") : "",
+              timestamp: t.created_at ? new Date(t.created_at).getTime() : 0
+            }))
+        : [];
+
       // Combine and sort by timestamp descending
-      const allNotifications = [...mappedTasks, ...mappedJustifications, ...mappedBookings, ...mappedBenefitClaims].sort((a, b) => b.timestamp - a.timestamp);
+      const allNotifications = [...mappedTasks, ...mappedJustifications, ...mappedBookings, ...mappedBenefitClaims, ...mappedVppRequests].sort((a, b) => b.timestamp - a.timestamp);
       setNotifications(allNotifications);
     } catch (err) {
       console.error("Error fetching notifications for header:", err);
@@ -692,6 +746,9 @@ export default function Header({ title, subtitle }: Props) {
                       href={
                         notif.type === "justification"
                           ? "/settings?tab=approvals&subtab=explanation"
+                          : notif.type === "vpp"
+                          // Mở thẳng tab VPP, đúng mục phòng ban hay dự án của phiếu
+                          ? `/administration?tab=vpp&subtab=${notif.vppTarget === "duan" ? "duan" : "phongban"}`
                           : notif.type === "booking"
                           // Mở thẳng lịch đăng ký xe/phòng họp + bật popup chi tiết của đúng đăng ký này
                           ? `/dang-ky?tab=${notif.bookingType || "phong_hop"}&bookingId=${notif.id}`
@@ -717,6 +774,8 @@ export default function Header({ title, subtitle }: Props) {
                             ? "bg-sky-50 text-sky-700"
                             : notif.type === "benefit"
                             ? "bg-rose-50 text-rose-700"
+                            : notif.type === "vpp"
+                            ? "bg-violet-50 text-violet-700"
                             : "bg-amber-50 text-amber-700"
                         }`}>
                           {notif.typeText}

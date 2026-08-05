@@ -974,6 +974,26 @@ export default function AdministrationPage() {
     [isHcnsViewer, myVppTargetName]
   );
 
+  // Các dòng đưa vào phiếu cấp phát HCNS/BM/053 (xem trước + xuất Word).
+  // Lấy CẢ món "Chờ duyệt" lẫn món "Đã cấp phát": bộ phận cần in phiếu ngay lúc
+  // đề nghị để trình ký, chứ không đợi kho xuất xong mới có giấy.
+  const slipRequestsOf = useCallback(
+    (type: "phongban" | "duan", targetName: string) =>
+      deptRequests.filter(r => r.target === type && r.targetName === targetName),
+    [deptRequests]
+  );
+
+  // Mở thẳng đúng tab khi đi từ chuông thông báo (/administration?tab=vpp&subtab=phongban).
+  // Đọc bằng window.location thay vì useSearchParams để khỏi phải bọc cả trang vào
+  // <Suspense> — trang này quá lớn để tách đôi chỉ vì một tham số.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("tab") === "vpp") setActiveTab("vpp");
+    const subtab = params.get("subtab");
+    if (subtab === "inventory" || subtab === "phongban" || subtab === "duan") setVppSubTab(subtab);
+  }, []);
+
   // Người ngoài HCNS không có mục tồn kho — nếu state còn đọng ở đó thì đẩy sang
   // mục phòng ban, không thì tab VPP hiện ra trống trơn.
   useEffect(() => {
@@ -3068,13 +3088,11 @@ export default function AdministrationPage() {
   // Download Excel VPP Allocation Slip handler
   const handleDownloadExcel = async (targetName: string, type: "phongban" | "duan") => {
     try {
-      // 1. Filter approved requests for this target
-      const filteredRequests = deptRequests.filter(
-        r => r.target === type && r.targetName === targetName && r.status === "Đã cấp phát"
-      );
+      // 1. Lấy mọi dòng của bộ phận này — cả đã cấp lẫn còn chờ duyệt
+      const filteredRequests = slipRequestsOf(type, targetName);
 
       if (filteredRequests.length === 0) {
-        alert("Không có yêu cầu cấp phát đã duyệt nào để điền vào phiếu.");
+        alert("Bộ phận này chưa có yêu cầu văn phòng phẩm nào để điền vào phiếu.");
         return;
       }
 
@@ -3091,7 +3109,7 @@ export default function AdministrationPage() {
           name: req.item,
           unit: unit,
           qty: req.qty,
-          notes: "Đã duyệt cấp phát"
+          notes: req.status === "Đã cấp phát" ? "Đã duyệt cấp phát" : "Chờ duyệt"
         };
       });
 
@@ -4931,19 +4949,22 @@ export default function AdministrationPage() {
                             </div>
                           )}
 
-                          {isHcnsViewer && (
                           <button
                             type="button"
                             onClick={() => {
                               setSlipPreviewTargetType("phongban");
-                              setSlipPreviewTargetName(selectedDeptFilter !== "Tất cả" ? selectedDeptFilter : (allocationTargets.filter(t => t.type === "phongban")[0]?.name || ""));
+                              // Người ngoài HCNS chỉ xem được phiếu của phòng mình
+                              setSlipPreviewTargetName(
+                                isHcnsViewer
+                                  ? (selectedDeptFilter !== "Tất cả" ? selectedDeptFilter : (allocationTargets.filter(t => t.type === "phongban")[0]?.name || ""))
+                                  : myVppTargetName
+                              );
                               setShowSlipPreviewModal(true);
                             }}
                             className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200"
                           >
                             <Eye size={14} /> Xem trước phiếu cấp phát
                           </button>
-                          )}
 
                           {canApproveRequests && (
                             <button
@@ -5207,19 +5228,22 @@ export default function AdministrationPage() {
                             </div>
                           )}
 
-                          {isHcnsViewer && (
                           <button
                             type="button"
                             onClick={() => {
                               setSlipPreviewTargetType("duan");
-                              setSlipPreviewTargetName(selectedProjectFilter !== "Tất cả" ? selectedProjectFilter : (allocationTargets.filter(t => t.type === "duan")[0]?.name || ""));
+                              // Người ngoài HCNS chỉ xem được phiếu của bộ phận mình
+                              setSlipPreviewTargetName(
+                                isHcnsViewer
+                                  ? (selectedProjectFilter !== "Tất cả" ? selectedProjectFilter : (allocationTargets.filter(t => t.type === "duan")[0]?.name || ""))
+                                  : myVppTargetName
+                              );
                               setShowSlipPreviewModal(true);
                             }}
                             className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200"
                           >
                             <Eye size={14} /> Xem trước phiếu cấp phát
                           </button>
-                          )}
 
                           {canApproveRequests && (
                             <button
@@ -5489,20 +5513,31 @@ export default function AdministrationPage() {
                           <div className="max-w-2xl mx-auto mb-4 bg-white border border-slate-200 rounded-xl p-3.5 shadow-sm flex items-center justify-between gap-4">
                             <div className="flex-1">
                               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
-                                {slipPreviewTargetType === "phongban" ? "Chọn bộ phận nhận cấp phát:" : "Chọn dự án nhận cấp phát:"}
+                                {!isHcnsViewer
+                                  ? "Bộ phận nhận cấp phát:"
+                                  : slipPreviewTargetType === "phongban"
+                                  ? "Chọn bộ phận nhận cấp phát:"
+                                  : "Chọn dự án nhận cấp phát:"}
                               </label>
-                              <select
-                                value={slipPreviewTargetName}
-                                onChange={(e) => setSlipPreviewTargetName(e.target.value)}
-                                className="w-full px-3 py-1.5 border border-slate-200 rounded-lg outline-none focus:border-[#005BAC] text-xs font-bold bg-white text-slate-800 cursor-pointer"
-                              >
-                                {allocationTargets
-                                  .filter(t => t.type === slipPreviewTargetType)
-                                  .map(t => (
-                                    <option key={t.id} value={t.name}>{t.name}</option>
-                                  ))
-                                }
-                              </select>
+                              {isHcnsViewer ? (
+                                <select
+                                  value={slipPreviewTargetName}
+                                  onChange={(e) => setSlipPreviewTargetName(e.target.value)}
+                                  className="w-full px-3 py-1.5 border border-slate-200 rounded-lg outline-none focus:border-[#005BAC] text-xs font-bold bg-white text-slate-800 cursor-pointer"
+                                >
+                                  {allocationTargets
+                                    .filter(t => t.type === slipPreviewTargetType)
+                                    .map(t => (
+                                      <option key={t.id} value={t.name}>{t.name}</option>
+                                    ))
+                                  }
+                                </select>
+                              ) : (
+                                // Người ngoài HCNS không đổi được sang bộ phận khác
+                                <div className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-bold bg-slate-50 text-slate-800">
+                                  {slipPreviewTargetName || "Chưa xếp phòng"}
+                                </div>
+                              )}
                             </div>
                             <div className="text-right shrink-0">
                               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Nơi cấp phát</span>
@@ -5542,9 +5577,7 @@ export default function AdministrationPage() {
                               <div>
                                 <span className="font-bold text-slate-600">Người đề xuất:</span> &nbsp;
                                 {(() => {
-                                  const filtered = deptRequests.filter(
-                                    r => r.target === slipPreviewTargetType && r.targetName === slipPreviewTargetName && r.status === "Đã cấp phát"
-                                  );
+                                  const filtered = slipRequestsOf(slipPreviewTargetType, slipPreviewTargetName);
                                   const customRequester = filtered.find(r => r.requesterName)?.requesterName;
                                   return customRequester || allocationTargets.find(t => t.type === slipPreviewTargetType && t.name === slipPreviewTargetName)?.receiver || "Người nhận";
                                 })()}
@@ -5573,15 +5606,13 @@ export default function AdministrationPage() {
                               </thead>
                               <tbody className="divide-y divide-slate-300">
                                 {(() => {
-                                  const filtered = deptRequests.filter(
-                                    r => r.target === slipPreviewTargetType && r.targetName === slipPreviewTargetName && r.status === "Đã cấp phát"
-                                  );
-                                  
+                                  const filtered = slipRequestsOf(slipPreviewTargetType, slipPreviewTargetName);
+
                                   if (filtered.length === 0) {
                                     return (
                                       <tr>
                                         <td colSpan={7} className="py-8 text-center text-slate-400 italic">
-                                          Không có yêu cầu cấp phát nào đã được duyệt cho bộ phận này.
+                                          Bộ phận này chưa có yêu cầu văn phòng phẩm nào.
                                         </td>
                                       </tr>
                                     );
@@ -5600,7 +5631,9 @@ export default function AdministrationPage() {
                                             <td className="py-1.5 px-2 border-r border-slate-300 text-center font-bold text-slate-800 bg-amber-50/20">{req.qty}</td>
                                             <td className="py-1.5 px-2 border-r border-slate-300 text-right text-slate-400"></td>
                                             <td className="py-1.5 px-2 border-r border-slate-300 text-right text-slate-400"></td>
-                                            <td className="py-1.5 px-2 text-slate-400 italic text-[10px]">Đã duyệt cấp phát</td>
+                                            <td className="py-1.5 px-2 text-slate-400 italic text-[10px]">
+                                              {req.status === "Đã cấp phát" ? "Đã duyệt cấp phát" : "Chờ duyệt"}
+                                            </td>
                                           </tr>
                                         );
                                       })}
@@ -5644,9 +5677,7 @@ export default function AdministrationPage() {
                               handleDownloadExcel(slipPreviewTargetName, slipPreviewTargetType);
                               setShowSlipPreviewModal(false);
                             }}
-                            disabled={deptRequests.filter(
-                              r => r.target === slipPreviewTargetType && r.targetName === slipPreviewTargetName && r.status === "Đã cấp phát"
-                            ).length === 0}
+                            disabled={slipRequestsOf(slipPreviewTargetType, slipPreviewTargetName).length === 0}
                             className="flex items-center gap-1.5 bg-[#10B981] hover:bg-[#059669] disabled:bg-slate-300 disabled:text-slate-500 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-md transition-all active:scale-[0.98] cursor-pointer"
                           >
                             <Download size={14} /> Tải xuống file Word
