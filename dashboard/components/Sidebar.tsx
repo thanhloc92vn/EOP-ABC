@@ -22,7 +22,9 @@ import {
   DoorOpen,
   ChevronDown,
   MapPin,
-  Newspaper
+  Newspaper,
+  Palmtree,
+  Plane
 } from "lucide-react";
 import { useSidebar } from "./SidebarContext";
 import ThemeToggle from "./ThemeToggle";
@@ -36,7 +38,13 @@ function SidebarLinks({ isApprover, pathname, setSidebarOpen }: { isApprover: bo
   const searchParams = useSearchParams();
   const currentTab = searchParams.get("tab");
   const isBookingSection = pathname.startsWith("/dang-ky");
-  const [bookingGroupOpen, setBookingGroupOpen] = useState(isBookingSection);
+  // Hai mục nghỉ phép / công tác mở form nằm sẵn trên trang Lịch công việc, nhận
+  // biết bằng tham số ?dk=. Nhóm phải coi là đang mở ở cả hai trang, nếu không
+  // bấm vào là nhóm tự cụp lại và mục không sáng.
+  const currentDk = searchParams.get("dk");
+  const isCalendarBooking = pathname === "/calendar" && !!currentDk;
+  const isBookingSectionActive = isBookingSection || isCalendarBooking;
+  const [bookingGroupOpen, setBookingGroupOpen] = useState(isBookingSectionActive);
   // Ẩn menu theo GÓI HIỆU LỰC CỦA PHÒNG + cấp phép riêng (không chỉ gói toàn cục).
   // Đang tải danh tính -> hiện tạm (tránh nháy menu trống), narrow lại khi có dữ liệu.
   const currentUser = useCurrentUser();
@@ -65,9 +73,17 @@ function SidebarLinks({ isApprover, pathname, setSidebarOpen }: { isApprover: bo
   // Nhóm "Quản lý Đăng ký" (/dang-ky) — gate theo gói (hiện thuộc Basic)
   const bookingAllowed = isPathAllowed("/dang-ky");
 
-  const bookingChildren = [
-    { label: "Đăng ký xe", href: "/dang-ky?tab=xe", tab: "xe", icon: CarFront },
-    { label: "Đăng ký phòng họp", href: "/dang-ky?tab=phong-hop", tab: "phong-hop", icon: DoorOpen },
+  const bookingChildren: {
+    label: string;
+    href: string;
+    tab: string | null;
+    dk: string | null;
+    icon: typeof CarFront;
+  }[] = [
+    { label: "Đăng ký xe", href: "/dang-ky?tab=xe", tab: "xe", dk: null, icon: CarFront },
+    { label: "Đăng ký phòng họp", href: "/dang-ky?tab=phong-hop", tab: "phong-hop", dk: null, icon: DoorOpen },
+    { label: "Đăng ký nghỉ phép", href: "/calendar?dk=nghi-phep", tab: null, dk: "nghi-phep", icon: Palmtree },
+    { label: "Đăng ký công tác", href: "/calendar?dk=cong-tac", tab: null, dk: "cong-tac", icon: Plane },
   ];
 
   const bookingGroup = (
@@ -76,25 +92,27 @@ function SidebarLinks({ isApprover, pathname, setSidebarOpen }: { isApprover: bo
         type="button"
         onClick={() => setBookingGroupOpen((o) => !o)}
         className={`w-full flex items-center gap-3 px-5 py-2.5 rounded-full text-xs font-bold transition-all duration-200 active:scale-[0.97] border cursor-pointer ${
-          isBookingSection
+          isBookingSectionActive
             ? "bg-gradient-to-r from-[#005BAC] to-[#00AEEF] border-transparent text-white shadow-md shadow-blue-500/15"
             : "bg-slate-50/50 border-slate-100 text-slate-600 hover:bg-slate-100 hover:text-slate-900"
         }`}
       >
-        <CalendarCheck size={15} className={isBookingSection ? "text-white" : "text-slate-500"} />
+        <CalendarCheck size={15} className={isBookingSectionActive ? "text-white" : "text-slate-500"} />
         <span className="flex-1 text-left">Quản lý Đăng ký</span>
         <ChevronDown
           size={13}
-          className={`transition-transform duration-200 ${bookingGroupOpen || isBookingSection ? "rotate-180" : ""} ${isBookingSection ? "text-white" : "text-slate-400"}`}
+          className={`transition-transform duration-200 ${bookingGroupOpen || isBookingSectionActive ? "rotate-180" : ""} ${isBookingSectionActive ? "text-white" : "text-slate-400"}`}
         />
       </button>
 
-      {(bookingGroupOpen || isBookingSection) && (
+      {(bookingGroupOpen || isBookingSectionActive) && (
         <div className="pl-5 space-y-1.5 animate-in fade-in duration-150">
           {bookingChildren.map((child) => {
             const ChildIcon = child.icon;
             const activeChildTab = currentTab || "phong-hop";
-            const isChildActive = isBookingSection && activeChildTab === child.tab;
+            const isChildActive = child.dk
+              ? isCalendarBooking && currentDk === child.dk
+              : isBookingSection && activeChildTab === child.tab;
             return (
               <Link
                 key={child.href}

@@ -4,7 +4,7 @@ import { apiFetch } from "@/lib/apiClient";
 import { useState, useEffect, useMemo, Suspense } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
-import { Settings, Database, Info, Key, CheckCircle, ShieldAlert, ShieldCheck, Check, X, Calendar, Briefcase, User, CarFront, DoorOpen, Mail, Package, Users, CalendarClock, ChevronRight } from "lucide-react";
+import { Settings, Database, Info, Key, CheckCircle, ShieldAlert, ShieldCheck, Check, X, Calendar, Briefcase, User, CarFront, DoorOpen, Mail, Package, Users, CalendarClock, ChevronRight, AlertCircle } from "lucide-react";
 import UserPermissionsModal, { type UserPermissionsTab } from "@/components/UserPermissionsModal";
 import AvatarUploadCard from "@/components/AvatarUploadCard";
 import { supabase } from "@/lib/supabase";
@@ -141,6 +141,8 @@ function SettingsContent() {
   const [tasks, setTasks] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeApprovalTab, setActiveApprovalTab] = useState<"trip" | "leave" | "explanation" | "booking">("trip");
+  // Nhóm "Danh sách đã duyệt" — bảng 3 tab dời từ cột phải trang Lịch công việc sang
+  const [activeDoneTab, setActiveDoneTab] = useState<"nodate" | "leave" | "trip">("nodate");
 
   // Justifications States
   const [explanations, setExplanations] = useState<any[]>([]);
@@ -709,6 +711,60 @@ function SettingsContent() {
         return isLeaveTripCap2Approver({ currentUserIsAdmin: isUserAdmin, approvalPerms, isTrip: false });
       });
   }, [tasks, currentUser, isApprover, approvalPerms]);
+
+  // ─── Nhóm "Danh sách đã duyệt" ───
+  // Ba danh sách dời nguyên từ cột phải trang Lịch công việc. Bên đó lọc trên
+  // `filteredTasks` (theo ô tìm kiếm / nhân sự / độ ưu tiên của trang Lịch);
+  // trang này không có mấy bộ lọc đó nên đọc thẳng `tasks`.
+  const doneTasksWithoutDate = useMemo(() => {
+    return tasks.filter(t => !t.due_date && !t.start_date);
+  }, [tasks]);
+
+  const doneLeaveTasks = useMemo(() => {
+    return tasks.filter(t => t.title.toLowerCase().startsWith("nghỉ phép") || t.title.toLowerCase().includes("nghi phep"));
+  }, [tasks]);
+
+  const doneTripTasks = useMemo(() => {
+    return tasks.filter(t => t.title.toLowerCase().startsWith("công tác") || t.title.toLowerCase().includes("cong tac"));
+  }, [tasks]);
+
+  // Hai helper đọc metadata trong notes — bê nguyên từ trang Lịch công việc
+  const getCleanLocation = (notes: string) => {
+    if (!notes) return "Hồ Chí Minh";
+    const metaMatch = notes.match(/<!--METADATA:(.*?)-->/);
+    if (metaMatch) {
+      try {
+        const metadata = JSON.parse(metaMatch[1]);
+        if (metadata.destination) return metadata.destination;
+      } catch (e) {
+        // ignore
+      }
+    }
+    if (notes.includes("### THÔNG TIN ĐĂNG KÝ CÔNG TÁC")) {
+      const match = notes.match(/-\s+\*\*Điểm công tác chính\*\*:\s*(.*)/i);
+      if (match) return match[1].trim();
+    }
+    return notes.length > 50 ? notes.substring(0, 50) + "..." : notes;
+  };
+
+  const getCleanDept = (notes: string) => {
+    if (!notes) return "Hành chính nhân sự";
+    const metaMatch = notes.match(/<!--METADATA:(.*?)-->/);
+    if (metaMatch) {
+      try {
+        const metadata = JSON.parse(metaMatch[1]);
+        if (metadata.employeeDept) return metadata.employeeDept;
+      } catch (e) {
+        // ignore
+      }
+    }
+    if (notes.includes("Người duyệt:")) {
+      const parts = notes.split("Lý do:");
+      if (parts[1]) return "Lý do: " + parts[1].trim();
+      return "Nghỉ phép chờ duyệt";
+    }
+    return notes.length > 50 ? notes.substring(0, 50) + "..." : notes;
+  };
 
   // Justifications approvals list (Admin, HR, Director, or department manager/deputy)
   const pendingExplanations = useMemo(() => {
@@ -1582,6 +1638,131 @@ function SettingsContent() {
                   )}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ─── NHÓM DANH SÁCH ĐÃ DUYỆT ───
+              Bảng 3 tab dời nguyên từ cột phải trang Lịch công việc sang đây. */}
+          {isApprovalsTab && isApprover && (
+            <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium space-y-4 mt-6">
+              <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-3">
+                <h2 className="font-heading font-bold text-slate-800 text-sm flex items-center gap-2">
+                  <Calendar size={18} className="text-[#005BAC]" /> Nhóm danh sách đã duyệt
+                </h2>
+              </div>
+
+              {/* Tabs */}
+              <div className="grid grid-cols-3 bg-slate-100 p-0.5 rounded-xl text-center text-[10px] font-bold">
+                <button
+                  type="button"
+                  onClick={() => setActiveDoneTab("nodate")}
+                  className={`py-2 rounded-lg cursor-pointer transition-all ${
+                    activeDoneTab === "nodate"
+                      ? "bg-white text-slate-800 shadow-sm"
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  Chưa hạn ({doneTasksWithoutDate.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveDoneTab("leave")}
+                  className={`py-2 rounded-lg cursor-pointer transition-all ${
+                    activeDoneTab === "leave"
+                      ? "bg-white text-slate-800 shadow-sm"
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  Nghỉ phép ({doneLeaveTasks.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveDoneTab("trip")}
+                  className={`py-2 rounded-lg cursor-pointer transition-all ${
+                    activeDoneTab === "trip"
+                      ? "bg-white text-slate-800 shadow-sm"
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  Công tác ({doneTripTasks.length})
+                </button>
+              </div>
+
+              {/* Tab Content */}
+              <div className="space-y-3 max-h-[500px] overflow-y-auto scrollbar-thin">
+                {activeDoneTab === "nodate" && (
+                  <div className="space-y-3">
+                    <div className="bg-rose-50 border border-rose-100 p-3 rounded-xl flex gap-2">
+                      <AlertCircle className="text-rose-500 shrink-0" size={16} />
+                      <div className="text-[10px] leading-relaxed">
+                        <span className="font-bold text-rose-800 block">🚨 CHƯA CÓ NGÀY HẠN</span>
+                        <span className="text-rose-600 font-medium">
+                          Danh sách công việc chưa được thiết lập deadline. Hãy nhấp để mở rộng và cấu hình hạn hoàn thành.
+                        </span>
+                      </div>
+                    </div>
+                    {doneTasksWithoutDate.map(t => (
+                      <div
+                        key={t.id}
+                        className="p-3 bg-white border border-slate-200/80 rounded-xl shadow-sm space-y-1.5 text-left"
+                      >
+                        <p className="font-heading font-semibold text-xs text-slate-800 line-clamp-2">{t.title}</p>
+                        <div className="flex items-center justify-between text-[9px] text-slate-400">
+                          <span className="font-semibold text-slate-500 flex items-center gap-1"><User size={9} /> {t.assignee}</span>
+                          <span className={`badge text-[8px] font-bold ${
+                            t.status === "completed" ? "bg-emerald-50 text-emerald-700" : "bg-blue-50 text-blue-700"
+                          }`}>
+                            {t.status === "completed" ? "Đã xong" : "Kế hoạch"}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                    {doneTasksWithoutDate.length === 0 && (
+                      <p className="text-center text-slate-400 text-xs italic py-10">Tất cả việc đều đã có hạn</p>
+                    )}
+                  </div>
+                )}
+
+                {activeDoneTab === "leave" && (
+                  <div className="space-y-3">
+                    {doneLeaveTasks.map(t => (
+                      <div
+                        key={t.id}
+                        className="p-3 bg-emerald-50/40 border border-emerald-100 rounded-xl space-y-1.5 text-left"
+                      >
+                        <p className="font-heading font-bold text-xs text-emerald-800">🌴 {t.title.replace(/^Nghỉ phép:\s*/i, "")}</p>
+                        <div className="flex items-center justify-between text-[9px] text-emerald-600 font-semibold">
+                          <span>Phòng ban/Lý do: {getCleanDept(t.notes || "")}</span>
+                          <span>Hạn: {t.due_date ? new Date(t.due_date).toLocaleDateString("vi-VN") : "N/A"}</span>
+                        </div>
+                      </div>
+                    ))}
+                    {doneLeaveTasks.length === 0 && (
+                      <p className="text-center text-slate-400 text-xs italic py-10">Không có lịch nghỉ phép nào</p>
+                    )}
+                  </div>
+                )}
+
+                {activeDoneTab === "trip" && (
+                  <div className="space-y-3">
+                    {doneTripTasks.map(t => (
+                      <div
+                        key={t.id}
+                        className="p-3 bg-indigo-50/40 border border-indigo-100 rounded-xl space-y-1.5 text-left"
+                      >
+                        <p className="font-heading font-bold text-xs text-indigo-800">💼 {t.title.replace(/^Công tác:\s*/i, "")}</p>
+                        <div className="flex items-center justify-between text-[9px] text-indigo-600 font-semibold">
+                          <span>Địa điểm: {getCleanLocation(t.notes || "")}</span>
+                          <span>Hạn: {t.due_date ? new Date(t.due_date).toLocaleDateString("vi-VN") : "N/A"}</span>
+                        </div>
+                      </div>
+                    ))}
+                    {doneTripTasks.length === 0 && (
+                      <p className="text-center text-slate-400 text-xs italic py-10">Không có lịch đi công tác nào</p>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 

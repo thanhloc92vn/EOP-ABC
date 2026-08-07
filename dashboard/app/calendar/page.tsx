@@ -1,7 +1,8 @@
 "use client";
 
 import { apiFetch } from "@/lib/apiClient";
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, Suspense } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
@@ -74,13 +75,31 @@ interface OtherExpense {
   notes: string;
 }
 
-export default function CalendarPage() {
+// Ghi chú lịch cá nhân (bảng calendar_notes, migration 027). Riêng tư tuyệt đối:
+// RLS chỉ trả về dòng của chính người đang đăng nhập.
+interface CalendarNote {
+  id: string;
+  note_date: string; // YYYY-MM-DD
+  content: string;
+}
+
+/**
+ * Ngày hôm nay dạng YYYY-MM-DD theo giờ MÁY NGƯỜI DÙNG (không phải giờ UTC).
+ * Dùng "en-CA" vì locale này trả đúng định dạng YYYY-MM-DD mà ô <input type="date">
+ * yêu cầu. KHÔNG dùng toISOString(): hàm đó quy về UTC nên trước 7h sáng giờ VN
+ * sẽ trả về ngày hôm qua.
+ */
+const todayISO = () => new Date().toLocaleDateString("en-CA");
+
+function CalendarContent() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   
   // Date State
-  const [currentDate, setCurrentDate] = useState(new Date(2026, 5, 5)); // Default to June 2026 for demo alignment
+  // Mở lịch ở THÁNG HIỆN TẠI theo giờ máy người dùng. (Trước đây ghi cứng
+  // new Date(2026, 5, 5) từ thời làm demo, khiến ai vào cũng thấy tháng 6.)
+  const [currentDate, setCurrentDate] = useState(() => new Date());
   
   // Filter States
   const [searchQuery, setSearchQuery] = useState("");
@@ -88,7 +107,6 @@ export default function CalendarPage() {
   const [selectedMember, setSelectedMember] = useState<string>("Tất cả");
 
   // Right sidebar tab state: 'nodate' | 'leave' | 'trip'
-  const [activeTab, setActiveTab] = useState<'nodate' | 'leave' | 'trip'>('nodate');
 
   // User info — hook chung (thay khối allowed_users + employees copy-paste).
   const user = useCurrentUser();
@@ -97,11 +115,62 @@ export default function CalendarPage() {
   // Modal State for Request Leave / Business Trip
   const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
   const [isTripModalOpen, setIsTripModalOpen] = useState(false);
+  // ─── Hộp thoại báo / xác nhận dùng chung cho cả trang ───
+  // Thay cho alert() và window.confirm() của trình duyệt: hai hộp đó không theo
+  // được giao diện chung, luôn dính ở mép trên và hiện tên miền website.
+  const [notice, setNotice] = useState<{
+    kind: "success" | "error" | "warning";
+    title: string;
+    message?: string;
+  } | null>(null);
+  const showNotice = (kind: "success" | "error" | "warning", title: string, message?: string) =>
+    setNotice({ kind, title, message });
+
+  // Hỏi trước khi làm việc không hoàn tác. Việc cần làm đặt trong onConfirm vì
+  // modal không dừng luồng chạy như window.confirm().
+  const [confirmBox, setConfirmBox] = useState<{
+    title: string;
+    message?: string;
+    confirmLabel: string;
+    onConfirm: () => void;
+  } | null>(null);
+
+  // Ô nhập lý do từ chối — thay cho window.prompt(). Chỉ đổi chỗ nhập liệu,
+  // phần xử lý từ chối vẫn là handleCap1Reject như cũ.
+  const [rejectBox, setRejectBox] = useState<{ taskId: string } | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+
+  // ─── Ghi chú lịch cá nhân ───
+  const [notes, setNotes] = useState<CalendarNote[]>([]);
+  // Hộp soạn ghi chú: id = null nghĩa là đang thêm mới cho ngày đó
+  const [noteModal, setNoteModal] = useState<{ date: string; id: string | null; content: string } | null>(null);
+  const [savingNote, setSavingNote] = useState(false);
+
+  // Lối vào từ sidebar "Quản lý Đăng ký": /calendar?dk=nghi-phep | cong-tac chỉ
+  // bật đúng form đã có sẵn dưới đây, không phải luồng riêng.
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const dkParam = searchParams.get("dk");
+
+  useEffect(() => {
+    if (!dkParam) return;
+    if (dkParam === "nghi-phep") {
+      setIsLeaveModalOpen(true);
+    } else if (dkParam === "cong-tac") {
+      // Giống hệt nút cũ: nạp lại ngày hôm nay rồi mới mở form
+      setModalStart(todayISO());
+      setModalEnd(todayISO());
+      setIsTripModalOpen(true);
+    }
+    // Gỡ tham số khỏi URL ngay sau khi mở. Nếu để nguyên, lần sau bấm lại đúng
+    // mục đó URL không đổi -> effect không chạy -> form không mở lên nữa.
+    router.replace("/calendar", { scroll: false });
+  }, [dkParam, router]);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
   const [modalName, setModalName] = useState("");
-  const [modalStart, setModalStart] = useState("2026-06-05");
-  const [modalEnd, setModalEnd] = useState("2026-06-05");
+  const [modalStart, setModalStart] = useState(todayISO);
+  const [modalEnd, setModalEnd] = useState(todayISO);
   const [modalNotes, setModalNotes] = useState("");
   const [leaveType, setLeaveType] = useState("Nghỉ phép năm hưởng lương");
 
@@ -122,8 +191,8 @@ export default function CalendarPage() {
   const [tripDestination, setTripDestination] = useState("");
   const [tripTransport, setTripTransport] = useState("🚗 Xe công ty");
   const [tripMission, setTripMission] = useState("");
-  const [tripRoutes, setTripRoutes] = useState<RouteSegment[]>([
-    { from: "TPHCM", to: "", distance: "", date: "2026-06-05", transport: "Xe công ty", nights: 0, reason: "" }
+  const [tripRoutes, setTripRoutes] = useState<RouteSegment[]>(() => [
+    { from: "TPHCM", to: "", distance: "", date: todayISO(), transport: "Xe công ty", nights: 0, reason: "" }
   ]);
   const [tripTravelEstimate, setTripTravelEstimate] = useState<number>(0);
   const [tripOtherExpenses, setTripOtherExpenses] = useState<OtherExpense[]>([]);
@@ -143,25 +212,29 @@ export default function CalendarPage() {
     return currentUser.isAdmin || isManagerRole(currentUser.role);
   }, [currentUser]);
 
-  const handleDeleteTripTask = async (taskId: string) => {
-    if (!window.confirm("Bạn có chắc chắn muốn xóa lịch đi công tác này không? Hành động này không thể hoàn tác.")) {
-      return;
-    }
-    try {
-      const { error } = await supabase
-        .from("tasks")
-        .delete()
-        .eq("id", taskId);
-      
-      if (error) throw error;
-      alert("Đã xóa lịch đi công tác thành công!");
-      setIsDetailsModalOpen(false);
-      setSelectedTask(null);
-      fetchData();
-    } catch (err: any) {
-      console.error(err);
-      alert("Lỗi khi xóa lịch đi công tác: " + (err.message || err));
-    }
+  const handleDeleteTripTask = (taskId: string) => {
+    setConfirmBox({
+      title: "Xoá lịch đi công tác?",
+      message: "Lịch đi công tác này sẽ bị xoá khỏi hệ thống và không khôi phục lại được.",
+      confirmLabel: "Xoá lịch",
+      onConfirm: async () => {
+        try {
+          const { error } = await supabase
+            .from("tasks")
+            .delete()
+            .eq("id", taskId);
+
+          if (error) throw error;
+          setIsDetailsModalOpen(false);
+          setSelectedTask(null);
+          fetchData();
+          showNotice("success", "Đã xoá lịch đi công tác");
+        } catch (err: any) {
+          console.error(err);
+          showNotice("error", "Không xoá được lịch đi công tác", err.message || String(err));
+        }
+      },
+    });
   };
 
   // Fetch Tasks & Employees
@@ -248,6 +321,85 @@ export default function CalendarPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // ─── Ghi chú lịch cá nhân ───
+  // Không cần lọc theo email: RLS của bảng chỉ trả về dòng của chính mình.
+  const fetchNotes = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("calendar_notes")
+        .select("id, note_date, content")
+        .order("note_date", { ascending: true });
+
+      if (error) throw error;
+      setNotes(data || []);
+    } catch (err) {
+      console.error("Error fetching calendar notes:", err);
+    }
+  };
+
+  // Chờ có phiên đăng nhập rồi mới đọc, nếu không RLS trả về rỗng.
+  useEffect(() => {
+    if (!currentUser?.email) return;
+    fetchNotes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.email]);
+
+  const notesOfDate = (dateStr: string) => notes.filter(n => n.note_date === dateStr);
+
+  const handleSaveNote = async () => {
+    if (!noteModal || !currentUser?.email) return;
+    const content = noteModal.content.trim();
+    if (!content) {
+      showNotice("warning", "Chưa nhập nội dung ghi chú", "Ghi chú để trống thì không lưu được.");
+      return;
+    }
+    setSavingNote(true);
+    try {
+      if (noteModal.id) {
+        const { error } = await supabase
+          .from("calendar_notes")
+          .update({ content })
+          .eq("id", noteModal.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from("calendar_notes").insert([{
+          owner_email: currentUser.email.toLowerCase(),
+          note_date: noteModal.date,
+          content,
+        }]);
+        if (error) throw error;
+      }
+      setNoteModal(null);
+      fetchNotes();
+    } catch (err: any) {
+      console.error(err);
+      showNotice("error", "Không lưu được ghi chú", err.message || String(err));
+    } finally {
+      setSavingNote(false);
+    }
+  };
+
+  const handleDeleteNote = () => {
+    if (!noteModal?.id) return;
+    const id = noteModal.id;
+    setConfirmBox({
+      title: "Xoá ghi chú này?",
+      message: "Ghi chú sẽ bị xoá khỏi lịch và không khôi phục lại được.",
+      confirmLabel: "Xoá ghi chú",
+      onConfirm: async () => {
+        try {
+          const { error } = await supabase.from("calendar_notes").delete().eq("id", id);
+          if (error) throw error;
+          setNoteModal(null);
+          fetchNotes();
+          showNotice("success", "Đã xoá ghi chú");
+        } catch (err: any) {
+          showNotice("error", "Không xoá được ghi chú", err.message || String(err));
+        }
+      },
+    });
   };
 
   useEffect(() => {
@@ -371,30 +523,29 @@ export default function CalendarPage() {
     return filteredTasks.filter(t => t.due_date || t.start_date);
   }, [filteredTasks]);
 
-  const tasksWithoutDate = useMemo(() => {
-    return filteredTasks.filter(t => !t.due_date && !t.start_date);
-  }, [filteredTasks]);
-
-  // Leave tasks (title starting with "Nghỉ phép" or status represents a leave event)
-  const leaveTasks = useMemo(() => {
-    return filteredTasks.filter(t => t.title.toLowerCase().startsWith("nghỉ phép") || t.title.toLowerCase().includes("nghi phep"));
-  }, [filteredTasks]);
-
-  // Business trip tasks
-  const tripTasks = useMemo(() => {
-    return filteredTasks.filter(t => t.title.toLowerCase().startsWith("công tác") || t.title.toLowerCase().includes("cong tac"));
-  }, [filteredTasks]);
+  // Nghỉ phép và công tác PHẢI trải hết số ngày: nhìn vào ngày 16 là biết ai
+  // đang vắng hôm đó. Việc thường thì không — một việc kéo 3 tuần mà vẽ ở cả 21
+  // ô sẽ lấp kín lịch và che mất mọi thứ khác, nên chỉ hiện ở ô ngày deadline.
+  const isSpanningType = (t: Task) => {
+    const titleLower = t.title.toLowerCase();
+    return titleLower.startsWith("nghỉ phép") || titleLower.includes("nghi phep")
+        || titleLower.startsWith("công tác") || titleLower.includes("cong tac");
+  };
 
   // Get tasks for a specific date cell
   const getTasksForDate = (date: Date) => {
     const compareDateStr = date.toLocaleDateString("en-CA"); // YYYY-MM-DD
-    
+
     return tasksWithDate.filter(t => {
       const start = t.start_date;
       const end = t.due_date;
-      
+
       if (start && end) {
-        return compareDateStr >= start && compareDateStr <= end;
+        if (isSpanningType(t)) {
+          return compareDateStr >= start && compareDateStr <= end;
+        }
+        // Việc thường: gom về đúng ngày hết hạn
+        return compareDateStr === end;
       }
       if (start) {
         return compareDateStr === start;
@@ -644,9 +795,9 @@ export default function CalendarPage() {
           body: JSON.stringify(payload),
         });
         const result = await res.json();
-        if (!res.ok) alert(`⚠️ ${failPrefix}: ${result.error}`);
+        if (!res.ok) showNotice("warning", failPrefix, result.error);
       } catch (mailErr: any) {
-        alert(`⚠️ ${failPrefix}: ${mailErr.message || "lỗi kết nối"}`);
+        showNotice("warning", failPrefix, mailErr.message || "lỗi kết nối");
       }
     })();
   };
@@ -670,7 +821,11 @@ export default function CalendarPage() {
 
       if (error) throw error;
 
-      alert("Đã xác nhận! Yêu cầu được chuyển sang HCNS để duyệt cuối.\n📧 Email báo HCNS đang được gửi.");
+      showNotice(
+        "success",
+        "Đã xác nhận yêu cầu",
+        "Yêu cầu được chuyển sang HCNS để duyệt cuối. Email báo HCNS đang được gửi."
+      );
       fetchData();
 
       // Tra cứu người duyệt cấp 2 + gửi mail: chạy nền
@@ -697,21 +852,20 @@ export default function CalendarPage() {
             "Chưa gửi được email báo HCNS"
           );
         } catch (mailErr: any) {
-          alert(`⚠️ Chưa gửi được email báo HCNS: ${mailErr.message || "lỗi kết nối"}`);
+          showNotice("warning", "Chưa gửi được email báo HCNS", mailErr.message || "lỗi kết nối");
         }
       })();
     } catch (err) {
       console.error(err);
-      alert("Lỗi khi xác nhận yêu cầu!");
+      showNotice("error", "Không xác nhận được yêu cầu", "Vui lòng thử lại hoặc báo bộ phận kỹ thuật.");
     }
   };
 
   // Cấp 1 từ chối luôn (không cần chuyển HCNS) — bắt buộc nhập lý do, gửi email cho người gửi đơn
-  const handleCap1Reject = async (taskId: string) => {
+  const handleCap1Reject = async (taskId: string, reason: string) => {
     if (!currentUser) return;
-    const reason = window.prompt("Nhập lý do từ chối (sẽ được gửi email cho người gửi đơn):") || "";
     if (!reason.trim()) {
-      alert("Vui lòng nhập lý do từ chối!");
+      showNotice("warning", "Chưa nhập lý do từ chối", "Lý do sẽ được gửi email cho người làm đơn nên bắt buộc phải có.");
       return;
     }
     try {
@@ -732,7 +886,11 @@ export default function CalendarPage() {
 
       const requesterEmail = employeeDirectory.find(e => e.name === task.assignee)?.email || "";
 
-      alert(`Đã từ chối yêu cầu.${requesterEmail ? "\n📧 Email đang được gửi cho người làm đơn." : ""}`);
+      showNotice(
+        "success",
+        "Đã từ chối yêu cầu",
+        requesterEmail ? "Email thông báo đang được gửi cho người làm đơn." : undefined
+      );
       fetchData();
 
       if (requesterEmail) {
@@ -752,7 +910,7 @@ export default function CalendarPage() {
       }
     } catch (err) {
       console.error(err);
-      alert("Lỗi khi từ chối yêu cầu!");
+      showNotice("error", "Không từ chối được yêu cầu", "Vui lòng thử lại hoặc báo bộ phận kỹ thuật.");
     }
   };
 
@@ -760,13 +918,13 @@ export default function CalendarPage() {
   const handleRequestLeave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!modalName || !modalStart || !modalEnd) {
-      alert("Vui lòng điền đầy đủ thông tin!");
+      showNotice("warning", "Chưa điền đủ thông tin", "Vui lòng nhập họ tên và khoảng thời gian nghỉ.");
       return;
     }
 
     const duration = leaveDaysCount;
     if (duration <= 0) {
-      alert("Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu!");
+      showNotice("warning", "Khoảng ngày chưa hợp lệ", "Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu.");
       return;
     }
 
@@ -780,7 +938,7 @@ export default function CalendarPage() {
       notesStr = `Loại nghỉ phép: ${leaveType}. Được duyệt tự động. ${modalNotes ? `Lý do: ${modalNotes}` : ""}`;
     } else {
       if (!selectedApprover) {
-        alert("Vui lòng chọn người duyệt!");
+        showNotice("warning", "Chưa chọn người duyệt", "Đơn nghỉ từ 1 ngày trở lên phải có Trưởng phòng / Tổ trưởng xác nhận.");
         return;
       }
       notesStr = `Loại nghỉ phép: ${leaveType}. Người duyệt: ${selectedApprover}. ${modalNotes ? `Lý do: ${modalNotes}` : ""}`;
@@ -848,8 +1006,8 @@ export default function CalendarPage() {
       }
 
       // Reset
-      setModalStart("2026-06-05");
-      setModalEnd("2026-06-05");
+      setModalStart(todayISO());
+      setModalEnd(todayISO());
       setModalNotes("");
       setIsHalfDay(false);
       setSelectedApprover("");
@@ -858,10 +1016,14 @@ export default function CalendarPage() {
       setLeaveType("Nghỉ phép năm hưởng lương");
       setIsLeaveModalOpen(false);
       fetchData();
-      alert(duration === 0.5 ? "Đơn xin nghỉ phép đã được tự động duyệt thành công!" : "Đã gửi đơn xin nghỉ phép chờ Trưởng phòng/Tổ trưởng xác nhận.");
+      if (duration === 0.5) {
+        showNotice("success", "Đã duyệt đơn nghỉ phép", "Đơn nghỉ nửa ngày được duyệt tự động, không cần chờ xác nhận.");
+      } else {
+        showNotice("success", "Đã gửi đơn nghỉ phép", "Đang chờ Trưởng phòng / Tổ trưởng xác nhận.");
+      }
     } catch (err: any) {
       console.error(err);
-      alert("Lỗi khi xin nghỉ phép: " + (err.message || err));
+      showNotice("error", "Không gửi được đơn nghỉ phép", err.message || String(err));
     }
   };
 
@@ -869,20 +1031,20 @@ export default function CalendarPage() {
   const handleRequestTrip = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!modalName || !modalStart || !modalEnd || !tripDestination || !tripMission) {
-      alert("Vui lòng điền đầy đủ thông tin!");
+      showNotice("warning", "Chưa điền đủ thông tin", "Vui lòng nhập điểm công tác, nhiệm vụ và khoảng thời gian đi.");
       return;
     }
 
     const duration = tripDaysCount;
     if (duration <= 0) {
-      alert("Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu!");
+      showNotice("warning", "Khoảng ngày chưa hợp lệ", "Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu.");
       return;
     }
 
     // Đơn công tác đi cùng luồng duyệt với đơn nghỉ phép: chọn đích danh người
     // duyệt cấp 1 thay vì phát tán mail cho mọi quản lý trong phòng.
     if (!selectedApprover) {
-      alert("Vui lòng chọn người duyệt!");
+      showNotice("warning", "Chưa chọn người duyệt", "Đơn công tác phải có Trưởng phòng / Tổ trưởng xác nhận.");
       return;
     }
 
@@ -998,22 +1160,22 @@ Người duyệt: ${selectedApprover}
       setTripTransport("🚗 Xe công ty");
       setTripMission("");
       setTripRoutes([
-        { from: "TPHCM", to: "", distance: "", date: "2026-06-05", transport: "Xe công ty", nights: 0, reason: "" }
+        { from: "TPHCM", to: "", distance: "", date: todayISO(), transport: "Xe công ty", nights: 0, reason: "" }
       ]);
       setTripTravelEstimate(0);
       setTripOtherExpenses([]);
-      setModalStart("2026-06-05");
-      setModalEnd("2026-06-05");
+      setModalStart(todayISO());
+      setModalEnd(todayISO());
       setModalNotes("");
       // Xoá lựa chọn người duyệt để lần mở modal sau lấy lại đề xuất theo phòng ban
       // (state này dùng chung với đơn nghỉ phép).
       setSelectedApprover("");
       setIsTripModalOpen(false);
       fetchData();
-      alert("Đã đăng ký lịch đi công tác thành công! Đang chờ Trưởng phòng/Tổ trưởng xác nhận.");
+      showNotice("success", "Đã gửi đơn công tác", "Đang chờ Trưởng phòng / Tổ trưởng xác nhận.");
     } catch (err: any) {
       console.error(err);
-      alert("Lỗi khi đăng ký đi công tác: " + (err.message || err));
+      showNotice("error", "Không gửi được đơn công tác", err.message || String(err));
     }
   };
 
@@ -1030,7 +1192,7 @@ Người duyệt: ${selectedApprover}
   const handleAddRoute = () => {
     setTripRoutes([
       ...tripRoutes,
-      { from: "", to: "", distance: "", date: modalStart || "2026-06-05", transport: tripTransport || "Xe công ty", nights: 0, reason: "" }
+      { from: "", to: "", distance: "", date: modalStart || todayISO(), transport: tripTransport || "Xe công ty", nights: 0, reason: "" }
     ]);
   };
 
@@ -1067,7 +1229,7 @@ Người duyệt: ${selectedApprover}
 
   const handleDownloadReport = async (task: Task, type: 'payment' | 'trip') => {
     if (!task.notes) {
-      alert("Đơn công tác này không có dữ liệu chi phí!");
+      showNotice("warning", "Đơn này chưa có dữ liệu chi phí", "Không đủ thông tin để dựng biểu mẫu.");
       return;
     }
 
@@ -1162,13 +1324,18 @@ Người duyệt: ${selectedApprover}
       // Check if it's a template not found error
       const errData = await response.json().catch(() => ({}));
       if (errData.error === "template_not_found") {
-        alert(
-          `Hệ thống chưa tìm thấy file template gốc: "${errData.fileName}" trong thư mục "dashboard/public/templates/".\n\n` +
-          `Vui lòng upload/sao chép file template gốc của anh vào thư mục đó.\n\n` +
-          `Để tránh gián đoạn công việc, hệ thống sẽ tự động tải xuống file Word mẫu do hệ thống tự dựng làm phương án tạm thời!`
+        showNotice(
+          "warning",
+          "Chưa có file biểu mẫu gốc",
+          `Không tìm thấy "${errData.fileName}" trong thư mục dashboard/public/templates/. ` +
+          `Hệ thống tải tạm file Word tự dựng để không gián đoạn công việc.`
         );
       } else {
-        alert("Lỗi khi kết nối đến API xuất bản biểu mẫu. Hệ thống sẽ tải về file Word mẫu tạm thời!");
+        showNotice(
+          "warning",
+          "Không kết nối được máy chủ biểu mẫu",
+          "Hệ thống tải tạm file Word tự dựng thay thế."
+        );
       }
 
       // 2. Fallback to generating and downloading the styled HTML-Doc file
@@ -1182,47 +1349,8 @@ Người duyệt: ${selectedApprover}
 
     } catch (err) {
       console.error(err);
-      alert("Có lỗi xảy ra khi tải biểu mẫu!");
+      showNotice("error", "Không tải được biểu mẫu", "Vui lòng thử lại hoặc báo bộ phận kỹ thuật.");
     }
-  };
-
-  // Helper to extract clean destination or department from task notes metadata
-  const getCleanLocation = (notes: string) => {
-    if (!notes) return "Hồ Chí Minh";
-    const metaMatch = notes.match(/<!--METADATA:(.*?)-->/);
-    if (metaMatch) {
-      try {
-        const metadata = JSON.parse(metaMatch[1]);
-        if (metadata.destination) return metadata.destination;
-      } catch (e) {
-        // ignore
-      }
-    }
-    // Fallback if notes contains markdown
-    if (notes.includes("### THÔNG TIN ĐĂNG KÝ CÔNG TÁC")) {
-      const match = notes.match(/-\s+\*\*Điểm công tác chính\*\*:\s*(.*)/i);
-      if (match) return match[1].trim();
-    }
-    return notes.length > 50 ? notes.substring(0, 50) + "..." : notes;
-  };
-
-  const getCleanDept = (notes: string) => {
-    if (!notes) return "Hành chính nhân sự";
-    const metaMatch = notes.match(/<!--METADATA:(.*?)-->/);
-    if (metaMatch) {
-      try {
-        const metadata = JSON.parse(metaMatch[1]);
-        if (metadata.employeeDept) return metadata.employeeDept;
-      } catch (e) {
-        // ignore
-      }
-    }
-    if (notes.includes("Người duyệt:")) {
-      const parts = notes.split("Lý do:");
-      if (parts[1]) return "Lý do: " + parts[1].trim();
-      return "Nghỉ phép chờ duyệt";
-    }
-    return notes.length > 50 ? notes.substring(0, 50) + "..." : notes;
   };
 
   return (
@@ -1317,8 +1445,9 @@ Người duyệt: ${selectedApprover}
           {/* Calendar and Sidebar Grid */}
           <div className="flex-1 grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
             
-            {/* Left Calendar view */}
-            <div className="lg:col-span-3 bg-white p-6 rounded-2xl border border-slate-200/50 shadow-sm flex flex-col space-y-4">
+            {/* Left Calendar view — chiếm hết bề ngang khi cột phải không có gì
+                để hiện (bảng 3 tab đã dời sang trang Duyệt yêu cầu) */}
+            <div className={`${pendingApprovals.length > 0 ? "lg:col-span-3" : "lg:col-span-4"} bg-white p-6 rounded-2xl border border-slate-200/50 shadow-sm flex flex-col space-y-4`}>
               
               {/* Calendar control bar */}
               <div className="flex items-center justify-between">
@@ -1326,19 +1455,9 @@ Người duyệt: ${selectedApprover}
                   {monthTitle}
                 </h2>
                 
+                {/* Hai nút "Xin nghỉ phép" / "Đi công tác" đã dời ra sidebar,
+                    nhóm "Quản lý Đăng ký". Form vẫn nằm nguyên ở trang này. */}
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setIsLeaveModalOpen(true)}
-                    className="flex items-center gap-1 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 text-[10px] font-bold rounded-xl transition-all cursor-pointer"
-                  >
-                    🌴 Xin nghỉ phép
-                  </button>
-                  <button
-                    onClick={() => setIsTripModalOpen(true)}
-                    className="flex items-center gap-1 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-[10px] font-bold rounded-xl transition-all cursor-pointer"
-                  >
-                    💼 Đi công tác
-                  </button>
                   <button
                     className="p-1.5 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded-xl transition-all border border-slate-200/40"
                     title="Cấu hình lịch"
@@ -1398,20 +1517,25 @@ Người duyệt: ${selectedApprover}
                   <div className="grid grid-cols-7 grid-rows-5 flex-1 border-l border-t border-slate-100">
                     {calendarCells.map((cell, idx) => {
                       const dayTasks = getTasksForDate(cell.date);
+                      const cellDateStr = cell.date.toLocaleDateString("en-CA");
+                      const dayNotes = notesOfDate(cellDateStr);
                       const isToday = cell.date.toDateString() === new Date().toDateString();
-                      
+
                       return (
                         <div
                           key={idx}
+                          // Nhấn đúp vào ô để tự ghi chú cho ngày đó
+                          onDoubleClick={() => setNoteModal({ date: cellDateStr, id: null, content: "" })}
+                          title="Nhấn đúp để thêm ghi chú cho ngày này"
                           className={`min-h-[100px] border-r border-b border-slate-100 p-2 flex flex-col space-y-1.5 transition-all ${
                             cell.isCurrentMonth ? "bg-white" : "bg-slate-50/50 text-slate-350"
                           } ${isToday ? "bg-blue-50/30 ring-1 ring-blue-500/10" : ""}`}
                         >
                           {/* Day number */}
                           <div className="flex items-center justify-between">
-                            <span 
+                            <span
                               className={`text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center ${
-                                isToday 
+                                isToday
                                   ? "bg-blue-600 text-white shadow"
                                   : cell.isCurrentMonth ? "text-slate-800" : "text-slate-400"
                               }`}
@@ -1424,6 +1548,21 @@ Người duyệt: ${selectedApprover}
                               </span>
                             )}
                           </div>
+
+                          {/* Ghi chú cá nhân của ngày — bấm 1 lần để sửa/xoá */}
+                          {dayNotes.map(n => (
+                            <div
+                              key={n.id}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setNoteModal({ date: n.note_date, id: n.id, content: n.content });
+                              }}
+                              title={n.content}
+                              className="px-1.5 py-1 rounded text-[8px] border leading-tight truncate cursor-pointer transition-all bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100/70 font-semibold"
+                            >
+                              📌 {n.content}
+                            </div>
+                          ))}
 
                           {/* Cell tasks lists */}
                           <div className="flex-1 space-y-1 overflow-y-auto max-h-[85px] scrollbar-thin">
@@ -1452,6 +1591,8 @@ Người duyệt: ${selectedApprover}
                                   key={t.id}
                                   title={`${t.title} - ${t.assignee} (${t.progress}%)`}
                                   onClick={() => handleTaskClick(t)}
+                                  // Nhấn đúp lên thẻ việc là mở chi tiết, không phải tạo ghi chú
+                                  onDoubleClick={(e) => e.stopPropagation()}
                                   className={`px-1.5 py-1 rounded text-[8px] border leading-tight truncate cursor-pointer transition-all ${styleClass}`}
                                 >
                                   {taskOverdue && "⚠️ "}{isLeave ? "🌴" : isTrip ? "💼" : ""} {t.title.replace(/^Nghỉ phép:\s*|^Công tác:\s*/i, "")}
@@ -1467,11 +1608,10 @@ Người duyệt: ${selectedApprover}
               </div>
             </div>
 
-            {/* Right Sidebar list */}
-            <div className="bg-white rounded-2xl border border-slate-200/50 shadow-sm p-4 flex flex-col space-y-4">
-              {/* Approval Queue Section */}
-              {pendingApprovals.length > 0 && (
-                <div className="space-y-2.5 border-b border-slate-100 pb-4">
+            {/* Right Sidebar list — chỉ còn hàng chờ xác nhận cấp 1, hiện khi có đơn */}
+            {pendingApprovals.length > 0 && (
+              <div className="bg-white rounded-2xl border border-slate-200/50 shadow-sm p-4 flex flex-col space-y-4">
+                <div className="space-y-2.5">
                   <span className="text-[10px] font-extrabold text-indigo-600 uppercase tracking-wider block">📥 Chờ bạn xác nhận - Cấp 1 ({pendingApprovals.length})</span>
                   <div className="space-y-2">
                     {pendingApprovals.map(t => (
@@ -1490,7 +1630,7 @@ Người duyệt: ${selectedApprover}
                             Xác nhận
                           </button>
                           <button
-                            onClick={() => handleCap1Reject(t.id)}
+                            onClick={() => { setRejectReason(""); setRejectBox({ taskId: t.id }); }}
                             className="flex-1 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-[9px] font-bold rounded-lg cursor-pointer transition-colors text-center active:scale-95"
                           >
                             Từ chối
@@ -1500,121 +1640,8 @@ Người duyệt: ${selectedApprover}
                     ))}
                   </div>
                 </div>
-              )}
-
-              {/* Tabs */}
-              <div className="grid grid-cols-3 bg-slate-100 p-0.5 rounded-xl text-center text-[10px] font-bold">
-                <button
-                  onClick={() => setActiveTab('nodate')}
-                  className={`py-2 rounded-lg cursor-pointer transition-all ${
-                    activeTab === 'nodate' 
-                      ? "bg-white text-slate-800 shadow-sm" 
-                      : "text-slate-500 hover:text-slate-800"
-                  }`}
-                >
-                  Chưa hạn ({tasksWithoutDate.length})
-                </button>
-                <button
-                  onClick={() => setActiveTab('leave')}
-                  className={`py-2 rounded-lg cursor-pointer transition-all ${
-                    activeTab === 'leave' 
-                      ? "bg-white text-slate-800 shadow-sm" 
-                      : "text-slate-500 hover:text-slate-800"
-                  }`}
-                >
-                  Nghỉ phép ({leaveTasks.length})
-                </button>
-                <button
-                  onClick={() => setActiveTab('trip')}
-                  className={`py-2 rounded-lg cursor-pointer transition-all ${
-                    activeTab === 'trip' 
-                      ? "bg-white text-slate-800 shadow-sm" 
-                      : "text-slate-500 hover:text-slate-800"
-                  }`}
-                >
-                  Công tác ({tripTasks.length})
-                </button>
               </div>
-
-              {/* Tab Content */}
-              <div className="flex-1 space-y-3 max-h-[500px] overflow-y-auto scrollbar-thin">
-                {activeTab === 'nodate' && (
-                  <div className="space-y-3">
-                    <div className="bg-rose-50 border border-rose-100 p-3 rounded-xl flex gap-2">
-                      <AlertCircle className="text-rose-500 shrink-0" size={16} />
-                      <div className="text-[10px] leading-relaxed">
-                        <span className="font-bold text-rose-800 block">🚨 CHƯA CÓ NGÀY HẠN</span>
-                        <span className="text-rose-600 font-medium">
-                          Danh sách công việc chưa được thiết lập deadline. Hãy nhấp để mở rộng và cấu hình hạn hoàn thành.
-                        </span>
-                      </div>
-                    </div>
-                    {tasksWithoutDate.map(t => (
-                      <div
-                        key={t.id}
-                        onClick={() => handleTaskClick(t)}
-                        className="p-3 bg-white border border-slate-200/80 rounded-xl hover-elevate shadow-sm space-y-1.5 text-left cursor-pointer hover:shadow-md transition-all"
-                      >
-                        <p className="font-heading font-semibold text-xs text-slate-800 line-clamp-2">{t.title}</p>
-                        <div className="flex items-center justify-between text-[9px] text-slate-400">
-                          <span className="font-semibold text-slate-500 flex items-center gap-1"><User size={9} /> {t.assignee}</span>
-                          <span className={`badge text-[8px] font-bold ${
-                            t.status === "completed" ? "bg-emerald-50 text-emerald-700" : "bg-blue-50 text-blue-700"
-                          }`}>
-                            {t.status === "completed" ? "Đã xong" : "Kế hoạch"}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                    {tasksWithoutDate.length === 0 && (
-                      <p className="text-center text-slate-400 text-xs italic py-10">Tất cả việc đều đã có hạn</p>
-                    )}
-                  </div>
-                )}
-
-                {activeTab === 'leave' && (
-                  <div className="space-y-3">
-                    {leaveTasks.map(t => (
-                      <div
-                        key={t.id}
-                        onClick={() => handleTaskClick(t)}
-                        className="p-3 bg-emerald-50/40 border border-emerald-100 rounded-xl space-y-1.5 text-left cursor-pointer hover:shadow-md transition-all"
-                      >
-                        <p className="font-heading font-bold text-xs text-emerald-800">🌴 {t.title.replace(/^Nghỉ phép:\s*/i, "")}</p>
-                        <div className="flex items-center justify-between text-[9px] text-emerald-600 font-semibold">
-                          <span>Phòng ban/Lý do: {getCleanDept(t.notes || "")}</span>
-                          <span>Hạn: {t.due_date ? new Date(t.due_date).toLocaleDateString("vi-VN") : "N/A"}</span>
-                        </div>
-                      </div>
-                    ))}
-                    {leaveTasks.length === 0 && (
-                      <p className="text-center text-slate-400 text-xs italic py-10">Không có lịch nghỉ phép nào</p>
-                    )}
-                  </div>
-                )}
-
-                {activeTab === 'trip' && (
-                  <div className="space-y-3">
-                    {tripTasks.map(t => (
-                      <div
-                        key={t.id}
-                        onClick={() => handleTaskClick(t)}
-                        className="p-3 bg-indigo-50/40 border border-indigo-100 rounded-xl space-y-1.5 text-left cursor-pointer hover:shadow-md transition-all"
-                      >
-                        <p className="font-heading font-bold text-xs text-indigo-800">💼 {t.title.replace(/^Công tác:\s*/i, "")}</p>
-                        <div className="flex items-center justify-between text-[9px] text-indigo-600 font-semibold">
-                          <span>Địa điểm: {getCleanLocation(t.notes || "")}</span>
-                          <span>Hạn: {t.due_date ? new Date(t.due_date).toLocaleDateString("vi-VN") : "N/A"}</span>
-                        </div>
-                      </div>
-                    ))}
-                    {tripTasks.length === 0 && (
-                      <p className="text-center text-slate-400 text-xs italic py-10">Không có lịch đi công tác nào</p>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
+            )}
           </div>
         </main>
       </div>
@@ -1834,6 +1861,243 @@ Người duyệt: ${selectedApprover}
       )}
 
       {/* Đi công tác modal */}
+      {/* Hộp báo dùng chung — căn giữa màn hình, cùng ngôn ngữ thiết kế với các
+          modal khác của trang (nền mờ, thẻ trắng bo góc, hiệu ứng phóng nhẹ) */}
+      {notice && (
+        <div
+          className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => setNotice(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-2xl w-full max-w-sm p-7 shadow-2xl border border-slate-100 text-center space-y-5 animate-in fade-in-50 zoom-in-95 duration-200"
+          >
+            <div className="flex justify-center">
+              <div
+                className={`w-16 h-16 rounded-full flex items-center justify-center ring-8 ${
+                  notice.kind === "success"
+                    ? "bg-emerald-50 text-emerald-500 ring-emerald-500/10"
+                    : notice.kind === "warning"
+                    ? "bg-amber-50 text-amber-500 ring-amber-500/10"
+                    : "bg-rose-50 text-rose-500 ring-rose-500/10"
+                }`}
+              >
+                {notice.kind === "success"
+                  ? <CheckCircle2 size={36} strokeWidth={2.2} />
+                  : <AlertCircle size={36} strokeWidth={2.2} />}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <h3 className="font-heading font-extrabold text-sm text-slate-800">{notice.title}</h3>
+              {notice.message && (
+                <p className="text-[11px] font-semibold text-slate-500 leading-relaxed whitespace-pre-line">
+                  {notice.message}
+                </p>
+              )}
+            </div>
+
+            <button
+              type="button"
+              autoFocus
+              onClick={() => setNotice(null)}
+              className="w-full bg-[#005BAC] hover:bg-blue-700 text-white text-xs font-bold py-2.5 rounded-xl shadow-sm shadow-blue-500/20 transition-all active:scale-95"
+            >
+              Đã hiểu
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Hộp hỏi trước khi xoá — nút xác nhận màu đỏ để không bấm nhầm */}
+      {confirmBox && (
+        <div
+          className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => setConfirmBox(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-2xl w-full max-w-sm p-7 shadow-2xl border border-slate-100 text-center space-y-5 animate-in fade-in-50 zoom-in-95 duration-200"
+          >
+            <div className="flex justify-center">
+              <div className="w-16 h-16 rounded-full bg-rose-50 text-rose-500 flex items-center justify-center ring-8 ring-rose-500/10">
+                <Trash2 size={32} strokeWidth={2.2} />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <h3 className="font-heading font-extrabold text-sm text-slate-800">{confirmBox.title}</h3>
+              {confirmBox.message && (
+                <p className="text-[11px] font-semibold text-slate-500 leading-relaxed">{confirmBox.message}</p>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => setConfirmBox(null)}
+                className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold py-2.5 rounded-xl transition-all active:scale-95"
+              >
+                Huỷ bỏ
+              </button>
+              <button
+                type="button"
+                autoFocus
+                onClick={() => {
+                  const run = confirmBox.onConfirm;
+                  setConfirmBox(null);
+                  run();
+                }}
+                className="flex-1 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold py-2.5 rounded-xl shadow-sm shadow-rose-500/20 transition-all active:scale-95"
+              >
+                {confirmBox.confirmLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Hộp soạn ghi chú cá nhân — mở bằng nhấn đúp vào ô ngày */}
+      {noteModal && (
+        <div
+          className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => setNoteModal(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl border border-slate-100 space-y-4 animate-in fade-in-50 zoom-in-95 duration-200"
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">📌</span>
+                <div className="space-y-0.5">
+                  <h3 className="font-heading font-extrabold text-sm text-slate-800">
+                    {noteModal.id ? "Sửa ghi chú" : "Ghi chú cho ngày này"}
+                  </h3>
+                  <p className="text-[10px] font-semibold text-slate-400">
+                    {new Date(noteModal.date).toLocaleDateString("vi-VN", {
+                      weekday: "long", day: "2-digit", month: "2-digit", year: "numeric",
+                    })}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setNoteModal(null)}
+                className="text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <textarea
+              autoFocus
+              rows={4}
+              maxLength={500}
+              value={noteModal.content}
+              onChange={(e) => setNoteModal({ ...noteModal, content: e.target.value })}
+              placeholder="Ví dụ: Họp giao ban 8h, nhắc nộp báo cáo tuần, bận đi công trường Vàm Láng..."
+              className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-300 font-semibold text-slate-800 text-xs bg-slate-50/50 resize-none scrollbar-thin"
+            />
+
+            <p className="text-[10px] font-semibold text-slate-400 flex items-center gap-1.5">
+              <span>🔒</span> Chỉ mình bạn thấy ghi chú này. Còn {500 - noteModal.content.length} ký tự.
+            </p>
+
+            <div className="flex items-center gap-2.5">
+              {noteModal.id && (
+                <button
+                  type="button"
+                  onClick={handleDeleteNote}
+                  className="px-4 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 text-xs font-bold py-2.5 rounded-xl transition-all active:scale-95"
+                >
+                  <Trash2 size={13} />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setNoteModal(null)}
+                className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold py-2.5 rounded-xl transition-all active:scale-95"
+              >
+                Huỷ bỏ
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveNote}
+                disabled={savingNote}
+                className="flex-1 bg-[#005BAC] hover:bg-blue-700 disabled:bg-slate-300 text-white text-xs font-bold py-2.5 rounded-xl shadow-sm shadow-blue-500/20 transition-all active:scale-95"
+              >
+                {savingNote ? "Đang lưu..." : "Lưu ghi chú"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Ô nhập lý do từ chối — z-50 để hộp báo (z-60) nổi lên trên khi bỏ trống */}
+      {rejectBox && (
+        <div
+          className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => setRejectBox(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl border border-slate-100 space-y-4 animate-in fade-in-50 zoom-in-95 duration-200"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 shrink-0 rounded-full bg-rose-50 text-rose-500 flex items-center justify-center ring-8 ring-rose-500/10">
+                <AlertCircle size={22} strokeWidth={2.2} />
+              </div>
+              <div className="space-y-0.5">
+                <h3 className="font-heading font-extrabold text-sm text-slate-800">Từ chối yêu cầu</h3>
+                <p className="text-[10px] font-semibold text-slate-400">
+                  Lý do sẽ được gửi email cho người làm đơn.
+                </p>
+              </div>
+            </div>
+
+            <textarea
+              autoFocus
+              rows={4}
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              placeholder="Ví dụ: Trùng lịch họp phòng, đề nghị dời sang tuần sau."
+              className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-300 font-semibold text-slate-800 text-xs bg-slate-50/50 resize-none scrollbar-thin"
+            />
+
+            <div className="flex items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => setRejectBox(null)}
+                className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold py-2.5 rounded-xl transition-all active:scale-95"
+              >
+                Huỷ bỏ
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!rejectReason.trim()) {
+                    showNotice(
+                      "warning",
+                      "Chưa nhập lý do từ chối",
+                      "Lý do sẽ được gửi email cho người làm đơn nên bắt buộc phải có."
+                    );
+                    return;
+                  }
+                  const taskId = rejectBox.taskId;
+                  const reason = rejectReason;
+                  setRejectBox(null);
+                  handleCap1Reject(taskId, reason);
+                }}
+                className="flex-1 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold py-2.5 rounded-xl shadow-sm shadow-rose-500/20 transition-all active:scale-95"
+              >
+                Từ chối yêu cầu
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isTripModalOpen && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl w-full max-w-2xl p-6 shadow-2xl border border-slate-100 space-y-4 animate-in fade-in-50 zoom-in-95 duration-150 max-h-[90vh] overflow-y-auto scrollbar-thin">
@@ -2438,7 +2702,7 @@ Người duyệt: ${selectedApprover}
                   <div className="grid grid-cols-3 gap-3">
                     <button
                       type="button"
-                      onClick={() => alert("Tính năng tải biểu mẫu Excel đang được phát triển. Vui lòng sử dụng biểu mẫu Word để in ấn!")}
+                      onClick={() => showNotice("warning", "Tính năng đang phát triển", "Biểu mẫu Excel chưa sẵn sàng. Vui lòng dùng biểu mẫu Word để in ấn.")}
                       className="py-2 px-3 border border-emerald-250 bg-emerald-50 hover:bg-emerald-100/60 text-emerald-700 rounded-xl font-bold flex items-center justify-center gap-1.5 cursor-pointer text-[10px] transition-colors"
                     >
                       📊 Tải biểu mẫu Excel (2 Sheet)
@@ -2567,19 +2831,25 @@ Người duyệt: ${selectedApprover}
                   {isManager && (
                     <button
                       type="button"
-                      onClick={async () => {
-                        if (window.confirm("Bạn có chắc chắn muốn xóa lịch này không?")) {
-                          try {
-                            const { error } = await supabase.from("tasks").delete().eq("id", selectedTask.id);
-                            if (error) throw error;
-                            alert("Đã xóa thành công!");
-                            setIsDetailsModalOpen(false);
-                            setSelectedTask(null);
-                            fetchData();
-                          } catch (err: any) {
-                            alert("Lỗi: " + err.message);
-                          }
-                        }
+                      onClick={() => {
+                        const taskId = selectedTask.id;
+                        setConfirmBox({
+                          title: "Xoá lịch trình này?",
+                          message: "Lịch sẽ bị xoá khỏi hệ thống và không khôi phục lại được.",
+                          confirmLabel: "Xoá lịch",
+                          onConfirm: async () => {
+                            try {
+                              const { error } = await supabase.from("tasks").delete().eq("id", taskId);
+                              if (error) throw error;
+                              setIsDetailsModalOpen(false);
+                              setSelectedTask(null);
+                              fetchData();
+                              showNotice("success", "Đã xoá lịch trình");
+                            } catch (err: any) {
+                              showNotice("error", "Không xoá được lịch trình", err.message || String(err));
+                            }
+                          },
+                        });
                       }}
                       className="py-1.5 px-3 border border-red-200 hover:bg-red-50 text-red-600 rounded-xl font-bold flex items-center justify-center gap-1 cursor-pointer text-[10px] transition-colors"
                     >
@@ -2600,5 +2870,19 @@ Người duyệt: ${selectedApprover}
         );
       })()}
     </div>
+  );
+}
+
+// useSearchParams (đọc ?dk= từ sidebar) bắt buộc phải nằm trong Suspense —
+// cùng cách bọc như trang Cài đặt hệ thống.
+export default function CalendarPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex min-h-screen bg-[#F7F9FC] items-center justify-center">
+        <span className="w-8 h-8 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin" />
+      </div>
+    }>
+      <CalendarContent />
+    </Suspense>
   );
 }
