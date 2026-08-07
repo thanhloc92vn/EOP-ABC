@@ -4475,7 +4475,6 @@ export default function AdministrationPage() {
       <div className="ml-60 flex-1 flex flex-col min-w-0">
         <Header 
           title="Hành chính & Văn phòng phẩm" 
-          subtitle="Quản lý văn phòng phẩm, phân chia công việc, và xử lý hồ sơ thanh toán" 
         />
 
         <main className="flex-1 p-8 overflow-y-auto">
@@ -4505,7 +4504,7 @@ export default function AdministrationPage() {
                         setActiveTab(item.id as any);
                         setSearchTerm("");
                       }}
-                      className={`w-full text-left p-4 rounded-2xl border transition-all flex items-start gap-4 hover-elevate ${
+                      className={`w-full text-left p-4 rounded-2xl border transition-all flex items-center gap-4 hover-elevate ${
                         isActive
                           ? "bg-gradient-to-r from-blue-600 to-[#005BAC] border-blue-600 text-white shadow-lg shadow-blue-600/15"
                           : "bg-white border-slate-200/60 text-slate-700 hover:border-slate-300 hover:bg-slate-50/20"
@@ -4516,9 +4515,6 @@ export default function AdministrationPage() {
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className={`font-heading font-extrabold text-xs leading-tight ${isActive ? "text-white" : "text-slate-800"}`}>{isHcnsViewer ? item.label : item.restrictedLabel}</p>
-                        <p className={`text-[10px] mt-1 font-medium truncate ${isActive ? "text-blue-100" : "text-slate-400"}`}>
-                          {item.desc}
-                        </p>
                       </div>
                     </button>
                   );
@@ -4545,7 +4541,6 @@ export default function AdministrationPage() {
                         <p className="font-heading font-black text-3xl text-slate-800 mt-1">
                           {suppliesWithDynamicAllocated.reduce((sum, item) => sum + item.initialStock + item.imported, 0)} <span className="text-xs font-semibold text-slate-500">vật tư</span>
                         </p>
-                        <p className="text-[10px] text-slate-400 font-semibold">{supplies.length} danh mục hàng hóa</p>
                       </div>
                       <div className="absolute -right-6 -bottom-6 text-blue-500/5 opacity-10 group-hover:scale-110 transition-transform duration-300 pointer-events-none">
                         <Package size={80} />
@@ -4561,9 +4556,6 @@ export default function AdministrationPage() {
                         <p className="text-slate-400 text-[10px] font-extrabold uppercase tracking-wider">Cấp Phòng Ban VP</p>
                         <p className="font-heading font-black text-3xl text-emerald-700 mt-1">
                           {deptRequests.filter(r => r.target === "phongban" && r.status === "Đã cấp phát").reduce((sum, r) => sum + r.qty, 0)} <span className="text-xs font-semibold text-slate-500">cái/ram</span>
-                        </p>
-                        <p className="text-[10px] text-slate-400 font-semibold">
-                          {deptRequests.filter(r => r.target === "phongban" && r.status === "Đã cấp phát").length} lượt bàn giao
                         </p>
                       </div>
                       <div className="absolute -right-6 -bottom-6 text-emerald-500/5 opacity-10 group-hover:scale-110 transition-transform duration-300 pointer-events-none">
@@ -4581,9 +4573,6 @@ export default function AdministrationPage() {
                         <p className="font-heading font-black text-3xl text-purple-700 mt-1">
                           {deptRequests.filter(r => r.target === "duan" && r.status === "Đã cấp phát").reduce((sum, r) => sum + r.qty, 0)} <span className="text-xs font-semibold text-slate-500">cái/ram</span>
                         </p>
-                        <p className="text-[10px] text-slate-400 font-semibold">
-                          {deptRequests.filter(r => r.target === "duan" && r.status === "Đã cấp phát").length} lượt bàn giao
-                        </p>
                       </div>
                       <div className="absolute -right-6 -bottom-6 text-purple-500/5 opacity-10 group-hover:scale-110 transition-transform duration-300 pointer-events-none">
                         <Briefcase size={80} />
@@ -4600,7 +4589,6 @@ export default function AdministrationPage() {
                         <p className="font-heading font-black text-3xl text-sky-700 mt-1">
                           {suppliesWithDynamicAllocated.reduce((sum, item) => sum + item.ending, 0)} <span className="text-xs font-semibold text-slate-500">vật tư</span>
                         </p>
-                        <p className="text-[10px] text-slate-400 font-semibold">Khả dụng cấp phát</p>
                       </div>
                       <div className="absolute -right-6 -bottom-6 text-sky-500/5 opacity-10 group-hover:scale-110 transition-transform duration-300 pointer-events-none">
                         <CheckCircle size={80} />
@@ -4617,7 +4605,6 @@ export default function AdministrationPage() {
                         <p className="font-heading font-black text-3xl text-amber-700 mt-1">
                           {deptRequests.filter(r => r.status === "Chờ duyệt").length} <span className="text-xs font-semibold text-slate-500">phiếu</span>
                         </p>
-                        <p className="text-[10px] text-slate-400 font-semibold">Trừ kho khi phê duyệt</p>
                       </div>
                       <div className="absolute -right-6 -bottom-6 text-amber-500/5 opacity-10 group-hover:scale-110 transition-transform duration-300 pointer-events-none">
                         <AlertTriangle size={80} />

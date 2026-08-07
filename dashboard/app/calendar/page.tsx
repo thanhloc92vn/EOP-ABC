@@ -177,13 +177,9 @@ function CalendarContent() {
   // Leave specific states
   const [isHalfDay, setIsHalfDay] = useState(false);
   const [halfDayPeriod, setHalfDayPeriod] = useState<"Sáng" | "Chiều">("Sáng");
-  const [selectedApprover, setSelectedApprover] = useState("");
+  // Toàn bộ nhân sự — dùng để tra người duyệt ĐẶC CÁCH nghỉ 1 ngày trong
+  // resolveCap1Approver. Ô chọn người duyệt đã bỏ: hệ thống tự suy ra.
   const [allStaffList, setAllStaffList] = useState<{ id: string; name: string; role: string }[]>([]);
-  const [managersList, setManagersList] = useState<{ id: string; name: string; role: string }[]>([]);
-  // Ô chọn người duyệt kiểu search — tìm tên nhanh thay vì cuộn dropdown dài
-  const [approverSearch, setApproverSearch] = useState("");
-  const [showApproverDropdown, setShowApproverDropdown] = useState(false);
-  const approverPickerRef = useRef<HTMLDivElement>(null);
   // Danh bạ email/phòng ban tra theo tên — dùng để gửi email thông báo duyệt (tasks không có cột email)
   const [employeeDirectory, setEmployeeDirectory] = useState<{ name: string; email: string; department: string; role: string }[]>([]);
 
@@ -302,19 +298,6 @@ function CalendarContent() {
         // người đặc cách trong Cài đặt là có hiệu lực ngay, không cần sửa code, và
         // bàn giao tài khoản không làm mất luồng duyệt.
         setAllStaffList(empsData);
-
-        // Filter managers (Trưởng phòng)
-        let managers = empsData.filter((e: any) => 
-          e.role && (
-            e.role.toLowerCase().includes("trưởng phòng") || 
-            e.role.toLowerCase().includes("truong phong") ||
-            e.role.toLowerCase() === "admin"
-          )
-        );
-        if (managers.length === 0) {
-          managers = empsData;
-        }
-        setManagersList(managers);
       }
     } catch (err) {
       console.error("Error fetching calendar data:", err);
@@ -586,99 +569,53 @@ function CalendarContent() {
     }
   }, [isSingleDay]);
 
-  // Danh sách người duyệt hợp lệ: đơn 1 ngày của người có đặc cách trong bảng
-  // leave_exceptions chỉ được chọn đúng người duyệt đặc cách đó (VD Hằng->Quỳnh,
-  // Quyên->Hoành Anh); còn lại là mọi Trưởng phòng/Admin. Tên cứng đã bỏ —
-  // thêm/bớt cặp đặc cách chỉ cần sửa bảng leave_exceptions.
-  const approverOptions = useMemo(() => {
-    // Đặc cách nghỉ 1 ngày CHỈ áp cho đơn nghỉ phép. Đơn công tác dùng chung ô
-    // chọn người duyệt này nhưng không có khái niệm "nghỉ 1 ngày", nếu không chặn
-    // thì đơn công tác đúng 1 ngày sẽ bị thu hẹp nhầm về người duyệt đặc cách.
-    if (isLeaveModalOpen && leaveDaysCount === 1) {
-      const exceptionApprovers = getLeaveExceptionApproversForAssignee(modalName);
-      if (exceptionApprovers.length > 0) {
-        const matched = allStaffList.filter(d =>
-          exceptionApprovers.some(a => normalizeName(d.name).includes(normalizeName(a)))
+  /**
+   * Người duyệt cấp 1 của một đơn — hệ thống TỰ suy ra, người gửi không phải chọn.
+   *
+   * Thứ tự dưới đây bám ĐÚNG thứ tự trong isLeaveTripCap1Approver (lib/approvers.ts)
+   * để người nhận mail luôn trùng với người thật sự bấm duyệt được. Đổi thứ tự ở
+   * đây mà không đổi bên đó là mail bay một nẻo, quyền duyệt một đằng.
+   *   1. Thuộc tổ có nhóm duyệt riêng  -> tổ trưởng của tổ đó
+   *   2. Đơn nghỉ ĐÚNG 1 NGÀY có đặc cách -> người duyệt đặc cách
+   *   3. Còn lại -> Trưởng phòng cùng phòng ban, không có thì Phó phòng
+   * Trả về "" khi không tìm được ai; lúc đó không gửi mail, đơn vẫn nằm chờ ở
+   * trang Duyệt yêu cầu cho cấp quản lý xử lý.
+   */
+  const resolveCap1Approver = (assigneeName: string, isOneDayLeave: boolean): string => {
+    const groupLeader = getGroupLeaderNameForMember(assigneeName);
+    if (groupLeader) return groupLeader;
+
+    if (isOneDayLeave) {
+      const exceptions = getLeaveExceptionApproversForAssignee(assigneeName);
+      if (exceptions.length > 0) {
+        const matched = allStaffList.find(s =>
+          exceptions.some(ex => normalizeName(s.name).includes(normalizeName(ex)))
         );
-        if (matched.length > 0) return matched;
+        if (matched) return matched.name;
       }
     }
-    return managersList;
-  }, [modalName, leaveDaysCount, allStaffList, managersList, isLeaveModalOpen]);
 
-  // Đề xuất người duyệt theo ĐÚNG 2 BẬC của phòng ban người xin nghỉ, không suy diễn thêm:
-  //   1. Trưởng phòng
-  //   2. Không có Trưởng phòng -> Phó phòng
-  //   3. Không có cả hai -> ĐỂ TRỐNG, người dùng tự chọn bằng ô tìm kiếm bên dưới
-  //
-  // Tổ trưởng CỐ Ý không nằm trong danh sách này: tổ có luồng duyệt riêng qua bảng
-  // approval_groups (thành viên tổ do tổ trưởng duyệt, xem lib/approvers.ts) nên
-  // không cần — và không nên — đề xuất tổ trưởng ở đây.
-  //
-  // Trước đây bậc 2 là "bất kỳ ai có chức danh quản lý trong phòng" (deptManagers[0]),
-  // nên có thể rơi vào tổ trưởng/quản lý/giám đốc một cách khó đoán.
-  //
-  // So khớp phòng ban qua normalizeName (bỏ dấu + thường hoá): trước đây so chuỗi
-  // tuyệt đối nên lệch một dấu là trượt, mà trượt thì im lặng — ô để trống, không
-  // báo gì, người dùng không biết vì sao.
-  const recommendedApprover = useMemo(() => {
-    if (approverOptions.length === 0) return "";
-    const dept = normalizeName(currentUser?.department || "");
-    if (dept) {
-      const sameDept = employeeDirectory.filter(e => normalizeName(e.department || "") === dept);
-      const isTruongPhong = (role: string) => {
-        const r = normalizeName(role);
-        return r.includes("truong phong") && !r.includes("pho");
-      };
-      const isPhoPhong = (role: string) => {
-        const r = normalizeName(role);
-        return r.includes("pho phong") || r.includes("pho truong phong");
-      };
-      const primary = sameDept.find(e => isTruongPhong(e.role)) || sameDept.find(e => isPhoPhong(e.role));
-      if (primary && approverOptions.some(o => o.name === primary.name)) {
-        return primary.name;
-      }
-    }
-    // Giữ nguyên: đơn 1 ngày có đặc cách thì approverOptions chỉ còn đúng 1 người
-    // duyệt đặc cách -> chọn sẵn cho người dùng.
-    return approverOptions.length === 1 ? approverOptions[0].name : "";
-  }, [approverOptions, currentUser, employeeDirectory]);
+    // Phòng ban lấy từ hồ sơ NGƯỜI GỬI trong danh bạ, không lấy của tài khoản đang
+    // đăng nhập — hai thứ này khác nhau khi HCNS nộp đơn hộ người khác.
+    const dept = normalizeName(
+      employeeDirectory.find(e => normalizeName(e.name) === normalizeName(assigneeName))?.department
+      || currentUser?.department
+      || ""
+    );
+    if (!dept) return "";
 
-  // Đặt người duyệt mặc định khi mở modal nghỉ phép HOẶC công tác.
-  // Hai modal không bao giờ mở cùng lúc nên dùng chung state selectedApprover.
-  useEffect(() => {
-    if (isLeaveModalOpen || isTripModalOpen) {
-      setSelectedApprover(prev => prev || recommendedApprover);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLeaveModalOpen, isTripModalOpen]);
-
-  // Nếu lựa chọn hiện tại không còn hợp lệ với bộ tuỳ chọn mới (vd đổi từ đơn 1 ngày
-  // sang nhiều ngày), tự động chọn lại người được đề xuất
-  useEffect(() => {
-    if (!isLeaveModalOpen) return;
-    if (selectedApprover && !approverOptions.some(o => o.name === selectedApprover)) {
-      setSelectedApprover(recommendedApprover || "");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [approverOptions]);
-
-  // Đóng dropdown tìm người duyệt khi bấm ra ngoài
-  useEffect(() => {
-    const onClickOutside = (e: MouseEvent) => {
-      if (approverPickerRef.current && !approverPickerRef.current.contains(e.target as Node)) {
-        setShowApproverDropdown(false);
-      }
+    const sameDept = employeeDirectory.filter(e => normalizeName(e.department || "") === dept);
+    const isTruongPhong = (role: string) => {
+      const r = normalizeName(role || "");
+      return r.includes("truong phong") && !r.includes("pho truong phong");
     };
-    document.addEventListener("mousedown", onClickOutside);
-    return () => document.removeEventListener("mousedown", onClickOutside);
-  }, []);
-
-  const filteredApproverOptions = useMemo(() => {
-    const q = approverSearch.trim().toLowerCase();
-    if (!q) return approverOptions;
-    return approverOptions.filter(m => m.name.toLowerCase().includes(q) || (m.role || "").toLowerCase().includes(q));
-  }, [approverOptions, approverSearch]);
+    const isPhoPhong = (role: string) => {
+      const r = normalizeName(role || "");
+      return r.includes("pho phong") || r.includes("pho truong phong");
+    };
+    const primary = sameDept.find(e => isTruongPhong(e.role)) || sameDept.find(e => isPhoPhong(e.role));
+    return primary?.name || "";
+  };
 
   // Business trip calculation helpers
   const tripDaysCount = useMemo(() => {
@@ -932,16 +869,19 @@ function CalendarContent() {
     let titleStr = `Nghỉ phép (${leaveType}): ${modalName} (${duration} ngày)`;
     let notesStr = modalNotes || "";
 
+    // Người duyệt cấp 1 do hệ thống suy ra, không bắt người gửi chọn nữa.
+    // Rỗng cũng vẫn cho gửi đơn: đơn nằm chờ ở trang Duyệt yêu cầu, cấp quản lý
+    // vẫn duyệt được — chặn ở đây chỉ làm người dùng bí mà không giải quyết gì.
+    const cap1Approver = resolveCap1Approver(modalName, duration === 1);
+
     if (duration === 0.5) {
       status = "completed"; // Auto-approved
       titleStr = `Nghỉ phép (${leaveType}): ${modalName} (Nửa ngày ${halfDayPeriod})`;
       notesStr = `Loại nghỉ phép: ${leaveType}. Được duyệt tự động. ${modalNotes ? `Lý do: ${modalNotes}` : ""}`;
     } else {
-      if (!selectedApprover) {
-        showNotice("warning", "Chưa chọn người duyệt", "Đơn nghỉ từ 1 ngày trở lên phải có Trưởng phòng / Tổ trưởng xác nhận.");
-        return;
-      }
-      notesStr = `Loại nghỉ phép: ${leaveType}. Người duyệt: ${selectedApprover}. ${modalNotes ? `Lý do: ${modalNotes}` : ""}`;
+      // Giữ nguyên chuỗi "Người duyệt: X" trong notes — isLeaveTripCap1Approver và
+      // getCleanDept đều đọc chuỗi này, đổi dạng là gãy cả hai.
+      notesStr = `Loại nghỉ phép: ${leaveType}.${cap1Approver ? ` Người duyệt: ${cap1Approver}.` : ""} ${modalNotes ? `Lý do: ${modalNotes}` : ""}`;
     }
 
     try {
@@ -983,8 +923,8 @@ function CalendarContent() {
             }).catch(e => console.warn("Không gửi được email xác nhận nghỉ nửa ngày:", e));
           }
         } else {
-          // Báo email cho người được chọn duyệt cấp 1 (Trưởng/Phó phòng đã chọn trong form)
-          const approverEmail = employeeDirectory.find(e => e.name === selectedApprover)?.email || "";
+          // Báo email cho người duyệt cấp 1 mà hệ thống đã suy ra ở trên
+          const approverEmail = employeeDirectory.find(e => e.name === cap1Approver)?.email || "";
           if (approverEmail) {
             apiFetch("/api/send-request-email", {
               method: "POST",
@@ -1010,9 +950,6 @@ function CalendarContent() {
       setModalEnd(todayISO());
       setModalNotes("");
       setIsHalfDay(false);
-      setSelectedApprover("");
-      setApproverSearch("");
-      setShowApproverDropdown(false);
       setLeaveType("Nghỉ phép năm hưởng lương");
       setIsLeaveModalOpen(false);
       fetchData();
@@ -1041,12 +978,10 @@ function CalendarContent() {
       return;
     }
 
-    // Đơn công tác đi cùng luồng duyệt với đơn nghỉ phép: chọn đích danh người
-    // duyệt cấp 1 thay vì phát tán mail cho mọi quản lý trong phòng.
-    if (!selectedApprover) {
-      showNotice("warning", "Chưa chọn người duyệt", "Đơn công tác phải có Trưởng phòng / Tổ trưởng xác nhận.");
-      return;
-    }
+    // Đơn công tác đi cùng luồng duyệt với đơn nghỉ phép: gửi đích danh MỘT người
+    // duyệt cấp 1 thay vì phát tán mail cho mọi quản lý trong phòng. Người này do
+    // hệ thống suy ra (không có khái niệm "nghỉ 1 ngày" nên tham số thứ 2 là false).
+    const cap1Approver = resolveCap1Approver(modalName, false);
 
     const tripMetadata = {
       employeeName: modalName,
@@ -1090,7 +1025,7 @@ ${tripRoutes.map((r, i) => `Chặng ${i + 1}:
 ---
 **TỔNG ĐỀ NGHỊ THANH TOÁN**: ${formatCurrency(totalTripAmount)}
 
-Người duyệt: ${selectedApprover}
+${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
 
 <!--METADATA:${JSON.stringify(tripMetadata)}-->`;
 
@@ -1117,24 +1052,15 @@ Người duyệt: ${selectedApprover}
       // thuộc nhóm trong bảng approval_groups, VD tổ Marketing) hoặc
       // Trưởng/Phó phòng cùng phòng ban với người đăng ký — chạy nền, không chặn việc gửi đơn
       try {
-        let approverEmails = "";
-        const groupLeaderName = getGroupLeaderNameForMember(modalName);
-        if (groupLeaderName) {
-          approverEmails = employeeDirectory
-            .filter(e => e.name.trim().toLowerCase() === groupLeaderName.trim().toLowerCase())
-            .map(e => e.email)
-            .filter(Boolean)
-            .join(", ");
-        } else {
-          // Gửi đúng người được chọn ở ô "Người duyệt" — giống hệt đơn nghỉ phép.
-          // Trước đây đơn công tác phát tán mail cho MỌI quản lý trong phòng, nên
-          // không ai biết rõ trách nhiệm thuộc về ai và người xin cũng không chọn được.
-          approverEmails = employeeDirectory
-            .filter(e => e.name.trim().toLowerCase() === selectedApprover.trim().toLowerCase())
-            .map(e => e.email)
-            .filter(Boolean)
-            .join(", ");
-        }
+        // resolveCap1Approver đã xử lý sẵn trường hợp thuộc tổ có nhóm duyệt riêng
+        // (trả về tổ trưởng), nên ở đây chỉ việc tra mail của một cái tên duy nhất.
+        const approverEmails = cap1Approver
+          ? employeeDirectory
+              .filter(e => e.name.trim().toLowerCase() === cap1Approver.trim().toLowerCase())
+              .map(e => e.email)
+              .filter(Boolean)
+              .join(", ")
+          : "";
 
         if (approverEmails) {
           apiFetch("/api/send-request-email", {
@@ -1167,9 +1093,6 @@ Người duyệt: ${selectedApprover}
       setModalStart(todayISO());
       setModalEnd(todayISO());
       setModalNotes("");
-      // Xoá lựa chọn người duyệt để lần mở modal sau lấy lại đề xuất theo phòng ban
-      // (state này dùng chung với đơn nghỉ phép).
-      setSelectedApprover("");
       setIsTripModalOpen(false);
       fetchData();
       showNotice("success", "Đã gửi đơn công tác", "Đang chờ Trưởng phòng / Tổ trưởng xác nhận.");
@@ -1774,58 +1697,26 @@ Người duyệt: ${selectedApprover}
                 </div>
               )}
 
+              {/* Người duyệt cấp 1 do hệ thống tự xác định — chỉ hiện để người gửi
+                  biết đơn sẽ tới tay ai, không phải ô nhập liệu. */}
               {leaveDaysCount >= 1 && (
-                <div className="space-y-1.5 animate-in fade-in duration-200" ref={approverPickerRef}>
-                  <label className="text-slate-500 text-[11px] font-bold">
-                    {/* Nhãn suy ra từ BẢNG leave_exceptions, không so tên cứng.
-                        Trước đây viết thẳng "hằng"/"quyên" trong điều kiện — sót lại
-                        sau đợt chuyển đặc cách sang bảng dữ liệu, nên đổi người đặc
-                        cách trong Cài đặt thì nhãn vẫn hiện sai. */}
-                    {leaveDaysCount === 1 && getLeaveExceptionApproversForAssignee(modalName).length > 0
-                      ? "Người duyệt (Phó phòng) *"
-                      : "Người duyệt (Trưởng phòng) *"}
-                  </label>
-                  <div className="relative">
-                    <div className="relative">
-                      <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                      <input
-                        type="text"
-                        required
-                        value={showApproverDropdown ? approverSearch : selectedApprover}
-                        onFocus={() => { setShowApproverDropdown(true); setApproverSearch(""); }}
-                        onChange={(e) => setApproverSearch(e.target.value)}
-                        placeholder="Tìm tên người duyệt..."
-                        className="w-full pl-8 pr-3 border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-indigo-500/20 bg-white font-semibold text-slate-800 text-xs"
-                      />
-                    </div>
-                    {showApproverDropdown && (
-                      <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-premium z-20 max-h-48 overflow-y-auto animate-in fade-in duration-150">
-                        {filteredApproverOptions.length === 0 ? (
-                          <p className="text-center text-slate-400 text-[11px] italic py-3">Không tìm thấy người phù hợp.</p>
-                        ) : (
-                          filteredApproverOptions.map(m => (
-                            <button
-                              key={m.id}
-                              type="button"
-                              onClick={() => { setSelectedApprover(m.name); setShowApproverDropdown(false); setApproverSearch(""); }}
-                              className={`w-full flex items-center justify-between gap-2 px-3 py-2 hover:bg-slate-50 transition-colors text-left cursor-pointer text-xs ${m.name === selectedApprover ? "bg-indigo-50/60" : ""}`}
-                            >
-                              <span className="font-bold text-slate-700 truncate">{m.name}</span>
-                              <span className="flex items-center gap-1.5 shrink-0">
-                                {m.name === recommendedApprover && (
-                                  <span className="text-[8px] font-extrabold text-indigo-500 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded-full">ĐỀ XUẤT</span>
-                                )}
-                                <span className="text-[10px] text-slate-400">{m.role}</span>
-                              </span>
-                            </button>
-                          ))
-                        )}
-                      </div>
+                <div className="bg-indigo-50/40 border border-indigo-100 rounded-xl p-3 flex items-start gap-2 animate-in fade-in duration-200">
+                  <CheckCircle2 size={14} className="text-indigo-500 shrink-0 mt-0.5" />
+                  <div className="text-[11px] leading-relaxed">
+                    {resolveCap1Approver(modalName, leaveDaysCount === 1) ? (
+                      <>
+                        <span className="text-slate-500 font-semibold">Đơn sẽ chuyển tới </span>
+                        <span className="font-extrabold text-indigo-700">
+                          {resolveCap1Approver(modalName, leaveDaysCount === 1)}
+                        </span>
+                        <span className="text-slate-500 font-semibold"> xác nhận, sau đó HCNS duyệt cuối.</span>
+                      </>
+                    ) : (
+                      <span className="text-slate-500 font-semibold">
+                        Đơn sẽ nằm ở mục Duyệt yêu cầu để cấp quản lý xác nhận, sau đó HCNS duyệt cuối.
+                      </span>
                     )}
                   </div>
-                  {recommendedApprover && selectedApprover === recommendedApprover && (
-                    <p className="text-[10px] text-indigo-400 font-semibold">💡 Tự động chọn theo phòng ban: {currentUser?.department}</p>
-                  )}
                 </div>
               )}
 
@@ -2411,52 +2302,23 @@ Người duyệt: ${selectedApprover}
                 <span className="text-lg font-black text-indigo-700">{formatCurrency(totalTripAmount)}</span>
               </div>
 
-              {/* Người duyệt — dùng chung state với đơn nghỉ phép (hai modal không
-                  bao giờ mở cùng lúc). Đề xuất theo phòng ban: Trưởng phòng, không
-                  có thì Phó phòng, không có cả hai thì để trống tự tìm. */}
-              <div className="space-y-1.5" ref={approverPickerRef}>
-                <label className="text-slate-500 text-[11px] font-bold">Người duyệt (Trưởng phòng) *</label>
-                <div className="relative">
-                  <div className="relative">
-                    <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                    <input
-                      type="text"
-                      required
-                      value={showApproverDropdown ? approverSearch : selectedApprover}
-                      onFocus={() => { setShowApproverDropdown(true); setApproverSearch(""); }}
-                      onChange={(e) => setApproverSearch(e.target.value)}
-                      placeholder="Tìm tên người duyệt..."
-                      className="w-full pl-8 pr-3 border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-indigo-500/20 bg-white font-semibold text-slate-800 text-xs"
-                    />
-                  </div>
-                  {showApproverDropdown && (
-                    <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-premium z-20 max-h-48 overflow-y-auto animate-in fade-in duration-150">
-                      {filteredApproverOptions.length === 0 ? (
-                        <p className="text-center text-slate-400 text-[11px] italic py-3">Không tìm thấy người phù hợp.</p>
-                      ) : (
-                        filteredApproverOptions.map(m => (
-                          <button
-                            key={m.id}
-                            type="button"
-                            onClick={() => { setSelectedApprover(m.name); setShowApproverDropdown(false); setApproverSearch(""); }}
-                            className={`w-full flex items-center justify-between gap-2 px-3 py-2 hover:bg-slate-50 transition-colors text-left cursor-pointer text-xs ${m.name === selectedApprover ? "bg-indigo-50/60" : ""}`}
-                          >
-                            <span className="font-bold text-slate-700 truncate">{m.name}</span>
-                            <span className="flex items-center gap-1.5 shrink-0">
-                              {m.name === recommendedApprover && (
-                                <span className="text-[8px] font-extrabold text-indigo-500 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded-full">ĐỀ XUẤT</span>
-                              )}
-                              <span className="text-[10px] text-slate-400">{m.role}</span>
-                            </span>
-                          </button>
-                        ))
-                      )}
-                    </div>
+              {/* Người duyệt cấp 1 do hệ thống tự xác định — xem ghi chú ở
+                  resolveCap1Approver. Chỉ hiện để người gửi biết đơn tới tay ai. */}
+              <div className="bg-indigo-50/40 border border-indigo-100 rounded-xl p-3 flex items-start gap-2">
+                <CheckCircle2 size={14} className="text-indigo-500 shrink-0 mt-0.5" />
+                <div className="text-[11px] leading-relaxed">
+                  {resolveCap1Approver(modalName, false) ? (
+                    <>
+                      <span className="text-slate-500 font-semibold">Đơn sẽ chuyển tới </span>
+                      <span className="font-extrabold text-indigo-700">{resolveCap1Approver(modalName, false)}</span>
+                      <span className="text-slate-500 font-semibold"> xác nhận, sau đó HCNS duyệt cuối.</span>
+                    </>
+                  ) : (
+                    <span className="text-slate-500 font-semibold">
+                      Đơn sẽ nằm ở mục Duyệt yêu cầu để cấp quản lý xác nhận, sau đó HCNS duyệt cuối.
+                    </span>
                   )}
                 </div>
-                {recommendedApprover && selectedApprover === recommendedApprover && (
-                  <p className="text-[10px] text-indigo-400 font-semibold">💡 Tự động chọn theo phòng ban: {currentUser?.department}</p>
-                )}
               </div>
 
               {/* Action Buttons */}

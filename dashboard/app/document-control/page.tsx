@@ -807,7 +807,7 @@ export default function DocumentControlPage() {
       <div className="flex min-h-screen bg-[#F7F9FC]">
         <Sidebar />
         <div className="ml-60 flex-1 flex flex-col min-w-0">
-          <Header title="Văn Thư" subtitle="Quản lý và số hóa công văn đi/đến, tự động phân tích trích xuất dữ liệu bằng AI" />
+          <Header title="Văn Thư" subtitle="Quản lý công văn" />
           <main className="flex-1 p-8 flex items-center justify-center">
             <Loader2 className="animate-spin text-blue-600" size={32} />
           </main>
@@ -821,7 +821,7 @@ export default function DocumentControlPage() {
       <div className="flex min-h-screen bg-[#F7F9FC]">
         <Sidebar />
         <div className="ml-60 flex-1 flex flex-col min-w-0">
-          <Header title="Văn Thư" subtitle="Quản lý và số hóa công văn đi/đến, tự động phân tích trích xuất dữ liệu bằng AI" />
+          <Header title="Văn Thư" subtitle="Quản lý công văn" />
           <main className="flex-1 p-8 flex flex-col items-center justify-center max-w-4xl">
             <div className="glass bg-white rounded-2xl p-8 border border-slate-200/50 shadow-premium text-center space-y-4 max-w-md">
               <div className="w-16 h-16 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center mx-auto shadow-sm">
@@ -850,7 +850,7 @@ export default function DocumentControlPage() {
     <div className="flex min-h-screen bg-[#F7F9FC]">
       <Sidebar />
       <div className="ml-60 flex-1 flex flex-col min-w-0">
-        <Header title="Văn Thư" subtitle="Quản lý và số hóa công văn đi/đến, tự động phân tích trích xuất dữ liệu bằng AI" />
+        <Header title="Văn Thư" subtitle="Quản lý công văn" />
 
         <main className="flex-1 p-8 space-y-6 overflow-y-auto">
           {/* Sub Navigator */}

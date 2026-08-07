@@ -821,7 +821,7 @@ export default function MeetingTeamPage() {
     <div className="flex min-h-screen bg-[#F7F9FC]">
       <Sidebar />
       <div className="ml-60 flex-1 flex flex-col min-w-0">
-        <Header title="Biên bản họp (Meeting Team)" subtitle="Quản lý hồ sơ biên bản họp & Trợ lý AI gỡ băng ghi âm tự động" />
+        <Header title="Biên bản họp (Meeting Team)" />
 
         <main className="flex-1 p-6 space-y-6 overflow-y-auto">
           
@@ -834,9 +834,6 @@ export default function MeetingTeamPage() {
                 </div>
                 <h2 className="text-lg font-heading font-bold text-slate-900">Meeting Team</h2>
               </div>
-              <p className="text-xs text-slate-500">
-                Gỡ băng ghi âm cuộc họp, tự động bóc tách công việc & xuất file biên bản họp Word (.docx) chuẩn mẫu công ty.
-              </p>
 
               {/* Module selection buttons */}
               <div className="flex bg-slate-100 p-1 rounded-xl w-fit border border-slate-200/60 mt-1">

@@ -25,6 +25,21 @@ import { useCurrentUser } from "@/lib/useCurrentUser";
 import { isHrDept, isDirectorRole } from "@/lib/access";
 import { useSearchParams } from "next/navigation";
 
+/**
+ * Đơn có "chạm" vào tháng đang lọc hay không (month dạng "YYYY-MM").
+ * Tính theo KHOẢNG chứ không theo một mốc: đơn nghỉ 30/09 đến 02/10 phải hiện ở
+ * cả tháng 9 lẫn tháng 10, chọn tháng nào cũng thấy.
+ * month rỗng = xem tất cả các tháng.
+ */
+const taskOverlapsMonth = (t: any, month: string): boolean => {
+  if (!month) return true;
+  const start = t.start_date || t.due_date;
+  const end = t.due_date || t.start_date;
+  // Đơn không có ngày nào thì không thuộc tháng nào — lọc theo tháng bỏ qua nó.
+  if (!start || !end) return false;
+  return start.slice(0, 7) <= month && end.slice(0, 7) >= month;
+};
+
 function SettingsContent() {
   const searchParams = useSearchParams();
   const activeTab = searchParams.get("tab") || "system";
@@ -143,6 +158,8 @@ function SettingsContent() {
   const [activeApprovalTab, setActiveApprovalTab] = useState<"trip" | "leave" | "explanation" | "booking">("trip");
   // Nhóm "Danh sách đã duyệt" — bảng 3 tab dời từ cột phải trang Lịch công việc sang
   const [activeDoneTab, setActiveDoneTab] = useState<"nodate" | "leave" | "trip">("nodate");
+  // Lọc theo tháng. Mặc định tháng hiện tại; chuỗi rỗng = xem tất cả các tháng.
+  const [doneMonth, setDoneMonth] = useState(() => new Date().toLocaleDateString("en-CA").slice(0, 7));
 
   // Justifications States
   const [explanations, setExplanations] = useState<any[]>([]);
@@ -721,12 +738,18 @@ function SettingsContent() {
   }, [tasks]);
 
   const doneLeaveTasks = useMemo(() => {
-    return tasks.filter(t => t.title.toLowerCase().startsWith("nghỉ phép") || t.title.toLowerCase().includes("nghi phep"));
-  }, [tasks]);
+    return tasks.filter(t =>
+      (t.title.toLowerCase().startsWith("nghỉ phép") || t.title.toLowerCase().includes("nghi phep"))
+      && taskOverlapsMonth(t, doneMonth)
+    );
+  }, [tasks, doneMonth]);
 
   const doneTripTasks = useMemo(() => {
-    return tasks.filter(t => t.title.toLowerCase().startsWith("công tác") || t.title.toLowerCase().includes("cong tac"));
-  }, [tasks]);
+    return tasks.filter(t =>
+      (t.title.toLowerCase().startsWith("công tác") || t.title.toLowerCase().includes("cong tac"))
+      && taskOverlapsMonth(t, doneMonth)
+    );
+  }, [tasks, doneMonth]);
 
   // Hai helper đọc metadata trong notes — bê nguyên từ trang Lịch công việc
   const getCleanLocation = (notes: string) => {
@@ -879,7 +902,7 @@ function SettingsContent() {
       <div className="ml-60 flex-1 flex flex-col min-w-0">
         <Header 
           title={isApprovalsTab ? "Phê duyệt yêu cầu" : "Cài đặt hệ thống"} 
-          subtitle={isApprovalsTab ? "Xem và phê duyệt các yêu cầu đi công tác, nghỉ phép của nhân sự" : "Cấu hình hệ thống, khoá bảo mật và kết nối Google Sheets"} 
+          subtitle={isApprovalsTab ? "Xem và phê duyệt các yêu cầu đi công tác, nghỉ phép của nhân sự" : undefined} 
         />
 
         <main className="flex-1 p-8 space-y-6 overflow-y-auto w-full">
@@ -968,7 +991,6 @@ function SettingsContent() {
                   placeholder="sk-proj-..."
                   className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40"
                 />
-                <p className="text-[10px] text-slate-400 font-normal mt-1">Khoá bảo mật API dùng để thực hiện chấm điểm và trích xuất dữ liệu CV bằng AI.</p>
               </div>
 
               {/* Webhook Url */}
@@ -981,7 +1003,6 @@ function SettingsContent() {
                   placeholder="https://script.google.com/macros/s/.../exec"
                   className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40"
                 />
-                <p className="text-[10px] text-slate-400 font-normal mt-1">Đường dẫn Webhook được sinh ra sau khi Deploy Apps Script để ghi dữ liệu thời gian thực.</p>
               </div>
 
               {/* ChatGPT Model */}
@@ -1090,12 +1111,6 @@ function SettingsContent() {
                     Chưa cấu hình — các nút &quot;Duyệt &amp; gửi mail&quot; sẽ không gửi được email kết quả.
                   </p>
                 )}
-                <p className="text-[10px] text-slate-400 font-normal leading-relaxed">
-                  Dùng cho email kết quả duyệt Đăng ký xe / phòng họp và gửi bảng công bên C&amp;B.
-                  Lưu ý: nếu quản trị đã đặt email hệ thống trên máy chủ (biến SMTP_USER/SMTP_PASS)
-                  thì mọi email của module Đăng ký luôn gửi bằng email hệ thống đó — cấu hình tại đây
-                  chỉ là phương án dự phòng khi máy chủ chưa thiết lập.
-                </p>
               </div>
               <button
                 type="button"
@@ -1645,10 +1660,34 @@ function SettingsContent() {
               Bảng 3 tab dời nguyên từ cột phải trang Lịch công việc sang đây. */}
           {isApprovalsTab && isApprover && (
             <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium space-y-4 mt-6">
-              <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
                 <h2 className="font-heading font-bold text-slate-800 text-sm flex items-center gap-2">
                   <Calendar size={18} className="text-[#005BAC]" /> Nhóm danh sách đã duyệt
                 </h2>
+
+                {/* Lọc theo tháng — áp cho tab Nghỉ phép và Công tác */}
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl px-3 py-1.5">
+                    <Calendar size={12} className="text-slate-400" />
+                    <input
+                      type="month"
+                      value={doneMonth}
+                      onChange={(e) => setDoneMonth(e.target.value)}
+                      className="bg-transparent border-none outline-none font-bold text-slate-700 text-xs cursor-pointer"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setDoneMonth("")}
+                    className={`text-[10px] font-bold px-3 py-2 rounded-xl border transition-all active:scale-95 ${
+                      doneMonth === ""
+                        ? "bg-blue-50 border-blue-200 text-[#005BAC]"
+                        : "bg-white border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-700"
+                    }`}
+                  >
+                    Tất cả các tháng
+                  </button>
+                </div>
               </div>
 
               {/* Tabs */}
@@ -1692,6 +1731,10 @@ function SettingsContent() {
               <div className="space-y-3 max-h-[500px] overflow-y-auto scrollbar-thin">
                 {activeDoneTab === "nodate" && (
                   <div className="space-y-3">
+                    {/* Nói rõ vì sao đổi tháng mà danh sách này không đổi */}
+                    <p className="text-[10px] font-semibold text-slate-400 italic">
+                      Mục này không lọc theo tháng — đây là các việc chưa đặt ngày nên không thuộc tháng nào.
+                    </p>
                     <div className="bg-rose-50 border border-rose-100 p-3 rounded-xl flex gap-2">
                       <AlertCircle className="text-rose-500 shrink-0" size={16} />
                       <div className="text-[10px] leading-relaxed">

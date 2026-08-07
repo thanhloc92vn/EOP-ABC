@@ -1704,7 +1704,7 @@ export default function RecruitmentPage() {
       <div className="flex min-h-screen bg-[#F7F9FC]">
         <Sidebar />
         <div className="ml-60 flex-1 flex flex-col min-w-0">
-          <Header title="Quy trình Tuyển dụng" subtitle="Hệ thống quản lý quy trình ứng tuyển và chấm điểm CV bằng AI" />
+          <Header title="Quy trình Tuyển dụng" />
           <main className="flex-1 p-8 flex items-center justify-center">
             <Loader2 className="animate-spin text-blue-600" size={32} />
           </main>
@@ -1718,7 +1718,7 @@ export default function RecruitmentPage() {
       <div className="flex min-h-screen bg-[#F7F9FC]">
         <Sidebar />
         <div className="ml-60 flex-1 flex flex-col min-w-0">
-          <Header title="Quy trình Tuyển dụng" subtitle="Hệ thống quản lý quy trình ứng tuyển và chấm điểm CV bằng AI" />
+          <Header title="Quy trình Tuyển dụng" />
           <main className="flex-1 p-8 flex flex-col items-center justify-center max-w-4xl">
             <div className="glass bg-white rounded-2xl p-8 border border-slate-200/50 shadow-premium text-center space-y-4 max-w-md">
               <div className="w-16 h-16 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center mx-auto shadow-sm">
@@ -1747,7 +1747,7 @@ export default function RecruitmentPage() {
     <div className="flex min-h-screen bg-[#F7F9FC]">
       <Sidebar />
       <div className="ml-60 flex-1 flex flex-col min-w-0">
-        <Header title="Quy trình Tuyển dụng" subtitle="Hệ thống quản lý quy trình ứng tuyển và chấm điểm CV bằng AI" />
+        <Header title="Quy trình Tuyển dụng" />
 
         <main className="flex-1 p-8 space-y-6 overflow-y-auto">
           {/* Sub Navigation Tabs */}
@@ -1934,7 +1934,6 @@ export default function RecruitmentPage() {
                         <Layers className="text-[#005BAC]" size={16} />
                         Nhu cầu tuyển dụng thực tế
                       </h3>
-                      <p className="text-[10px] text-slate-500 font-bold mt-0.5">Số lượng nhân sự cần bổ sung theo từng khối bộ phận (nhập tay trực tiếp, lưu riêng theo từng tháng)</p>
                     </div>
 
                     {/* Bộ lọc theo tháng — nhu cầu tuyển dụng lưu riêng từng tháng */}

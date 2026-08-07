@@ -3838,7 +3838,7 @@ export default function CBPage() {
       <div className="ml-60 flex-1 flex flex-col min-w-0">
         <Header 
           title="Lương & Phúc lợi (C&B)" 
-          subtitle="Báo cáo phân tích lương, ngày công, hợp đồng, phúc lợi và sơ đồ nhân sự công ty" 
+          subtitle="Giải trình chấm công và phúc lợi" 
         />
 
         <main className="flex-1 p-8 space-y-6 overflow-y-auto text-slate-800">

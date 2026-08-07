@@ -223,10 +223,6 @@ export default function AvatarUploadCard({ email, name }: Props) {
         <h2 className="font-heading font-bold text-slate-800 text-sm flex items-center gap-2">
           <UserRound size={18} className="text-slate-500" /> Ảnh đại diện
         </h2>
-        <p className="text-[10px] text-slate-400 font-medium mt-1 leading-relaxed">
-          Ảnh hiển thị cạnh họ tên ở góc phải màn hình. Ảnh được tự động cắt về {AVATAR_SIZE}×{AVATAR_SIZE}px —
-          kéo và phóng to để chọn phần vừa ý.
-        </p>
       </div>
 
       <div className="flex flex-col sm:flex-row gap-5 items-center sm:items-start">
