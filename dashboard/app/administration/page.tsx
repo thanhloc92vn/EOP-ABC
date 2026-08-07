@@ -745,21 +745,9 @@ export default function AdministrationPage() {
   const [vppSourceViewer, setVppSourceViewer] = useState<{ url: string; name: string } | null>(null);
 
   // VPP Slip Preview & Download States
-  // Báo cáo tổng hợp VPP theo tháng (4 mục: nhập / định mức / xuất / đề xuất mua)
+  // Báo cáo tổng hợp VPP theo tháng (3 mục: nhập / xuất / đề xuất mua)
   const [showVppReportModal, setShowVppReportModal] = useState(false);
   const [vppReportMonth, setVppReportMonth] = useState(() => new Date().toISOString().slice(0, 7));
-  // Định mức (migration 025): phòng ban × vật tư × tháng, hành chính nhập tay
-  const [quotas, setQuotas] = useState<{
-    id: string;
-    department: string;
-    supply_id: string;
-    month: string;
-    qty: number;
-  }[]>([]);
-  const [quotaDept, setQuotaDept] = useState("");
-  // Bản nháp đang gõ, tách khỏi `quotas` đã lưu để biết dòng nào thật sự đổi
-  const [quotaDraft, setQuotaDraft] = useState<Record<string, string>>({});
-  const [savingQuota, setSavingQuota] = useState(false);
 
   const [showSlipPreviewModal, setShowSlipPreviewModal] = useState(false);
   const [slipPreviewTargetType, setSlipPreviewTargetType] = useState<"phongban" | "duan">("phongban");
@@ -1156,99 +1144,6 @@ export default function AdministrationPage() {
     };
   }, [suppliesWithDynamicAllocated, deptRequests, vppReportMonth]);
 
-  // ─── Báo cáo tổng hợp, mục "Định mức VPP theo tháng" ───
-  // Mỗi vật tư một dòng: định mức đã lưu của phòng đang chọn, đối chiếu với
-  // lượng THỰC CẤP cho chính phòng đó trong tháng. Khớp phiếu với danh mục bằng
-  // findMatchingSupply (so gần đúng, bỏ dấu) vì tên trên phiếu do người dùng gõ.
-  const quotaRowsOfDept = useMemo(() => {
-    const savedBySupply = new Map<string, number>();
-    quotas.forEach(q => {
-      if (q.month !== vppReportMonth) return;
-      if (q.department.trim().toLowerCase() !== quotaDept.trim().toLowerCase()) return;
-      savedBySupply.set(q.supply_id, q.qty);
-    });
-
-    const usedBySupply = new Map<string, number>();
-    deptRequests.forEach(r => {
-      if (r.status !== "Đã cấp phát") return;
-      if (monthOfRequest(r) !== vppReportMonth) return;
-      if ((r.targetName || "").trim().toLowerCase() !== quotaDept.trim().toLowerCase()) return;
-      const supply = findMatchingSupply(r.item);
-      if (!supply) return;
-      usedBySupply.set(supply.id, (usedBySupply.get(supply.id) || 0) + r.qty);
-    });
-
-    return supplies.map(s => {
-      const quota = savedBySupply.get(s.id) ?? 0;
-      const used = usedBySupply.get(s.id) || 0;
-      return {
-        supply: s,
-        quota,
-        used,
-        // Chỉ coi là vượt khi CÓ đặt định mức; chưa đặt (0) thì không kết luận gì
-        over: quota > 0 && used > quota,
-      };
-    });
-  }, [quotas, quotaDept, vppReportMonth, deptRequests, supplies]);
-
-  // Mở bản nháp theo phòng/tháng đang chọn — gõ dở ở phòng này rồi đổi sang
-  // phòng khác thì phải nạp lại số của phòng mới, không mang số cũ theo.
-  useEffect(() => {
-    const draft: Record<string, string> = {};
-    quotaRowsOfDept.forEach(r => {
-      draft[r.supply.id] = String(r.quota);
-    });
-    setQuotaDraft(draft);
-    // Chỉ nạp lại khi đổi phòng/tháng hoặc khi dữ liệu đã lưu thay đổi
-  }, [quotaDept, vppReportMonth, quotas, supplies]);
-
-  /** Lưu định mức: chỉ ghi những dòng thật sự đổi so với số đã lưu. */
-  const handleSaveQuotas = async () => {
-    if (!quotaDept) {
-      alert("Vui lòng chọn phòng ban / ban điều hành trước khi lưu định mức.");
-      return;
-    }
-    setSavingQuota(true);
-    try {
-      for (const row of quotaRowsOfDept) {
-        const nextQty = Math.max(0, Number(quotaDraft[row.supply.id] ?? 0) || 0);
-        if (nextQty === row.quota) continue;
-
-        const existing = quotas.find(
-          q => q.month === vppReportMonth
-            && q.supply_id === row.supply.id
-            && q.department.trim().toLowerCase() === quotaDept.trim().toLowerCase()
-        );
-
-        // Insert/update thủ công thay vì upsert: chỉ mục duy nhất của bảng đặt
-        // trên BIỂU THỨC lower(btrim(department)), mà tham số on_conflict của
-        // PostgREST chỉ nhận tên cột trần nên không trỏ tới chỉ mục đó được.
-        if (existing) {
-          const { error } = await supabase
-            .from("vpp_quotas")
-            .update({ qty: nextQty })
-            .eq("id", existing.id);
-          if (error) throw error;
-        } else {
-          const { error } = await supabase.from("vpp_quotas").insert([{
-            department: quotaDept,
-            supply_id: row.supply.id,
-            month: vppReportMonth,
-            qty: nextQty,
-          }]);
-          if (error) throw error;
-        }
-      }
-      await fetchQuotas();
-      alert(`Đã lưu định mức ${formatMonthLabel(vppReportMonth).toLowerCase()} cho ${quotaDept}.`);
-    } catch (err: any) {
-      console.error("Error saving VPP quotas:", err);
-      alert("Không lưu được định mức: " + (err.message || err) + "\n" + NO_VPP_PERMISSION_MSG);
-    } finally {
-      setSavingQuota(false);
-    }
-  };
-
   // ─── Báo cáo tổng hợp, mục "VPP nhập trong tháng" ───
   // Cộng các dòng sổ có `entry_date` rơi vào tháng đang chọn. Dòng âm là điều
   // chỉnh giảm nên cứ cộng thẳng, kết quả ra đúng lượng nhập ròng của tháng.
@@ -1525,19 +1420,6 @@ export default function AdministrationPage() {
     }
   };
 
-  const fetchQuotas = async () => {
-    try {
-      const { data, error } = await supabase
-        .from("vpp_quotas")
-        .select("id, department, supply_id, month, qty");
-
-      if (error) throw error;
-      setQuotas(data || []);
-    } catch (err) {
-      console.error("Error fetching VPP quotas from Supabase:", err);
-    }
-  };
-
   const NO_VPP_PERMISSION_MSG =
     "Bạn không có quyền sửa danh mục kho VPP. Cần là Admin, có cờ \"Phụ trách VPP\", hoặc thuộc phòng HCNS.";
 
@@ -1742,7 +1624,6 @@ export default function AdministrationPage() {
       fetchSuppliers();
       fetchSuppliesCatalog();
       fetchStockEntries();
-      fetchQuotas();
       fetchReportRows();
       fetchChecklist();
 
@@ -4798,11 +4679,7 @@ export default function AdministrationPage() {
                   {isHcnsViewer && (
                     <button
                       type="button"
-                      onClick={() => {
-                        // Mồi sẵn phòng đầu danh sách để mục Định mức có gì mà hiện
-                        if (!quotaDept && allocationTargets.length > 0) setQuotaDept(allocationTargets[0].name);
-                        setShowVppReportModal(true);
-                      }}
+                      onClick={() => setShowVppReportModal(true)}
                       className="flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-bold px-4 py-2.5 rounded-xl shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200"
                     >
                       <BarChart3 size={14} className="text-[#005BAC]" /> Báo cáo tổng hợp
@@ -6419,104 +6296,6 @@ export default function AdministrationPage() {
                                         <td className="py-2.5 px-3 text-center text-slate-500">{row.unit || "—"}</td>
                                         <td className="py-2.5 px-3 text-center font-black text-blue-700">{row.qty}</td>
                                         <td className="py-2.5 px-3 text-center text-slate-500">{row.times}</td>
-                                      </tr>
-                                    ))
-                                  )}
-                                </tbody>
-                              </table>
-                            </div>
-                          </section>
-
-                          {/* ── Mục: Định mức VPP theo tháng ── */}
-                          <section className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm space-y-3">
-                            <div className="flex flex-wrap items-center justify-between gap-3">
-                              <div>
-                                <h4 className="font-heading font-bold text-slate-800 text-xs">Định mức VPP theo tháng</h4>
-                                <p className="text-[10px] text-slate-400 font-semibold mt-0.5">
-                                  Hành chính nhập tay để theo dõi. Hệ thống chỉ đối chiếu và báo khi vượt, không tự chặn phiếu.
-                                </p>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs">
-                                  <Building2 size={12} className="text-slate-400" />
-                                  <select
-                                    value={quotaDept}
-                                    onChange={(e) => setQuotaDept(e.target.value)}
-                                    className="bg-transparent border-none outline-none font-semibold text-slate-700 cursor-pointer text-xs max-w-[200px]"
-                                  >
-                                    {allocationTargets.length === 0 ? (
-                                      <option value="">-- Chưa có phòng ban --</option>
-                                    ) : (
-                                      allocationTargets.map(t => (
-                                        <option key={t.id} value={t.name}>{t.name}</option>
-                                      ))
-                                    )}
-                                  </select>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={handleSaveQuotas}
-                                  disabled={savingQuota || !quotaDept}
-                                  className="flex items-center gap-1.5 bg-[#005BAC] hover:bg-blue-700 disabled:bg-slate-300 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-sm transition-all active:scale-95"
-                                >
-                                  {savingQuota ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
-                                  {savingQuota ? "Đang lưu..." : "Lưu định mức"}
-                                </button>
-                              </div>
-                            </div>
-
-                            <div className="overflow-x-auto rounded-xl border border-slate-100">
-                              <table className="w-full text-xs text-left">
-                                <thead>
-                                  <tr className="bg-slate-50/75 border-b border-slate-100 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
-                                    <th className="py-2.5 px-3 w-10 text-center">TT</th>
-                                    <th className="py-2.5 px-3">Vật tư</th>
-                                    <th className="py-2.5 px-3 w-20 text-center">Đơn vị</th>
-                                    <th className="py-2.5 px-3 w-24 text-center">Định mức</th>
-                                    <th className="py-2.5 px-3 w-24 text-center">Đã cấp</th>
-                                    <th className="py-2.5 px-3 w-28 text-center">Đối chiếu</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100 font-semibold text-slate-600">
-                                  {quotaRowsOfDept.length === 0 ? (
-                                    <tr>
-                                      <td colSpan={6} className="py-8 text-center text-slate-400 font-medium italic">
-                                        Kho chưa có vật tư nào để đặt định mức.
-                                      </td>
-                                    </tr>
-                                  ) : (
-                                    quotaRowsOfDept.map((row, idx) => (
-                                      <tr key={row.supply.id} className={`transition-colors ${row.over ? "bg-rose-50/40" : "hover:bg-slate-50/50"}`}>
-                                        <td className="py-2 px-3 text-center font-mono text-slate-400">{idx + 1}</td>
-                                        <td className="py-2 px-3 font-bold text-slate-800">{row.supply.name}</td>
-                                        <td className="py-2 px-3 text-center text-slate-500">{row.supply.unit || "—"}</td>
-                                        <td className="py-2 px-3 text-center">
-                                          <input
-                                            type="number"
-                                            min={0}
-                                            value={quotaDraft[row.supply.id] ?? ""}
-                                            onChange={(e) =>
-                                              setQuotaDraft(prev => ({ ...prev, [row.supply.id]: e.target.value }))
-                                            }
-                                            className="w-16 px-2 py-1 text-center border border-slate-200 rounded-lg text-xs font-bold text-slate-800 focus:border-blue-500 focus:outline-none bg-white"
-                                          />
-                                        </td>
-                                        <td className={`py-2 px-3 text-center font-black ${row.over ? "text-rose-600" : "text-slate-700"}`}>
-                                          {row.used}
-                                        </td>
-                                        <td className="py-2 px-3 text-center">
-                                          {row.quota === 0 ? (
-                                            <span className="text-[10px] text-slate-400 italic">Chưa đặt</span>
-                                          ) : row.over ? (
-                                            <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-rose-100 text-rose-700">
-                                              Vượt {row.used - row.quota}
-                                            </span>
-                                          ) : (
-                                            <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-100 text-emerald-700">
-                                              Còn {row.quota - row.used}
-                                            </span>
-                                          )}
-                                        </td>
                                       </tr>
                                     ))
                                   )}
