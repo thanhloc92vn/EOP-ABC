@@ -472,13 +472,54 @@ function CalendarContent() {
     );
   };
 
+  // Ai được xem lịch của TOÀN CÔNG TY. Giữ đúng bộ điều kiện của Kanban công việc
+  // (app/tasks/page.tsx) để hai trang không nói hai luật khác nhau về cùng dữ liệu.
+  const seesAllDepartments = useMemo(() => !!currentUser && (
+    currentUser.isAdmin ||
+    (currentUser.role || "").toLowerCase() === "admin" ||
+    currentUser.isDirector ||
+    !!currentUser.perms?.canViewAllTasks
+  ), [currentUser]);
+
+  const myDeptKey = normalizeName(currentUser?.department || "");
+
+  // Nhân sự được liệt kê ở ô lọc "Thành viên" — phải khớp đúng phạm vi xem ở
+  // filteredTasks, nếu không quản lý bấm vào một cái tên phòng khác rồi thấy lịch
+  // trống trơn mà không hiểu vì sao.
+  const visibleMemberNames = useMemo(() => {
+    const names = new Set<string>();
+    if (!currentUser) return names;
+    if (seesAllDepartments) {
+      employees.forEach(e => names.add(normalizeName(e.name)));
+      return names;
+    }
+    names.add(normalizeName(currentUser.name));
+    if (isManager && myDeptKey) {
+      employeeDirectory.forEach(e => {
+        if (normalizeName(e.department || "") === myDeptKey) names.add(normalizeName(e.name));
+      });
+    }
+    return names;
+  }, [currentUser, seesAllDepartments, isManager, myDeptKey, employees, employeeDirectory]);
+
   // Filter Tasks
   const filteredTasks = useMemo(() => {
     return tasks.filter(t => {
-      // Role-based permission: non-managers/non-admins can only see their own tasks
-      if (currentUser && !isManager) {
-        if ((t.assignee || "").toLowerCase() !== currentUser.name.toLowerCase()) {
-          return false;
+      // ─── Phạm vi xem (siết 07/08/2026) ───
+      // Trước đây HỄ LÀ QUẢN LÝ là thấy lịch toàn công ty. Nay:
+      //   Admin / Giám đốc / Ban lãnh đạo / cờ can_view_all_tasks -> toàn công ty
+      //   Quản lý đơn vị (TP, PP, Tổ trưởng, Chỉ huy trưởng/phó) -> CÙNG ĐƠN VỊ
+      //   Nhân viên                                              -> chỉ của mình
+      if (currentUser && !seesAllDepartments) {
+        const isMine = normalizeName(t.assignee || "") === normalizeName(currentUser.name);
+        if (!isMine) {
+          if (!isManager) return false;
+          // Quản lý: chỉ nhân sự cùng đơn vị. Thiếu dữ liệu phòng ban ở một trong
+          // hai bên thì không suy đoán — thà không thấy còn hơn thấy nhầm phòng khác.
+          const theirDept = normalizeName(
+            employeeDirectory.find(e => normalizeName(e.name) === normalizeName(t.assignee || ""))?.department || ""
+          );
+          if (!myDeptKey || !theirDept || theirDept !== myDeptKey) return false;
         }
       }
 
@@ -499,7 +540,7 @@ function CalendarContent() {
 
       return true;
     });
-  }, [tasks, searchQuery, selectedPriorities, selectedMember, currentUser, isManager]);
+  }, [tasks, searchQuery, selectedPriorities, selectedMember, currentUser, isManager, seesAllDepartments, myDeptKey, employeeDirectory]);
 
   // Tasks categorized
   const tasksWithDate = useMemo(() => {
@@ -1346,7 +1387,7 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                 Tất cả
               </button>
               {employees
-                .filter(emp => !currentUser || isManager || emp.name.toLowerCase() === currentUser.name.toLowerCase())
+                .filter(emp => visibleMemberNames.has(normalizeName(emp.name)))
                 .slice(0, 8)
                 .map(emp => {
                 const isActive = selectedMember === emp.name;
