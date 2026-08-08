@@ -763,11 +763,6 @@ function BookingContent() {
       <div className="ml-60 flex-1 flex flex-col min-w-0">
         <Header
           title={isVehicle ? "Đăng ký xe" : "Đăng ký phòng họp"}
-          subtitle={
-            isVehicle
-              ? "Đăng ký sử dụng xe công tác (Fortuner / Xpander) — duyệt qua Trưởng phòng và HCNS"
-              : "Đăng ký phòng họp lớn / nhỏ — duyệt qua Trưởng phòng và HCNS"
-          }
         />
 
         <main className="flex-1 p-8 space-y-6 overflow-y-auto">
@@ -1030,7 +1025,6 @@ function BookingContent() {
                       ))}
                     </select>
                   </div>
-                  <p className="text-[10px] text-slate-400 font-normal">Giờ hiển thị theo khung 24h (vd: 14:00 = 2 giờ chiều).</p>
                 </div>
 
                 {/* Thời gian kết thúc: ngày + giờ 24h */}
@@ -1089,9 +1083,6 @@ function BookingContent() {
                     placeholder="Tự điền tay hoặc tự tính khi chọn nhân viên"
                     className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40"
                   />
-                  <p className="text-[10px] text-slate-400 font-normal">
-                    Hệ thống tự cập nhật theo số nhân viên đã chọn bên dưới; vẫn có thể sửa tay nếu cần.
-                  </p>
                 </div>
               </div>
 
@@ -1233,11 +1224,7 @@ function BookingContent() {
                 </div>
               )}
 
-              <div className="pt-4 border-t border-slate-100 flex items-center justify-between gap-4 flex-wrap">
-                <p className="text-[10px] text-slate-400 font-normal leading-relaxed max-w-md">
-                  Sau khi gửi, yêu cầu sẽ được chuyển đến <strong>Trưởng phòng</strong> của bạn xác nhận, sau đó
-                  <strong> Phòng HCNS</strong> (điều phối xe & phòng họp) duyệt cuối. Kết quả sẽ được gửi về email của bạn.
-                </p>
+              <div className="pt-4 border-t border-slate-100 flex items-center justify-end gap-4 flex-wrap">
                 <button
                   type="submit"
                   disabled={submitting}

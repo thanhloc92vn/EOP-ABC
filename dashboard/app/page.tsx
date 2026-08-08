@@ -71,7 +71,6 @@ const parseDate = (s: string): Date | null => {
   return isNaN(d.getTime()) ? null : d;
 };
 
-// ─── Recruitment block (office / project) reused on dashboard ──────────────────
 function RecruitBlock({
   title,
   subtitle,
@@ -80,7 +79,7 @@ function RecruitBlock({
   entries,
 }: {
   title: string;
-  subtitle: string;
+  subtitle?: string;
   toRecruit: number;
   totalHired: number;
   entries: [string, { total: number; hired: number }][];
@@ -91,7 +90,7 @@ function RecruitBlock({
     <div className="glass bg-white/80 rounded-2xl p-6 shadow border border-slate-100 space-y-4">
       <div>
         <h3 className="font-heading font-black text-slate-800 text-sm">{title}</h3>
-        <p className="text-[10px] text-slate-400 mt-0.5">{subtitle}</p>
+        {subtitle && <p className="text-[10px] text-slate-400 mt-0.5">{subtitle}</p>}
       </div>
       <div className="flex flex-col sm:flex-row items-center gap-6">
         <div className="flex items-center gap-4 bg-slate-50/80 p-3.5 rounded-2xl border border-slate-150 shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] shrink-0 select-none">
@@ -517,14 +516,12 @@ export default function DashboardPage() {
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <RecruitBlock
                     title="Khối Văn Phòng"
-                    subtitle={`Đã tuyển (NHẬN việc + onboard) từ ${fmtD(recruitFrom)} đến ${fmtD(recruitTo)} và cần tuyển thêm`}
                     toRecruit={recruit.officeToRecruit}
                     totalHired={recruit.officeHired}
                     entries={recruit.officeEntries}
                   />
                   <RecruitBlock
                     title="Khối Dự Án"
-                    subtitle={`Đã tuyển (NHẬN việc + onboard) tại các dự án từ ${fmtD(recruitFrom)} đến ${fmtD(recruitTo)} và cần tuyển thêm`}
                     toRecruit={recruit.projectToRecruit}
                     totalHired={recruit.projectHired}
                     entries={recruit.projectEntries}

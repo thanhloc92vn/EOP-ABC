@@ -2126,7 +2126,6 @@ export default function RecruitmentPage() {
                     <div className="flex justify-between items-start">
                       <div>
                         <h3 className="font-heading font-black text-slate-800 text-sm">Khối Văn Phòng</h3>
-                        <p className="text-[10px] text-slate-400 mt-0.5">Đã tuyển (NHẬN việc + onboard) trong tháng {parseInt(needsMonth.slice(5), 10)}/{needsMonth.slice(0, 4)} và cần tuyển thêm</p>
                       </div>
                     </div>
 
@@ -2208,7 +2207,6 @@ export default function RecruitmentPage() {
                     <div className="flex justify-between items-start">
                       <div>
                         <h3 className="font-heading font-black text-slate-800 text-sm">Khối Dự Án</h3>
-                        <p className="text-[10px] text-slate-400 mt-0.5">Đã tuyển (NHẬN việc + onboard) tại các dự án trong tháng {parseInt(needsMonth.slice(5), 10)}/{needsMonth.slice(0, 4)} và cần tuyển thêm</p>
                       </div>
                     </div>
 

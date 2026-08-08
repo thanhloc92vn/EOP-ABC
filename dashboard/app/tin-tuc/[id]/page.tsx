@@ -503,7 +503,7 @@ function Shell({ children, aside }: { children: React.ReactNode; aside?: React.R
     <div className="flex min-h-screen bg-[#F7F9FC] relative">
       <Sidebar />
       <div className="ml-60 flex-1 flex flex-col min-w-0">
-        <Header title="Tin tức" subtitle="Thông báo, giới thiệu và sự kiện nội bộ của công ty" />
+        <Header title="Tin tức" />
         <main className="flex-1 p-8 overflow-y-auto">
           <div className="flex flex-col xl:flex-row gap-6 items-start">
             <div className="flex-1 min-w-0 w-full max-w-4xl space-y-5">{children}</div>
