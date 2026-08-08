@@ -677,6 +677,22 @@ function SettingsContent() {
     );
   }, [currentUser, approvalPerms]);
 
+  // Phòng ban / Ban điều hành của một người, tra theo TÊN trong danh bạ nhân sự.
+  // Bảng `tasks` chỉ lưu tên người làm đơn nên phải tra ngược thế này.
+  //
+  // PHẢI KHAI Ở ĐÂY, TRƯỚC pendingTrips/pendingLeaves. Hai useMemo đó gọi hàm này
+  // ngay trong lúc render; đặt khai báo `const` xuống dưới chúng thì lúc chạy sẽ
+  // ném "Cannot access before initialization" và sập nguyên trang. TypeScript
+  // KHÔNG bắt được lỗi này.
+  const departmentOfPerson = useCallback(
+    (personName?: string | null) => {
+      const key = normalizeName(personName);
+      if (!key) return "";
+      return employeeDirectory.find(e => normalizeName(e.name) === key)?.department || "";
+    },
+    [employeeDirectory]
+  );
+
   // Business trip approvals list (Trưởng phòng & Admin only)
   // Đơn công tác chờ duyệt — 2 cấp: Trưởng phòng/Tổ trưởng xác nhận (manager) -> HCNS duyệt cuối (hcns).
   // Mỗi task được gắn thêm `stage` để UI hiển thị đúng badge + nút thao tác tương ứng.
@@ -735,17 +751,6 @@ function SettingsContent() {
         return isLeaveTripCap2Approver({ currentUserIsAdmin: isUserAdmin, approvalPerms, isTrip: false });
       });
   }, [tasks, currentUser, isApprover, approvalPerms]);
-
-  // Phòng ban / Ban điều hành của một người, tra theo TÊN trong danh bạ nhân sự.
-  // Bảng `tasks` chỉ lưu tên người làm đơn nên phải tra ngược thế này.
-  const departmentOfPerson = useCallback(
-    (personName?: string | null) => {
-      const key = normalizeName(personName || "");
-      if (!key) return "";
-      return employeeDirectory.find(e => normalizeName(e.name) === key)?.department || "";
-    },
-    [employeeDirectory]
-  );
 
   // ─── Nhóm "Danh sách đã duyệt" ───
   // Ba danh sách dời nguyên từ cột phải trang Lịch công việc. Bên đó lọc trên

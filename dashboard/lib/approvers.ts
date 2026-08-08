@@ -225,7 +225,14 @@ export function getLeaveExceptionApproversForAssignee(assigneeName?: string | nu
 
 // Bỏ dấu + thường hoá để so khớp tên kiểu "chứa" (giữ đúng hành vi cũ vốn
 // check cả "quỳnh"/"quynh"). Export cho các trang cần so tên cùng kiểu (cb).
-export function normalizeName(s: string): string {
+// CHỊU ĐƯỢC null/undefined: hàm này được gọi ở hàng chục chỗ trên dữ liệu lấy
+// thẳng từ DB (`tasks.assignee`, `employees.name`, `employees.department`…) — mọi
+// cột đó đều cho phép rỗng. Trước đây khai `s: string` rồi gọi thẳng
+// `s.toLowerCase()`, nên chỉ cần MỘT dòng dữ liệu thiếu tên là ném TypeError giữa
+// lúc render và sập nguyên trang bằng "Application error: a client-side exception".
+// TypeScript không bắt được vì kiểu khai trong code không phản ánh được cột DB nullable.
+export function normalizeName(s?: string | null): string {
+  if (!s) return "";
   return s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[\u0111\u0110]/g, "d").trim();
 }
 

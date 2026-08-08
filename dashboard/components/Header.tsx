@@ -444,7 +444,7 @@ export default function Header({ title, subtitle }: Props) {
             currentUserIsDirector: isDirectorRole(userObj.role),
             currentUserDepartment: userObj.department,
             assigneeName: t.assignee,
-            assigneeDepartment: deptOfName.get(normalizeName(t.assignee)) || "",
+            assigneeDepartment: deptOfName.get(normalizeName(t.assignee || "")) || "",
             taskNotes: t.notes,
             taskTitleLower: titleLower,
           });

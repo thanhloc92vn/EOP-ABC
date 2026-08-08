@@ -758,7 +758,7 @@ function CalendarContent() {
         currentUserDepartment: currentUser.department,
         assigneeName: t.assignee,
         assigneeDepartment: employeeDirectory.find(
-          e => normalizeName(e.name) === normalizeName(t.assignee)
+          e => normalizeName(e.name) === normalizeName(t.assignee || "")
         )?.department || "",
         taskNotes: t.notes,
         taskTitleLower: titleLower,
