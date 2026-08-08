@@ -43,6 +43,12 @@ yarn-error.log*
 # Cần thử nghiệm gì thì để trong scratch/ — nó không vào git nữa.
 /scratch/
 
+# Tài liệu nội bộ — CỐ Ý không đưa lên repo.
+# Hai file trong này mô tả kiến trúc phân quyền và chính sách bảo mật của công ty
+# (sơ đồ luồng duyệt, danh sách cờ quyền, cách siết RLS). Giữ ở máy để tra cứu,
+# không phát tán theo mã nguồn. Đã từng bị `git add .` gom nhầm lên một lần.
+/docs/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
