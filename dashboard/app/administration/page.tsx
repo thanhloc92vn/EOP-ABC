@@ -1008,12 +1008,30 @@ export default function AdministrationPage() {
     if (subtab === "inventory" || subtab === "phongban" || subtab === "duan") setVppSubTab(subtab);
   }, []);
 
-  // Người ngoài HCNS không có mục tồn kho — nếu state còn đọng ở đó thì đẩy sang
-  // mục phòng ban, không thì tab VPP hiện ra trống trơn.
+  // Nhóm cấp phát của chính người đang đăng nhập: tra tên phòng trong hồ sơ nhân
+  // sự ngược vào danh mục cấp phát để biết họ là PHÒNG BAN hay BAN ĐIỀU HÀNH dự
+  // án. Không tra ra (hồ sơ chưa xếp phòng, hoặc tên phòng chưa có trong danh
+  // mục) thì mặc định phòng ban — đó là trường hợp phổ biến hơn hẳn.
+  const myVppGroupType: "phongban" | "duan" = useMemo(() => {
+    const n = myVppTargetName.toLowerCase();
+    if (!n) return "phongban";
+    const found = allocationTargets.find(t => (t.name || "").trim().toLowerCase() === n);
+    return found?.type === "duan" ? "duan" : "phongban";
+  }, [allocationTargets, myVppTargetName]);
+
+  // Chỉ hiện ĐÚNG nhóm của người dùng. Nếu state còn đọng ở nhóm kia (hoặc ở mục
+  // tồn kho mà họ không có quyền) thì đẩy về nhóm của họ, không thì tab VPP hiện
+  // ra trống trơn.
   useEffect(() => {
-    if (!permsLoaded || isHcnsViewer) return;
-    if (vppSubTab === "inventory") setVppSubTab("phongban");
-  }, [permsLoaded, isHcnsViewer, vppSubTab]);
+    if (!permsLoaded) return;
+    if (vppSubTab === "inventory" && !isHcnsViewer) {
+      setVppSubTab(myVppGroupType);
+      return;
+    }
+    if (vppSubTab !== "inventory" && vppSubTab !== myVppGroupType) {
+      setVppSubTab(myVppGroupType);
+    }
+  }, [permsLoaded, isHcnsViewer, vppSubTab, myVppGroupType]);
 
   // Gợi ý cho ô tìm vật tư trong hộp thoại tạo phiếu: lọc theo tên hoặc danh
   // mục, bỏ món đã chọn, cắt 30 dòng — cùng khuôn với ô chọn người ở các trang
@@ -1244,9 +1262,6 @@ export default function AdministrationPage() {
             <h4 className="font-heading font-bold text-slate-800 text-xs">
               Danh sách đã cấp phát {type === "phongban" ? "cho Phòng ban" : "cho Ban điều hành dự án"}
             </h4>
-            <p className="text-[10px] text-slate-400 font-semibold mt-0.5">
-              Mỗi phiếu gộp thành 1 dòng — bấm icon mắt để xem lại phiếu yêu cầu gốc
-            </p>
           </div>
 
           <div className="flex items-center gap-2">
@@ -4632,34 +4647,40 @@ export default function AdministrationPage() {
                       1. Mục tồn kho của Hành chính
                     </button>
                     )}
-                    <button
-                      onClick={() => {
-                        setVppSubTab("phongban");
-                        setSearchTerm("");
-                      }}
-                      className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all duration-200 active:scale-[0.98] ${
-                        vppSubTab === "phongban"
-                          ? "bg-white text-blue-600 shadow-sm border border-slate-200/20"
-                          : "text-slate-500 hover:text-slate-800 hover:bg-white/40"
-                      }`}
-                    >
-                      <Building2 size={13} />
-                      2. VPP cấp cho từng phòng ban VP
-                    </button>
-                    <button
-                      onClick={() => {
-                        setVppSubTab("duan");
-                        setSearchTerm("");
-                      }}
-                      className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all duration-200 active:scale-[0.98] ${
-                        vppSubTab === "duan"
-                          ? "bg-white text-blue-600 shadow-sm border border-slate-200/20"
-                          : "text-slate-500 hover:text-slate-800 hover:bg-white/40"
-                      }`}
-                    >
-                      <Briefcase size={13} />
-                      3. VPP cấp cho Ban điều hành dự án
-                    </button>
+                    {/* Chỉ hiện nhóm ứng với tài khoản đang đăng nhập: thuộc phòng
+                        ban thì ra nhóm phòng ban, thuộc Ban điều hành dự án thì ra
+                        nhóm dự án. Xem myVppGroupType. */}
+                    {myVppGroupType === "phongban" ? (
+                      <button
+                        onClick={() => {
+                          setVppSubTab("phongban");
+                          setSearchTerm("");
+                        }}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all duration-200 active:scale-[0.98] ${
+                          vppSubTab === "phongban"
+                            ? "bg-white text-blue-600 shadow-sm border border-slate-200/20"
+                            : "text-slate-500 hover:text-slate-800 hover:bg-white/40"
+                        }`}
+                      >
+                        <Building2 size={13} />
+                        2. VPP cấp cho từng phòng ban VP
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          setVppSubTab("duan");
+                          setSearchTerm("");
+                        }}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all duration-200 active:scale-[0.98] ${
+                          vppSubTab === "duan"
+                            ? "bg-white text-blue-600 shadow-sm border border-slate-200/20"
+                            : "text-slate-500 hover:text-slate-800 hover:bg-white/40"
+                        }`}
+                      >
+                        <Briefcase size={13} />
+                        2. VPP cấp cho Ban điều hành dự án
+                      </button>
+                    )}
                   </div>
 
                   {/* Báo cáo tổng hợp — số liệu TOÀN CÔNG TY nên chỉ HCNS xem */}
@@ -5116,7 +5137,6 @@ export default function AdministrationPage() {
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-3">
                         <div>
                           <h4 className="font-heading font-bold text-slate-800 text-xs">VPP cấp phát cho từng Phòng Ban khối Văn Phòng</h4>
-                          <p className="text-[10px] text-slate-400 font-semibold mt-0.5">Tự động cập nhật số lượng và khấu trừ kho của hành chính khi duyệt cấp</p>
                         </div>
                         
                         <div className="flex items-center gap-2">
@@ -5397,7 +5417,6 @@ export default function AdministrationPage() {
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-3">
                         <div>
                           <h4 className="font-heading font-bold text-slate-800 text-xs">VPP cấp phát cho Ban Điều Hành các Dự án</h4>
-                          <p className="text-[10px] text-slate-400 font-semibold mt-0.5">Tự động cập nhật số lượng và khấu trừ kho của hành chính khi duyệt cấp</p>
                         </div>
                         
                         <div className="flex items-center gap-2">
