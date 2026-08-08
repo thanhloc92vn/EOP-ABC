@@ -3295,7 +3295,11 @@ export default function AdministrationPage() {
       // Get receiver from allocationTargets or custom requesterName
       const targetInfo = allocationTargets.find(t => t.type === type && t.name === targetName);
       const customRequester = filteredRequests.find(r => r.requesterName)?.requesterName;
-      const receiverName = customRequester || (targetInfo ? targetInfo.receiver : "");
+      // Phiếu cũ chưa lưu tên người đề xuất: người của chính bộ phận đó tải phiếu
+      // thì điền tên tài khoản, chỉ HCNS tải hộ mới rơi về chức danh mặc định.
+      const ownAccountName =
+        !isHcnsViewer && myVppTargetName === targetName ? currentUser?.name || "" : "";
+      const receiverName = customRequester || ownAccountName || (targetInfo ? targetInfo.receiver : "");
 
       // Format items to send to the server
       const itemsToSend = filteredRequests.map(req => {
@@ -3468,6 +3472,14 @@ export default function AdministrationPage() {
           notesObj.items = [];
         }
 
+        // Người đề xuất trên phiếu in là tên tài khoản đang đăng nhập, không phải
+        // chức danh mặc định của bộ phận. Phiếu tháng tạo trước đây còn trống tên
+        // thì bổ sung luôn ở lần thêm vật tư này.
+        const requesterNow = newPYCRequesterName.trim() || currentUser?.name || "";
+        if (requesterNow && !(notesObj as any).requesterName) {
+          (notesObj as any).requesterName = requesterNow;
+        }
+
         let nextId = notesObj.items.reduce((max: number, item: any) => Math.max(max, item.id || 0), 0) + 1;
         for (const line of lines) {
           notesObj.items.push({
@@ -3512,7 +3524,7 @@ export default function AdministrationPage() {
           dept: deptName,
           target: newPYCTarget,
           targetName: targetName,
-          requesterName: newPYCRequesterName.trim(),
+          requesterName: newPYCRequesterName.trim() || currentUser?.name || "",
           frequency: "Cấp phát",
           date: dateStr,
           items: items
@@ -5196,6 +5208,8 @@ export default function AdministrationPage() {
                               // Người ngoài HCNS chỉ đặt được cho phòng mình
                               const pbs = allocationTargets.filter(t => t.type === "phongban");
                               setNewPYCTargetName(isHcnsViewer ? (pbs.length > 0 ? pbs[0].name : "") : myVppTargetName);
+                              // Người đề xuất mặc định là tên tài khoản đang đăng nhập
+                              setNewPYCRequesterName(currentUser?.name || "");
                               // Mở phiếu trắng — người dùng tự chọn món, không mồi sẵn món đầu kho
                               setNewPYCLines([]);
                               setPycItemSearch("");
@@ -5474,6 +5488,8 @@ export default function AdministrationPage() {
                               // Người ngoài HCNS chỉ đặt được cho bộ phận mình
                               const das = allocationTargets.filter(t => t.type === "duan");
                               setNewPYCTargetName(isHcnsViewer ? (das.length > 0 ? das[0].name : "") : myVppTargetName);
+                              // Người đề xuất mặc định là tên tài khoản đang đăng nhập
+                              setNewPYCRequesterName(currentUser?.name || "");
                               // Mở phiếu trắng — người dùng tự chọn món, không mồi sẵn món đầu kho
                               setNewPYCLines([]);
                               setPycItemSearch("");
@@ -5791,7 +5807,14 @@ export default function AdministrationPage() {
                                 {(() => {
                                   const filtered = slipRequestsOf(slipPreviewTargetType, slipPreviewTargetName);
                                   const customRequester = filtered.find(r => r.requesterName)?.requesterName;
-                                  return customRequester || allocationTargets.find(t => t.type === slipPreviewTargetType && t.name === slipPreviewTargetName)?.receiver || "Người nhận";
+                                  // Phiếu tạo trước đây chưa lưu tên người đề xuất: nếu người đang
+                                  // xem chính là nhân viên của bộ phận đó thì lấy tên tài khoản,
+                                  // hết cách mới rơi về chức danh mặc định của bộ phận.
+                                  const ownAccountName =
+                                    !isHcnsViewer && myVppTargetName === slipPreviewTargetName
+                                      ? currentUser?.name || ""
+                                      : "";
+                                  return customRequester || ownAccountName || allocationTargets.find(t => t.type === slipPreviewTargetType && t.name === slipPreviewTargetName)?.receiver || "Người nhận";
                                 })()}
                               </div>
                               <div>
@@ -6658,7 +6681,7 @@ export default function AdministrationPage() {
                               type="text"
                               value={newPYCRequesterName}
                               onChange={(e) => setNewPYCRequesterName(e.target.value)}
-                              placeholder="Tên người yêu cầu (để trống sẽ lấy mặc định bộ phận)..."
+                              placeholder="Tên người yêu cầu (mặc định là tên tài khoản đang đăng nhập)..."
                               className="w-full px-3 py-2.5 border border-slate-200 rounded-lg font-semibold text-slate-700 focus:border-blue-500 focus:outline-none mt-1 bg-white"
                             />
                           </div>
