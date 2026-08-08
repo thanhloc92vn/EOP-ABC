@@ -267,11 +267,20 @@ export function isLeaveTripCap1Approver(params: {
   currentUserName: string;
   currentUserRole: string;
   currentUserIsAdmin: boolean;
+  /** Giám đốc / Ban lãnh đạo — đứng trên mọi phòng nên không bị giới hạn đơn vị. */
+  currentUserIsDirector?: boolean;
+  /** Phòng ban / Ban điều hành của người đang đăng nhập. */
+  currentUserDepartment?: string | null;
   assigneeName: string;
+  /** Phòng ban / Ban điều hành của người làm đơn (tra từ danh bạ nhân sự). */
+  assigneeDepartment?: string | null;
   taskNotes?: string | null;
   taskTitleLower: string;
 }): boolean {
-  const { currentUserName, currentUserRole, currentUserIsAdmin, assigneeName, taskNotes, taskTitleLower } = params;
+  const {
+    currentUserName, currentUserRole, currentUserIsAdmin, currentUserIsDirector,
+    currentUserDepartment, assigneeName, assigneeDepartment, taskNotes, taskTitleLower,
+  } = params;
   if (currentUserIsAdmin) return true;
 
   // Thành viên nhóm duyệt riêng (VD tổ Marketing): cấp 1 do TỔ TRƯỞNG CỦA CHÍNH
@@ -300,8 +309,21 @@ export function isLeaveTripCap1Approver(params: {
   // Người được nhân viên chỉ định tường minh khi gửi đơn ("Người duyệt: X")
   if (taskNotes && taskNotes.includes(`Người duyệt: ${currentUserName}`)) return true;
 
-  // Trưởng/Phó phòng bất kỳ (giữ đúng hành vi hiện có: không giới hạn cùng phòng ban)
-  if (isManagerRole(currentUserRole)) return true;
+  // Cấp quản lý đơn vị: CHỈ duyệt cho nhân sự CÙNG ĐƠN VỊ với mình.
+  // (Siết 07/08/2026 — trước đây bất kỳ ai có chức danh quản lý cũng duyệt được
+  // đơn của mọi phòng, nên Tổ trưởng Marketing duyệt được đơn phòng Kỹ thuật.)
+  if (isManagerRole(currentUserRole)) {
+    // Giám đốc / Phó GĐ / Ban lãnh đạo đứng trên mọi phòng — không giới hạn.
+    if (currentUserIsDirector) return true;
+
+    const mine = normalizeName(currentUserDepartment || "");
+    const theirs = normalizeName(assigneeDepartment || "");
+    // Thiếu dữ liệu phòng ban ở một trong hai bên thì KHÔNG suy đoán, trả về
+    // false. Không sợ đơn kẹt: Admin và Giám đốc đã thoát ở trên, và người được
+    // chỉ định tường minh trong notes cũng đã thoát ở nhánh trước.
+    if (!mine || !theirs) return false;
+    return mine === theirs;
+  }
 
   return false;
 }

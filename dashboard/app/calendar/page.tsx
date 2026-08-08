@@ -713,12 +713,17 @@ function CalendarContent() {
         currentUserName: currentUser.name,
         currentUserRole: currentUser.role,
         currentUserIsAdmin: isUserAdmin,
+        currentUserIsDirector: currentUser.isDirector,
+        currentUserDepartment: currentUser.department,
         assigneeName: t.assignee,
+        assigneeDepartment: employeeDirectory.find(
+          e => normalizeName(e.name) === normalizeName(t.assignee)
+        )?.department || "",
         taskNotes: t.notes,
         taskTitleLower: titleLower,
       });
     });
-  }, [tasks, currentUser]);
+  }, [tasks, currentUser, employeeDirectory]);
 
   // Gửi email KHÔNG chặn giao diện — bắt tay SMTP với Gmail mất vài giây, nếu
   // `await` thì nút duyệt/từ chối đứng im khiến người dùng tưởng bấm hụt.

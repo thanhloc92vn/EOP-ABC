@@ -13,7 +13,9 @@ import {
   getRequestStage,
   isLeaveTripCap1Approver,
   isLeaveTripCap2Approver,
+  normalizeName,
 } from "@/lib/approvers";
+import { isDirectorRole } from "@/lib/access";
 import { useSidebar } from "./SidebarContext";
 import { useTenantConfig } from "@/lib/tenantConfig";
 import { usePlan } from "@/lib/plan";
@@ -383,6 +385,22 @@ export default function Header({ title, subtitle }: Props) {
         console.warn("Could not fetch VPP requests for header:", err);
       }
 
+      // Danh bạ tên -> phòng ban. Cần để biết đơn nghỉ phép/công tác này thuộc
+      // phòng nào: `tasks` chỉ lưu TÊN người làm đơn. Từ 07/08/2026 cấp quản lý
+      // chỉ duyệt được đơn CÙNG ĐƠN VỊ, nên thiếu bảng tra này thì chuông báo sẽ
+      // hiện cả đơn của phòng khác mà bấm vào lại không duyệt được.
+      const deptOfName = new Map<string, string>();
+      try {
+        const { data } = await supabase
+          .from("employees_directory")
+          .select("name, department");
+        (data || []).forEach((e: any) => {
+          if (e?.name) deptOfName.set(normalizeName(e.name), e.department || "");
+        });
+      } catch (err) {
+        console.warn("Could not fetch employee departments for header:", err);
+      }
+
       const isUserAdmin = userObj.isAdmin || (userObj.role || "").toLowerCase() === "admin";
       // Dùng chung isManagerRole() của lib/approvers.ts — trước đây Header giữ
       // một bản chép riêng và nó thiếu "Kế toán trưởng"/"Chỉ huy trưởng", nên
@@ -423,7 +441,10 @@ export default function Header({ title, subtitle }: Props) {
             currentUserName: userObj.name,
             currentUserRole: userObj.role,
             currentUserIsAdmin: isUserAdmin,
+            currentUserIsDirector: isDirectorRole(userObj.role),
+            currentUserDepartment: userObj.department,
             assigneeName: t.assignee,
+            assigneeDepartment: deptOfName.get(normalizeName(t.assignee)) || "",
             taskNotes: t.notes,
             taskTitleLower: titleLower,
           });
