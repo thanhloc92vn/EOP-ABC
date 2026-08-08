@@ -53,11 +53,17 @@ interface Task {
 
 // Trưởng phòng / Phó phòng / Tổ trưởng — quản lý cấp phòng: thấy cả phòng mình,
 // và khi họ giao việc cho người khác thì hệ thống gửi email báo nhân viên.
+// Quản lý cấp đơn vị — hai khối ĐỐI XỨNG NHAU, quyền như nhau:
+//   Khối Văn phòng : Trưởng phòng / Phó phòng / Tổ trưởng
+//   Khối Dự án     : Chỉ huy trưởng / Chỉ huy phó / Tổ trưởng
+// Thiếu hai chức danh chỉ huy thì cả Ban điều hành dự án không giao được việc và
+// không nhận được email khi giao — trong khi họ quản lý y hệt trưởng/phó phòng.
 const isDeptManagerRole = (role?: string | null) => {
   const r = normalizeName(role || "");
   return (
     r.includes("truong phong") || r.includes("pho phong") ||
     r.includes("pho truong phong") || r.includes("quyen truong phong") ||
+    r.includes("chi huy truong") || r.includes("chi huy pho") ||
     r.includes("to truong")
   );
 };
@@ -814,17 +820,23 @@ export default function TaskManagementPage() {
            targetAssignee === userEmail;
   });
 
+  // Chỉ huy trưởng / Chỉ huy phó của Ban điều hành dự án có quyền y hệt
+  // Trưởng phòng / Phó phòng khối Văn phòng — xem isDeptManagerRole ở đầu file.
   const canManageTasks = !!(currentUser && (
-    currentUser.isAdmin || 
+    currentUser.isAdmin ||
     currentUser.role.toLowerCase() === "admin" ||
-    currentUser.role.toLowerCase().includes("trưởng phòng") || 
+    currentUser.role.toLowerCase().includes("trưởng phòng") ||
     currentUser.role.toLowerCase().includes("truong phong") ||
-    currentUser.role.toLowerCase().includes("phó phòng") || 
+    currentUser.role.toLowerCase().includes("phó phòng") ||
     currentUser.role.toLowerCase().includes("pho phong") ||
-    currentUser.role.toLowerCase().includes("phó trưởng phòng") || 
+    currentUser.role.toLowerCase().includes("phó trưởng phòng") ||
     currentUser.role.toLowerCase().includes("pho truong phong") ||
-    currentUser.role.toLowerCase().includes("tổ trưởng") || 
-    currentUser.role.toLowerCase().includes("to truong") || 
+    currentUser.role.toLowerCase().includes("chỉ huy trưởng") ||
+    currentUser.role.toLowerCase().includes("chi huy truong") ||
+    currentUser.role.toLowerCase().includes("chỉ huy phó") ||
+    currentUser.role.toLowerCase().includes("chi huy pho") ||
+    currentUser.role.toLowerCase().includes("tổ trưởng") ||
+    currentUser.role.toLowerCase().includes("to truong") ||
     currentUser.role.toLowerCase().includes("leader")
   ));
 
