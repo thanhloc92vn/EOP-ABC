@@ -1019,18 +1019,16 @@ export default function AdministrationPage() {
     return found?.type === "duan" ? "duan" : "phongban";
   }, [allocationTargets, myVppTargetName]);
 
-  // Chỉ hiện ĐÚNG nhóm của người dùng. Nếu state còn đọng ở nhóm kia (hoặc ở mục
-  // tồn kho mà họ không có quyền) thì đẩy về nhóm của họ, không thì tab VPP hiện
-  // ra trống trơn.
+  // Người thường chỉ thấy ĐÚNG nhóm của mình; state còn đọng ở nhóm kia (hoặc ở
+  // mục tồn kho không có quyền) thì đẩy về, không thì tab VPP hiện ra trống trơn.
+  //
+  // HCNS là NGOẠI LỆ, giữ đủ cả hai nhóm: họ là bên duy nhất có nút duyệt và ô
+  // chọn phòng ban / dự án, tức là bên thực sự cấp phát VPP cho cả khối Văn phòng
+  // lẫn các Ban điều hành dự án. Ép HCNS về một nhóm là không còn ai cấp được VPP
+  // cho khối dự án nữa.
   useEffect(() => {
-    if (!permsLoaded) return;
-    if (vppSubTab === "inventory" && !isHcnsViewer) {
-      setVppSubTab(myVppGroupType);
-      return;
-    }
-    if (vppSubTab !== "inventory" && vppSubTab !== myVppGroupType) {
-      setVppSubTab(myVppGroupType);
-    }
+    if (!permsLoaded || isHcnsViewer) return;
+    if (vppSubTab !== myVppGroupType) setVppSubTab(myVppGroupType);
   }, [permsLoaded, isHcnsViewer, vppSubTab, myVppGroupType]);
 
   // Gợi ý cho ô tìm vật tư trong hộp thoại tạo phiếu: lọc theo tên hoặc danh
@@ -4647,10 +4645,10 @@ export default function AdministrationPage() {
                       1. Mục tồn kho của Hành chính
                     </button>
                     )}
-                    {/* Chỉ hiện nhóm ứng với tài khoản đang đăng nhập: thuộc phòng
-                        ban thì ra nhóm phòng ban, thuộc Ban điều hành dự án thì ra
-                        nhóm dự án. Xem myVppGroupType. */}
-                    {myVppGroupType === "phongban" ? (
+                    {/* Người thường chỉ thấy nhóm ứng với tài khoản của mình (xem
+                        myVppGroupType). HCNS giữ ĐỦ CẢ HAI nhóm vì họ là bên cấp
+                        phát cho cả khối Văn phòng lẫn các Ban điều hành dự án. */}
+                    {(isHcnsViewer || myVppGroupType === "phongban") && (
                       <button
                         onClick={() => {
                           setVppSubTab("phongban");
@@ -4665,7 +4663,8 @@ export default function AdministrationPage() {
                         <Building2 size={13} />
                         2. VPP cấp cho từng phòng ban VP
                       </button>
-                    ) : (
+                    )}
+                    {(isHcnsViewer || myVppGroupType === "duan") && (
                       <button
                         onClick={() => {
                           setVppSubTab("duan");
@@ -4678,7 +4677,7 @@ export default function AdministrationPage() {
                         }`}
                       >
                         <Briefcase size={13} />
-                        2. VPP cấp cho Ban điều hành dự án
+                        3. VPP cấp cho Ban điều hành dự án
                       </button>
                     )}
                   </div>
