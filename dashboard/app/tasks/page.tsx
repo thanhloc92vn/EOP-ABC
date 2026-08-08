@@ -822,9 +822,15 @@ export default function TaskManagementPage() {
 
   // Chỉ huy trưởng / Chỉ huy phó của Ban điều hành dự án có quyền y hệt
   // Trưởng phòng / Phó phòng khối Văn phòng — xem isDeptManagerRole ở đầu file.
+  //
+  // Giám đốc / Phó Giám đốc (currentUser.isDirector = isDirectorRole(role)) trước
+  // đây BỊ QUÊN ở đây: danh sách chỉ có cấp phòng nên Giám đốc không xoá được việc
+  // và không kết luận được "Đã hoàn thành" — dù hàm SQL caller_can_manage_tasks()
+  // của migration 010 vẫn cho phép. Giao diện chặt hơn CSDL, nay bổ sung cho khớp.
   const canManageTasks = !!(currentUser && (
     currentUser.isAdmin ||
     currentUser.role.toLowerCase() === "admin" ||
+    currentUser.isDirector ||
     currentUser.role.toLowerCase().includes("trưởng phòng") ||
     currentUser.role.toLowerCase().includes("truong phong") ||
     currentUser.role.toLowerCase().includes("phó phòng") ||
