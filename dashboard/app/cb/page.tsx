@@ -109,6 +109,7 @@ interface Contract {
   total_income?: number | null;
   last_salary_adj_date?: string;
   status: string;
+  notes?: string;
   created_at?: string;
   employees?: {
     name: string;
@@ -413,6 +414,82 @@ const BOARD_OF_DIRECTORS = [
   { name: "Lê Minh Tâm", role: "Phó Tổng Giám Đốc Tài Chính", email: "tam.lm@trungnamec.com.vn", phone: "0912.777.666", avatar: "MT" },
   { name: "Trần Đức Long", role: "Phó Tổng Giám Đốc Kỹ Thuật", email: "long.td@trungnamec.com.vn", phone: "0903.555.444", avatar: "DL" }
 ];
+
+// ── Ghi chú trạng thái nhân sự trên dòng hợp đồng ───────────────────────────
+// Bê nguyên luồng của module Danh sách nhân viên (employees/page.tsx:1918
+// EditableNoteSelect): bấm vào huy hiệu -> hiện <select> -> chọn xong lưu ngay
+// và đóng lại. Giá trị cũ không nằm trong bộ chuẩn thì được chèn lên đầu danh
+// sách để không bị mất khi mở dropdown.
+const CONTRACT_NOTE_OPTIONS = ["", "NV mới", "NV Kiêm nhiệm", "NV Nghỉ việc"];
+
+// Cùng quy ước với employees/page.tsx:559 — dò trên chuỗi ghi chú.
+const isResignedNote = (note?: string) => {
+  const t = (note || "").toLowerCase();
+  return t.includes("nghỉ việc") || t.includes("nghi viec");
+};
+
+function ContractNoteSelect({ value, onSave }: { value: string; onSave: (value: string) => void }) {
+  const [val, setVal] = useState(value);
+  const [isEditing, setIsEditing] = useState(false);
+
+  useEffect(() => {
+    setVal(value);
+  }, [value]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newVal = e.target.value;
+    setVal(newVal);
+    onSave(newVal);
+    setIsEditing(false);
+  };
+
+  // Màu huy hiệu giữ đúng như employees/page.tsx:1933 getBadgeStyle.
+  const getBadgeStyle = (text: string) => {
+    if (!text) return "text-slate-400 font-medium px-2 py-1";
+    const lower = text.toLowerCase();
+    if (lower === "nv mới" || lower === "nv moi") {
+      return "bg-emerald-50 text-emerald-700 border border-emerald-200/60 px-2.5 py-0.5 rounded-full font-bold shadow-sm";
+    }
+    if (lower === "nv nghỉ việc" || lower === "nv nghi viec") {
+      return "bg-rose-50 text-rose-700 border border-rose-200/60 px-2.5 py-0.5 rounded-full font-bold shadow-sm";
+    }
+    if (lower.includes("kiêm nhiệm") || lower.includes("kiem nhiem")) {
+      return "bg-blue-50 text-blue-700 border border-blue-200/60 px-2.5 py-0.5 rounded-full font-bold shadow-sm";
+    }
+    return "bg-slate-50 text-slate-600 border border-slate-200/60 px-2.5 py-0.5 rounded-full font-semibold";
+  };
+
+  const allOptions = CONTRACT_NOTE_OPTIONS.includes(value)
+    ? CONTRACT_NOTE_OPTIONS
+    : [value, ...CONTRACT_NOTE_OPTIONS];
+
+  if (!isEditing) {
+    return (
+      <div
+        onClick={() => setIsEditing(true)}
+        className={`cursor-pointer inline-block text-[10px] whitespace-nowrap overflow-hidden text-ellipsis max-w-[130px] ${getBadgeStyle(value)} hover:brightness-95 active:scale-95 transition-all`}
+      >
+        {value || "—"}
+      </div>
+    );
+  }
+
+  return (
+    <select
+      value={val || ""}
+      onChange={handleChange}
+      onBlur={() => setIsEditing(false)}
+      autoFocus
+      className="bg-white px-1.5 py-1 outline-none border border-blue-500 rounded-lg text-[10px] font-semibold text-slate-700 shadow-sm"
+    >
+      {allOptions.map((opt) => (
+        <option key={opt} value={opt}>
+          {opt || "— Trống —"}
+        </option>
+      ))}
+    </select>
+  );
+}
 
 export default function CBPage() {
   // Danh sách phòng ban / BĐH đọc từ bảng departments (fallback danh sách cũ)
@@ -2474,6 +2551,7 @@ export default function CBPage() {
         total_income: contract.total_income || null,
         last_salary_adj_date: contract.last_salary_adj_date || null,
         department: contract.department || null,
+        notes: contract.notes || null,
       };
 
       if (empId) {
@@ -2614,6 +2692,7 @@ export default function CBPage() {
           total_income: item.total_income || null,
           last_salary_adj_date: item.last_salary_adj_date || null,
           department: item.department || null,
+          notes: item.notes || null,
         };
         if (empId) dbData.employee_id = empId;
 
@@ -2665,7 +2744,8 @@ export default function CBPage() {
           item.last_salary_adj_date !== original.last_salary_adj_date ||
           item.status !== original.status ||
           item.employee_id !== original.employee_id ||
-          item.department !== original.department;
+          item.department !== original.department ||
+          item.notes !== original.notes;
 
         if (!hasChanged) continue;
 
@@ -2715,6 +2795,7 @@ export default function CBPage() {
           last_salary_adj_date: item.last_salary_adj_date || null,
           employee_id: empId || null,
           department: item.department || null,
+          notes: item.notes || null,
         };
 
         const { error } = await supabase.from("contracts").update(dbData).eq("id", item.id);
@@ -7025,20 +7106,21 @@ export default function CBPage() {
                         <th className="py-2.5 px-2 w-32 text-right bg-slate-50 border-r border-slate-200">Thưởng HQCV</th>
                         <th className="py-2.5 px-2 w-32 text-right bg-slate-50 border-r border-slate-200">Phụ cấp</th>
                         <th className="py-2.5 px-2 w-32 text-right bg-slate-50 border-r border-slate-200 text-emerald-700 bg-emerald-50/10">Tổng thu nhập</th>
+                        <th className="py-2.5 px-2 w-36 bg-slate-50 border-r border-slate-200">Ghi chú</th>
                         <th className="py-2.5 px-2 w-20 text-center bg-slate-50">Thao tác</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 font-medium text-slate-700 bg-white">
                       {loadingContracts ? (
                         <tr>
-                          <td colSpan={14} className="py-12 text-center text-slate-400 gap-2">
+                          <td colSpan={15} className="py-12 text-center text-slate-400 gap-2">
                             <Loader2 className="animate-spin text-[#005BAC] mx-auto mb-2" size={20} />
                             <span>Đang tải danh sách hợp đồng lao động...</span>
                           </td>
                         </tr>
                       ) : myVisibleContracts.length === 0 ? (
                         <tr>
-                          <td colSpan={14} className="py-12 text-center text-slate-400">
+                          <td colSpan={15} className="py-12 text-center text-slate-400">
                             Không tìm thấy dữ liệu hợp đồng nào. Hãy tải lên Excel hoặc thêm dòng hợp đồng mới!
                           </td>
                         </tr>
@@ -7059,12 +7141,19 @@ export default function CBPage() {
                             const deptMatch = contractsDeptFilter ? dept.includes(contractsDeptFilter.toLowerCase()) : true;
                             const projectMatch = contractsProjectFilter ? dept.includes(contractsProjectFilter.toLowerCase()) : true;
                             return (name.includes(query) || code.includes(query) || num.includes(query) || dept.includes(query)) && deptMatch && projectMatch;
-                          });
+                          })
+                          // Ghi chú "nghỉ việc" luôn nằm cuối bảng — cùng quy ước
+                          // với Danh sách nhân viên (employees/page.tsx:588).
+                          .sort((a, b) => (isResignedNote(a.notes) ? 1 : 0) - (isResignedNote(b.notes) ? 1 : 0));
 
                           return filtered.map((c, index) => {
                             const actualIdx = tempContracts.findIndex(tc => tc.id === c.id);
                             return (
-                              <tr key={c.id} className="hover:bg-slate-50/50 transition-all">
+                              <tr key={c.id} className={`transition-all ${
+                                isResignedNote(c.notes)
+                                  ? "bg-orange-50/80 hover:bg-orange-100/60"
+                                  : "hover:bg-slate-50/50"
+                              }`}>
                                 {/* STT */}
                                 <td className="py-1 px-1 border-r border-slate-100 text-center font-bold text-slate-500">
                                   {index + 1}
@@ -7276,6 +7365,13 @@ export default function CBPage() {
                                       handleContractCellChange(actualIdx, "total_income", val ? parseInt(val) : null);
                                     }}
                                     className="w-full text-right bg-transparent hover:bg-slate-100/50 focus:bg-white border border-transparent focus:border-blue-300 rounded outline-none py-1 px-1 font-bold text-emerald-700"
+                                  />
+                                </td>
+                                {/* Ghi chú */}
+                                <td className="py-1 px-2 border-r border-slate-100">
+                                  <ContractNoteSelect
+                                    value={c.notes || ""}
+                                    onSave={(val) => handleContractCellChange(actualIdx, "notes", val)}
                                   />
                                 </td>
                                 {/* Thao tác */}
