@@ -398,7 +398,6 @@ export default function DashboardPage() {
   // ─── HR stats ───────────────────────────────────────────────────────────────
   // Headcount từ danh sách nhân viên; HĐ chính thức lấy từ bảng hợp đồng (loại HĐLĐ)
   const hr = useMemo(() => {
-    const headcount = employees.length;
     const official = contracts.filter((c) => {
       const t = (c.type || "").trim();
       return t !== "" && t !== "Thử việc";
@@ -408,11 +407,14 @@ export default function DashboardPage() {
     // — mà nhiều hồ sơ chỉ đánh dấu "NV Nghỉ việc" ở Ghi chú, đếm theo
     // `status` không thôi sẽ ra số thấp hơn module "Danh sách nhân viên".
     // Fallback theo status để trang không vỡ nếu migration chưa chạy.
-    const resigned = employees.filter((e: any) =>
+    const isResigned = (e: any) =>
       e.is_resigned !== undefined
         ? !!e.is_resigned
-        : (e.status || "").toLowerCase().includes("nghỉ việc")
-    ).length;
+        : (e.status || "").toLowerCase().includes("nghỉ việc");
+    const resigned = employees.filter(isResigned).length;
+    // "Hiện tại" = đang còn làm, KHÔNG tính người đã nghỉ (trước đây đếm cả
+    // bảng nên số này lớn hơn thực tế đúng bằng ô "Nhân sự nghỉ việc").
+    const headcount = employees.length - resigned;
     return { headcount, official, resigned };
   }, [employees, contracts]);
 
