@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { apiFetch } from "@/lib/apiClient";
-import { X, MapPin, Loader2, Check, Trash2, Search, AlertCircle, Navigation, Globe } from "lucide-react";
+import { X, MapPin, Loader2, Check, Trash2, Search, AlertCircle, Navigation, Globe, Plus } from "lucide-react";
 import type { ProjectItem } from "./types";
 import { VN_PROVINCE_NAMES } from "@/lib/vnProvinces";
 
@@ -60,6 +60,29 @@ type Draft = {
 
 type RowState = "idle" | "saving" | "saved" | "error";
 
+// Khoá riêng cho form "Thêm vị trí mới" — dùng chung rowState/rowMsg với các dòng BĐH.
+const NEW_KEY = "__new__";
+
+const EMPTY_DRAFT: Draft = {
+  mapsLink: "",
+  earthLink: "",
+  status: "active",
+  investor: "",
+  packageName: "",
+  province: "",
+};
+
+// Bỏ dấu + thường hoá để so tên BĐH không phân biệt dấu/hoa thường (giống hàm
+// normalize bên ProjectMap) — tránh tạo trùng "BĐH Vĩnh Long" / "BDH Vinh Long".
+function normalizeBdh(s: string): string {
+  return (s || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[đĐ]/g, "d")
+    .trim();
+}
+
 export default function LocationEditor({
   items,
   email,
@@ -75,6 +98,14 @@ export default function LocationEditor({
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [rowState, setRowState] = useState<Record<string, RowState>>({});
   const [rowMsg, setRowMsg] = useState<Record<string, string>>({});
+  // Form "Thêm vị trí mới" — không cần tạo Ban điều hành trong CSDL trước.
+  const [newOpen, setNewOpen] = useState(false);
+  const [newName, setNewName] = useState("");
+  // 3 cột chỉ có ở form thêm mới: tên đầy đủ hiển thị trên bản đồ, loại dự án, tiến độ.
+  const [newProjectName, setNewProjectName] = useState("");
+  const [newProjectType, setNewProjectType] = useState("");
+  const [newProgress, setNewProgress] = useState("");
+  const [newDraft, setNewDraft] = useState<Draft>(EMPTY_DRAFT);
 
   const getDraft = (p: ProjectItem): Draft =>
     drafts[p.bdhName] ?? {
@@ -97,52 +128,71 @@ export default function LocationEditor({
     );
   }, [items, query]);
 
-  async function saveRow(p: ProjectItem) {
-    const draft = getDraft(p);
-    let coords = parseLatLng(draft.mapsLink);
+  // Đọc toạ độ từ ô "Vị trí Ban điều hành" — dùng chung cho dòng BĐH sẵn có và form
+  // thêm mới. Trả null khi không đọc được (đã tự set trạng thái lỗi cho `key`).
+  async function resolveCoords(
+    key: string,
+    mapsLink: string
+  ): Promise<{ coords: [number, number]; kmlUrl: string | null } | null> {
+    let coords = parseLatLng(mapsLink);
     let kmlUrl: string | null = null;
 
     // Link My Maps -> nhờ server lấy tâm toạ độ từ toàn bộ điểm trong bản đồ.
-    if (!coords && isMyMapsLink(draft.mapsLink)) {
-      setRowState((s) => ({ ...s, [p.bdhName]: "saving" }));
-      setRowMsg((m) => ({ ...m, [p.bdhName]: "" }));
+    if (!coords && isMyMapsLink(mapsLink)) {
+      setRowState((s) => ({ ...s, [key]: "saving" }));
+      setRowMsg((m) => ({ ...m, [key]: "" }));
       try {
         const res = await apiFetch("/api/mymaps-extract", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: draft.mapsLink }),
+          body: JSON.stringify({ url: mapsLink }),
         });
         const j = await res.json().catch(() => null);
         if (!res.ok || !j?.ok) {
-          setRowState((s) => ({ ...s, [p.bdhName]: "error" }));
-          setRowMsg((m) => ({ ...m, [p.bdhName]: j?.error || "Không lấy được toạ độ từ My Maps." }));
-          return;
+          setRowState((s) => ({ ...s, [key]: "error" }));
+          setRowMsg((m) => ({ ...m, [key]: j?.error || "Không lấy được toạ độ từ My Maps." }));
+          return null;
         }
         coords = [j.lat, j.lng];
-        kmlUrl = draft.mapsLink;
+        kmlUrl = mapsLink;
       } catch {
-        setRowState((s) => ({ ...s, [p.bdhName]: "error" }));
-        setRowMsg((m) => ({ ...m, [p.bdhName]: "Lỗi kết nối khi đọc My Maps." }));
-        return;
+        setRowState((s) => ({ ...s, [key]: "error" }));
+        setRowMsg((m) => ({ ...m, [key]: "Lỗi kết nối khi đọc My Maps." }));
+        return null;
       }
     }
 
     if (!coords) {
-      setRowState((s) => ({ ...s, [p.bdhName]: "error" }));
+      setRowState((s) => ({ ...s, [key]: "error" }));
       setRowMsg((m) => ({
         ...m,
-        [p.bdhName]: draft.mapsLink.includes("goo.gl")
+        [key]: mapsLink.includes("goo.gl")
           ? "Link rút gọn không đọc được toạ độ. Mở link rồi copy lat,lng."
           : "Chưa nhận ra toạ độ. Dán 'lat, lng', link Google Maps có @lat,lng, hoặc link Google My Maps.",
       }));
-      return;
+      return null;
     }
 
-    setRowState((s) => ({ ...s, [p.bdhName]: "saving" }));
+    return { coords, kmlUrl };
+  }
+
+  // Ghi một dòng project_locations. `key` chỉ dùng để hiện trạng thái/lỗi trên UI.
+  // `extra` là các cột chỉ form thêm mới điền (name / project_type / progress) —
+  // dòng BĐH sẵn có KHÔNG gửi các cột này nên giá trị cũ trong CSDL được giữ nguyên.
+  async function upsertLocation(
+    key: string,
+    bdhName: string,
+    draft: Draft,
+    extra?: Record<string, unknown>
+  ): Promise<boolean> {
+    const resolved = await resolveCoords(key, draft.mapsLink);
+    if (!resolved) return false;
+
+    setRowState((s) => ({ ...s, [key]: "saving" }));
     const payload: Record<string, unknown> = {
-      bdh_name: p.bdhName,
-      lat: coords[0],
-      lng: coords[1],
+      bdh_name: bdhName,
+      lat: resolved.coords[0],
+      lng: resolved.coords[1],
       status: draft.status || "active",
       investor: draft.investor || null,
       package: draft.packageName || null,
@@ -150,19 +200,57 @@ export default function LocationEditor({
       google_earth_url: draft.earthLink.trim() || null, // link Google Earth (xem thiết kế)
       created_by: email,
       updated_at: new Date().toISOString(),
+      ...(extra || {}),
     };
-    if (kmlUrl) payload.kml_url = kmlUrl; // giữ link My Maps để mở bản đồ chi tiết
+    if (resolved.kmlUrl) payload.kml_url = resolved.kmlUrl; // giữ link My Maps để mở bản đồ chi tiết
     const { error } = await supabase
       .from("project_locations")
       .upsert(payload, { onConflict: "bdh_name" });
     if (error) {
-      setRowState((s) => ({ ...s, [p.bdhName]: "error" }));
-      setRowMsg((m) => ({ ...m, [p.bdhName]: error.message }));
+      setRowState((s) => ({ ...s, [key]: "error" }));
+      setRowMsg((m) => ({ ...m, [key]: error.message }));
+      return false;
+    }
+    setRowState((s) => ({ ...s, [key]: "saved" }));
+    setRowMsg((m) => ({ ...m, [key]: "" }));
+    onSaved();
+    return true;
+  }
+
+  async function saveRow(p: ProjectItem) {
+    await upsertLocation(p.bdhName, p.bdhName, getDraft(p));
+  }
+
+  // Thêm vị trí mới cho một Ban điều hành CHƯA có trong danh sách phòng ban.
+  // Dòng project_locations không cần BĐH tồn tại trước: ProjectMap đã hiển thị cả
+  // những bdh_name không khớp phòng ban nào.
+  async function saveNew() {
+    const name = newName.trim();
+    if (!name) {
+      setRowState((s) => ({ ...s, [NEW_KEY]: "error" }));
+      setRowMsg((m) => ({ ...m, [NEW_KEY]: "Nhập tên Ban điều hành / dự án trước đã." }));
       return;
     }
-    setRowState((s) => ({ ...s, [p.bdhName]: "saved" }));
-    setRowMsg((m) => ({ ...m, [p.bdhName]: "" }));
-    onSaved();
+    if (items.some((p) => normalizeBdh(p.bdhName) === normalizeBdh(name))) {
+      setRowState((s) => ({ ...s, [NEW_KEY]: "error" }));
+      setRowMsg((m) => ({
+        ...m,
+        [NEW_KEY]: `"${name}" đã có trong danh sách bên dưới — sửa trực tiếp ở dòng đó.`,
+      }));
+      return;
+    }
+    const ok = await upsertLocation(NEW_KEY, name, newDraft, {
+      name: newProjectName.trim() || null,
+      project_type: newProjectType.trim() || null,
+      progress: newProgress.trim() || null,
+    });
+    if (!ok) return;
+    setNewName("");
+    setNewProjectName("");
+    setNewProjectType("");
+    setNewProgress("");
+    setNewDraft(EMPTY_DRAFT);
+    setRowState((s) => ({ ...s, [NEW_KEY]: "idle" }));
   }
 
   async function removeRow(p: ProjectItem) {
@@ -217,6 +305,152 @@ export default function LocationEditor({
               className="flex-1 bg-transparent text-xs font-semibold text-slate-700 placeholder:text-slate-400 focus:outline-none"
             />
           </div>
+        </div>
+
+        {/* Thêm vị trí mới — không cần tạo Ban điều hành trong CSDL trước */}
+        <div className="px-6 pt-3">
+          {!newOpen ? (
+            <button
+              onClick={() => setNewOpen(true)}
+              className="w-full flex items-center justify-center gap-1.5 text-[11px] font-bold text-[#005BAC] border border-dashed border-blue-200 hover:border-[#00AEEF] hover:bg-blue-50/50 rounded-xl py-2.5 transition-all active:scale-[0.99]"
+            >
+              <Plus size={13} /> Thêm vị trí mới
+            </button>
+          ) : (
+            <div className="rounded-xl border border-blue-200 bg-blue-50/30 p-3.5 space-y-2.5">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-slate-700 flex-1">Thêm vị trí mới</span>
+                <button
+                  onClick={() => {
+                    setNewOpen(false);
+                    setRowState((s) => ({ ...s, [NEW_KEY]: "idle" }));
+                    setRowMsg((m) => ({ ...m, [NEW_KEY]: "" }));
+                  }}
+                  className="text-slate-400 hover:text-rose-500 transition-colors"
+                  title="Đóng form thêm mới"
+                >
+                  <X size={15} />
+                </button>
+              </div>
+
+              <div className="space-y-1">
+                <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500">
+                  <MapPin size={11} className="text-[#005BAC]" /> Tên Ban điều hành / dự án
+                </label>
+                <input
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  placeholder="Vd: BĐH Cầu Rạch Miễu 2"
+                  className="w-full text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#00AEEF] placeholder:text-slate-400"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500">
+                  <MapPin size={11} className="text-slate-400" /> Tên dự án đầy đủ — hiện trên bản đồ (tuỳ chọn)
+                </label>
+                <input
+                  value={newProjectName}
+                  onChange={(e) => setNewProjectName(e.target.value)}
+                  placeholder="Để trống sẽ lấy tên Ban điều hành ở trên"
+                  className="w-full text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#00AEEF] placeholder:text-slate-400"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500">
+                  <Navigation size={11} className="text-[#005BAC]" /> Vị trí Ban điều hành — để chỉ đường (Google Maps)
+                </label>
+                <input
+                  value={newDraft.mapsLink}
+                  onChange={(e) => setNewDraft((d) => ({ ...d, mapsLink: e.target.value }))}
+                  placeholder="Dán link Google Maps / My Maps, hoặc: 10.7769, 106.7009"
+                  className="w-full text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#00AEEF] placeholder:text-slate-400"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500">
+                  <Globe size={11} className="text-emerald-600" /> Bản thiết kế dự án — xem trên Google Earth (tuỳ chọn)
+                </label>
+                <input
+                  value={newDraft.earthLink}
+                  onChange={(e) => setNewDraft((d) => ({ ...d, earthLink: e.target.value }))}
+                  placeholder="Dán link Google Earth (earth.google.com/…) hoặc My Maps"
+                  className="w-full text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:border-emerald-500 placeholder:text-slate-400"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <select
+                  value={newDraft.status}
+                  onChange={(e) => setNewDraft((d) => ({ ...d, status: e.target.value }))}
+                  className="text-xs font-semibold text-slate-600 bg-white border border-slate-200 rounded-lg px-2.5 py-2 focus:outline-none focus:border-[#00AEEF]"
+                >
+                  {STATUS_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={newDraft.province}
+                  onChange={(e) => setNewDraft((d) => ({ ...d, province: e.target.value }))}
+                  className="text-xs font-semibold text-slate-600 bg-white border border-slate-200 rounded-lg px-2.5 py-2 focus:outline-none focus:border-[#00AEEF]"
+                >
+                  <option value="">-- Tỉnh / Thành --</option>
+                  {VN_PROVINCE_NAMES.map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  value={newDraft.investor}
+                  onChange={(e) => setNewDraft((d) => ({ ...d, investor: e.target.value }))}
+                  placeholder="Chủ đầu tư (tuỳ chọn)"
+                  className="text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#00AEEF] placeholder:text-slate-400"
+                />
+                <input
+                  value={newDraft.packageName}
+                  onChange={(e) => setNewDraft((d) => ({ ...d, packageName: e.target.value }))}
+                  placeholder="Gói thầu (tuỳ chọn)"
+                  className="text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#00AEEF] placeholder:text-slate-400"
+                />
+                <input
+                  value={newProjectType}
+                  onChange={(e) => setNewProjectType(e.target.value)}
+                  placeholder="Loại dự án (tuỳ chọn)"
+                  className="text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#00AEEF] placeholder:text-slate-400"
+                />
+                <input
+                  value={newProgress}
+                  onChange={(e) => setNewProgress(e.target.value)}
+                  placeholder="Tiến độ (tuỳ chọn)"
+                  className="text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#00AEEF] placeholder:text-slate-400"
+                />
+              </div>
+
+              {rowState[NEW_KEY] === "error" && rowMsg[NEW_KEY] && (
+                <p className="flex items-start gap-1.5 text-[11px] font-semibold text-rose-500">
+                  <AlertCircle size={13} className="mt-0.5 shrink-0" /> {rowMsg[NEW_KEY]}
+                </p>
+              )}
+
+              <button
+                onClick={saveNew}
+                disabled={rowState[NEW_KEY] === "saving"}
+                className="flex items-center gap-1.5 bg-[#005BAC] hover:bg-blue-700 disabled:opacity-60 text-white text-[11px] font-bold px-3.5 py-2 rounded-lg shadow-sm shadow-blue-500/15 transition-all active:scale-[0.98]"
+              >
+                {rowState[NEW_KEY] === "saving" ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : (
+                  <Plus size={13} />
+                )}
+                Thêm vị trí
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Danh sách BĐH */}
