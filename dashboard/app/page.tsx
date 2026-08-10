@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
@@ -19,6 +19,7 @@ import {
   Loader2,
   Receipt,
   FileText,
+  Cake,
 } from "lucide-react";
 
 const CHART_COLORS = ["#10B981", "#3B82F6", "#8B5CF6", "#F59E0B", "#06B6D4", "#EC4899", "#34D399", "#A78BFA", "#F472B6"];
@@ -71,6 +72,84 @@ const parseDate = (s: string): Date | null => {
   const d = new Date(s);
   return isNaN(d.getTime()) ? null : d;
 };
+
+// Tách ngày sinh — BẢN SAO NGUYÊN VĂN của parseBirthdate ở cb/page.tsx:3617.
+// Cố tình không dùng parseDate ở trên: cột date_of_birth có nhiều định dạng
+// lẫn lộn và luồng gốc (C&B → Phúc lợi → Sinh nhật) tách theo cách này, đổi
+// cách tách là danh sách trên trang chủ sẽ lệch với trang C&B.
+const parseBirthdate = (dateStr: string) => {
+  if (!dateStr) return null;
+
+  const cleanStr = dateStr.replace(/[\-\.\/]/g, " ").trim();
+  const parts = cleanStr.split(/\s+/);
+
+  if (parts.length === 3) {
+    const p0 = parseInt(parts[0], 10);
+    const p1 = parseInt(parts[1], 10);
+    const p2 = parseInt(parts[2], 10);
+
+    if (!isNaN(p0) && !isNaN(p1) && !isNaN(p2)) {
+      if (p0 > 1900) return { day: p2, month: p1, year: p0 };
+      return { day: p0, month: p1, year: p2 };
+    }
+  }
+
+  const parsedDate = new Date(dateStr);
+  if (!isNaN(parsedDate.getTime())) {
+    return {
+      day: parsedDate.getDate(),
+      month: parsedDate.getMonth() + 1,
+      year: parsedDate.getFullYear(),
+    };
+  }
+
+  return null;
+};
+
+// ─── Pháo hoa giấy cho ô "Sinh nhật theo tháng" ──────────────────────────────
+// Các mảnh giấy tính TẤT ĐỊNH (không Math.random) để bản render trên server và
+// trên trình duyệt giống hệt nhau, tránh cảnh báo hydration mismatch của Next.
+// Chiều cao chung của hai khối nằm cạnh nhau: cụm 2×2 "Nhân sự & Phúc lợi" và
+// khối "Sinh nhật theo tháng". Chốt cứng ở một chỗ để mép trên/mép dưới của hai
+// khối luôn thẳng hàng, không phụ thuộc số dòng danh sách sinh nhật nhiều hay ít.
+// Viết đủ cả tên lớp có tiền tố `lg:` — Tailwind quét chuỗi nguyên văn trong mã
+// nguồn, ghép chuỗi kiểu `lg:${...}` sẽ KHÔNG sinh ra CSS.
+const HR_BLOCK_H = "h-[296px]";
+const HR_BLOCK_H_LG = "lg:h-[296px]";
+
+const CONFETTI_COLORS = ["#6366F1", "#EC4899", "#F59E0B", "#10B981", "#3B82F6", "#F43F5E"];
+const CONFETTI_PIECES = Array.from({ length: 30 }, (_, i) => ({
+  left: (i * 37) % 100,                              // rải đều theo chiều ngang
+  color: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+  delay: (i % 8) * 80,                               // lệch giờ rơi cho tự nhiên
+  dx: ((i % 5) - 2) * 26,                            // dạt ngang khi rơi
+  rot: 360 + (i % 4) * 180,                          // số vòng xoay
+}));
+
+// Bắt thời điểm một khối cuộn vào tầm nhìn. Chỉ báo MỘT LẦN rồi ngắt observer
+// -> pháo giấy không nổ lại mỗi lần cuộn qua.
+function useInViewOnce<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  const [inView, setInView] = useState(false);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || inView) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setInView(true);
+          observer.disconnect();
+        }
+      },
+      { threshold: 0.35 }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [inView]);
+
+  return { ref, inView };
+}
 
 function RecruitBlock({
   title,
@@ -175,6 +254,8 @@ export default function DashboardPage() {
   const [recruitFrom, setRecruitFrom] = useState<string>(monthFirstDay(currentMonthKey));
   const [recruitTo, setRecruitTo] = useState<string>(monthLastDay(currentMonthKey));
   const [showRecruitFilter, setShowRecruitFilter] = useState(false);
+  const [birthdayMonth, setBirthdayMonth] = useState<number>(new Date().getMonth() + 1);
+  const { ref: birthdayCardRef, inView: birthdayInView } = useInViewOnce<HTMLDivElement>();
 
   const handleRecruitMonthChange = (mk: string) => {
     if (!mk) return;
@@ -334,6 +415,39 @@ export default function DashboardPage() {
     ).length;
     return { headcount, official, resigned };
   }, [employees, contracts]);
+
+  // ─── Sinh nhật theo tháng ───────────────────────────────────────────────────
+  // Đi đúng luồng C&B → Phúc lợi → Sinh nhật (cb/page.tsx:3657 filteredBirthdays):
+  // loại nhân sự "kiêm nhiệm/nghỉ việc" -> tách ngày sinh -> lọc theo tháng ->
+  // xếp theo ngày. Ở đó lọc bằng isExcludedFromBenefits (đọc notes + status);
+  // trang chủ dùng view employees_directory không có `notes` nên lấy cờ
+  // `is_excluded_from_benefits` view đã tính sẵn (migration 032).
+  // Fallback theo status để trang không vỡ nếu migration chưa chạy.
+  const birthdays = useMemo(() => {
+    return employees
+      .filter((emp: any) => {
+        if (emp.is_excluded_from_benefits !== undefined) return !emp.is_excluded_from_benefits;
+        const text = (emp.status || "").toLowerCase();
+        return !(
+          text.includes("kiêm nhiệm") || text.includes("kiem nhiem") ||
+          text.includes("nghỉ việc") || text.includes("nghi viec")
+        );
+      })
+      .map((emp: any) => {
+        const parsed = parseBirthdate(emp.date_of_birth || "");
+        if (!parsed) return null;
+        return {
+          id: emp.id,
+          name: emp.name,
+          role: emp.role,
+          dept: emp.department,
+          day: parsed.day,
+          month: parsed.month,
+        };
+      })
+      .filter((b): b is NonNullable<typeof b> => b !== null && b.month === birthdayMonth)
+      .sort((a, b) => a.day - b.day);
+  }, [employees, birthdayMonth]);
 
   // Chi phí của tôi trong THÁNG HIỆN TẠI (theo ngày phiếu) + tổng lũy kế
   const myCost = useMemo(() => {
@@ -548,34 +662,117 @@ export default function DashboardPage() {
               </section>
               )}
 
-              {/* ── Nhân sự & Phúc lợi (chỉ Giám đốc/Phó GĐ/Admin) ── */}
+              {/* ── Nhân sự & Phúc lợi + Sinh nhật theo tháng nằm cạnh nhau ──
+                  Cụm 2×2 chỉ rộng 36rem nên còn thừa cả nửa màn hình bên phải;
+                  đặt khối Sinh nhật vào đúng chỗ trống đó. Màn hẹp thì xuống hàng. */}
               {canSeeHrBlocks && (
+              <div className="grid grid-cols-1 xl:grid-cols-[19rem_1fr] gap-6 items-start">
+
               <section className="space-y-4 animate-in fade-in duration-300">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-3 min-h-[34px]">
                   <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Nhân sự &amp; Phúc lợi</h2>
-                  <a href="/cb" className="text-xs text-blue-600 font-semibold hover:underline flex items-center gap-1">
-                    Lương &amp; Phúc lợi (C&amp;B) <ChevronRight size={12} />
+                  <a href="/cb" className="text-xs text-blue-600 font-semibold hover:underline flex items-center gap-1 shrink-0">
+                    C&amp;B <ChevronRight size={12} />
                   </a>
                 </div>
-                {/* 3 ô với người thường, 4 ô khi có thêm "HĐ lao động chính thức"
-                    -> chia cột theo số ô để không bị lẻ một ô trơ trọi cuối hàng. */}
-                <div className={`grid grid-cols-1 sm:grid-cols-2 gap-5 ${hrCards.length >= 4 ? "lg:grid-cols-4" : "lg:grid-cols-3"}`}>
+                {/* Cụm 2×2: 2 trên, 2 dưới. Chốt chiều cao đúng bằng khối Sinh
+                    nhật bên cạnh (HR_BLOCK_H) để hai khối bằng nhau trên dưới. */}
+                <div className={`grid grid-cols-2 gap-4 ${HR_BLOCK_H}`}>
                   {hrCards.map((c) => {
                     const Icon = c.icon;
                     return (
-                      <div key={c.label} className="glass rounded-2xl p-5 bg-white/80 hover-elevate flex items-center justify-between border border-slate-100">
-                        <div className="space-y-1">
-                          <p className="text-slate-500 text-xs font-semibold">{c.label}</p>
-                          <p className="font-heading font-extrabold text-3xl text-slate-800">{c.value}</p>
+                      <div key={c.label} className="glass h-full rounded-2xl p-4 bg-white/80 hover-elevate flex flex-col justify-between border border-slate-100">
+                        <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${c.grad} flex items-center justify-center shadow-md`}>
+                          <Icon className="text-white" size={18} />
                         </div>
-                        <div className={`w-11 h-11 rounded-xl bg-gradient-to-br ${c.grad} flex items-center justify-center shadow-md`}>
-                          <Icon className="text-white" size={20} />
+                        <div className="space-y-0.5">
+                          <p className="font-heading font-extrabold text-3xl text-slate-800 leading-none">{c.value}</p>
+                          <p className="text-slate-500 text-[11px] font-semibold leading-tight">{c.label}</p>
                         </div>
                       </div>
                     );
                   })}
                 </div>
               </section>
+
+              {/* ── Sinh nhật theo tháng ── */}
+              <section className="space-y-4 animate-in fade-in duration-300">
+                <div className="flex items-center justify-between gap-3 min-h-[34px]">
+                  <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Sinh nhật theo tháng</h2>
+                  <div className="flex items-center gap-3">
+                    <select
+                      value={birthdayMonth}
+                      onChange={(e) => setBirthdayMonth(parseInt(e.target.value, 10))}
+                      className="bg-white border border-slate-200 hover:border-blue-300 px-3 py-1.5 rounded-xl shadow-sm text-xs font-bold text-slate-700 cursor-pointer"
+                    >
+                      {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                        <option key={m} value={m}>Tháng {m}</option>
+                      ))}
+                    </select>
+                    <a href="/cb" className="text-xs text-blue-600 font-semibold hover:underline flex items-center gap-1">
+                      Xem chi tiết <ChevronRight size={12} />
+                    </a>
+                  </div>
+                </div>
+                {/* Chia 2/5 – 3/5: ô đếm đủ chỗ cho icon bánh cỡ lớn, phần còn
+                    lại dành cho danh sách tên & chức danh. */}
+                <div className={`grid grid-cols-1 lg:grid-cols-5 gap-5 ${HR_BLOCK_H_LG}`}>
+                  {/* Số lượng — pháo hoa giấy nổ một lần khi cuộn tới */}
+                  <div
+                    ref={birthdayCardRef}
+                    className={`lg:col-span-2 relative overflow-hidden glass rounded-2xl p-5 bg-white/80 hover-elevate flex items-center justify-start gap-7 border border-slate-100 ${birthdayInView ? "confetti-on" : ""}`}
+                  >
+                    <div className="confetti-layer" aria-hidden="true">
+                      {CONFETTI_PIECES.map((p, i) => (
+                        <span
+                          key={i}
+                          className="confetti-piece"
+                          style={{
+                            left: `${p.left}%`,
+                            background: p.color,
+                            animationDelay: `${p.delay}ms`,
+                            ["--cf-dx" as any]: `${p.dx}px`,
+                            ["--cf-rot" as any]: `${p.rot}deg`,
+                          }}
+                        />
+                      ))}
+                    </div>
+                    <div className="space-y-1 relative">
+                      <p className="text-slate-500 text-xs font-semibold">Sinh nhật Tháng {birthdayMonth}</p>
+                      <p className="font-heading font-extrabold text-3xl text-slate-800">{birthdays.length}</p>
+                      <p className="text-slate-400 text-[11px] font-medium">nhân sự</p>
+                    </div>
+                    <div className="birthday-cake relative shrink-0 w-28 h-28 rounded-3xl bg-gradient-to-br from-pink-500 to-rose-600 flex items-center justify-center shadow-lg">
+                      <Cake className="text-white" size={60} />
+                    </div>
+                  </div>
+
+                  {/* Danh sách tên & chức danh */}
+                  <div className="lg:col-span-3 glass rounded-2xl bg-white/80 border border-slate-100 p-5 flex flex-col min-h-0">
+                    {birthdays.length === 0 ? (
+                      <div className="h-full min-h-[96px] flex items-center justify-center text-slate-400 text-xs font-semibold italic">
+                        Không có nhân sự nào sinh nhật trong Tháng {birthdayMonth}
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-3 flex-1 min-h-0 overflow-y-auto pr-1 content-start">
+                        {birthdays.map((b) => (
+                          <div key={b.id} className="flex items-center gap-3 min-w-0">
+                            <span className="shrink-0 w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-pink-500 text-white flex items-center justify-center font-extrabold text-[10px] shadow-sm">
+                              {String(b.day).padStart(2, "0")}
+                            </span>
+                            <div className="min-w-0">
+                              <p className="text-xs font-bold text-slate-800 truncate">{b.name}</p>
+                              <p className="text-[11px] text-slate-500 font-medium truncate">{b.role || "—"}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </section>
+
+              </div>
               )}
             </>
           )}

@@ -885,3 +885,52 @@ textarea {
     gap: 1rem !important;
   }
 }
+
+/* ─── Pháo hoa giấy cho ô "Sinh nhật theo tháng" (trang chủ) ───
+   Nổ MỘT LẦN khi ô cuộn vào tầm nhìn: page.tsx dùng IntersectionObserver để
+   gắn class .confetti-on lên thẻ ô. Thuần CSS, không thêm thư viện.
+   Vị trí/màu/độ trễ của từng mảnh giấy do page.tsx truyền vào qua biến CSS. */
+.confetti-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+.confetti-piece {
+  position: absolute;
+  top: -14%;
+  width: 7px;
+  height: 11px;
+  border-radius: 1px;
+  opacity: 0;
+}
+
+.confetti-on .confetti-piece {
+  animation: confetti-fall 2s cubic-bezier(0.25, 0.6, 0.35, 1) forwards;
+}
+
+@keyframes confetti-fall {
+  0%   { opacity: 0; transform: translate3d(0, -20%, 0) rotate(0deg) scale(0.9); }
+  12%  { opacity: 1; }
+  85%  { opacity: 1; }
+  100% { opacity: 0; transform: translate3d(var(--cf-dx, 0), 280%, 0) rotate(var(--cf-rot, 540deg)) scale(1); }
+}
+
+/* Bánh sinh nhật nảy nhẹ cùng lúc pháo giấy nổ */
+.confetti-on .birthday-cake {
+  animation: birthday-cake-pop 0.75s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes birthday-cake-pop {
+  0%   { transform: scale(0.82) rotate(-7deg); }
+  60%  { transform: scale(1.07) rotate(4deg); }
+  100% { transform: scale(1) rotate(0deg); }
+}
+
+/* Tôn trọng cài đặt giảm chuyển động của hệ điều hành */
+@media (prefers-reduced-motion: reduce) {
+  .confetti-on .confetti-piece { animation: none; }
+  .confetti-on .birthday-cake { animation: none; }
+}
