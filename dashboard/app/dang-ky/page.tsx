@@ -701,6 +701,9 @@ function BookingContent() {
 
   const myBookings = useMemo(() => {
     if (!currentUser) return [];
+    // Admin và người được cấp cờ "Duyệt đăng ký xe / phòng họp" xem FULL danh sách
+    // đăng ký, không giới hạn ở đăng ký của chính mình.
+    if (isHcnsApproverUser) return bookings.filter((b) => b.booking_type === bookingType);
     const loginEmail = currentUser.email.toLowerCase();
     // requester_email có thể là chuỗi nhiều email (hồ sơ nhân viên) nên so bằng includes
     return bookings.filter(
@@ -708,7 +711,7 @@ function BookingContent() {
         b.booking_type === bookingType &&
         ((b.requester_email || "").toLowerCase().includes(loginEmail) || b.requester_name === currentUser.name)
     );
-  }, [bookings, bookingType, currentUser]);
+  }, [bookings, bookingType, currentUser, isHcnsApproverUser]);
 
   const upcomingBookings = useMemo(() => {
     const now = Date.now();
@@ -1402,7 +1405,7 @@ function BookingContent() {
           <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium space-y-4">
             <h2 className="font-heading font-bold text-slate-800 text-sm flex items-center gap-2">
               <ClipboardList size={16} className="text-blue-600" />
-              Đăng ký của tôi
+              {isHcnsApproverUser ? `Toàn bộ đăng ký ${isVehicle ? "xe" : "phòng họp"}` : "Đăng ký của tôi"}
             </h2>
             {loadingList ? (
               <div className="flex items-center justify-center py-8 text-slate-400 text-xs font-semibold gap-2">
@@ -1410,7 +1413,11 @@ function BookingContent() {
                 Đang tải danh sách đăng ký...
               </div>
             ) : myBookings.length === 0 ? (
-              <p className="text-center text-slate-400 text-xs italic py-6">Bạn chưa có đăng ký {isVehicle ? "xe" : "phòng họp"} nào.</p>
+              <p className="text-center text-slate-400 text-xs italic py-6">
+                {isHcnsApproverUser
+                  ? `Chưa có đăng ký ${isVehicle ? "xe" : "phòng họp"} nào.`
+                  : `Bạn chưa có đăng ký ${isVehicle ? "xe" : "phòng họp"} nào.`}
+              </p>
             ) : (
               <div className="overflow-x-auto rounded-xl border border-slate-200/60 bg-white">
                 <table className="w-full text-xs text-left border-collapse">
@@ -1432,7 +1439,8 @@ function BookingContent() {
                           {formatDateTime(b.start_time)} ➔ {formatDateTime(b.end_time)}
                         </td>
                         <td className="py-3 px-4">{b.host_name}</td>
-                        <td className="py-3 px-4 text-center">{b.attendee_count}</td>
+                        {/* Căn trái cho thẳng lề với tiêu đề cột (cả bảng là text-left) */}
+                        <td className="py-3 px-4">{b.attendee_count}</td>
                         <td className="py-3 px-4">
                           <span
                             className={`inline-block px-2.5 py-1 rounded-full border text-[9px] font-extrabold uppercase ${STATUS_META[b.status]?.cls || ""}`}
@@ -1444,14 +1452,17 @@ function BookingContent() {
                             <p className="text-[10px] text-rose-500 font-normal mt-1 max-w-[200px]">Lý do: {b.reject_reason}</p>
                           )}
                         </td>
+                        {/* Xoá đăng ký: CHỈ Admin và người có cờ "Duyệt đăng ký xe /
+                            phòng họp". Tài khoản thường chỉ xem, không xoá được dòng
+                            nào — kể cả đăng ký do chính họ tạo. */}
                         <td className="py-3 px-4 text-center">
-                          {b.status === "pending_manager" ? (
+                          {isHcnsApproverUser ? (
                             <button
                               type="button"
                               onClick={() => handleCancelBooking(b.id)}
                               className="inline-flex items-center gap-1 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 text-[10px] font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 cursor-pointer"
                             >
-                              <Trash2 size={11} /> Huỷ
+                              <Trash2 size={11} /> Xoá
                             </button>
                           ) : (
                             <span className="text-[10px] text-slate-300">—</span>
