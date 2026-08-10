@@ -32,7 +32,9 @@ import {
   Calendar,
   ChevronDown,
   Building2,
-  Briefcase
+  Briefcase,
+  CheckCircle2,
+  AlertCircle
 } from "lucide-react";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { docSoVietNam, exportDeNghiChuyenTien, downloadDocFile } from "@/lib/wordExporter";
@@ -405,6 +407,47 @@ export default function AdministrationPage() {
   const [activeTab, setActiveTab] = useState<"checklist" | "invoice" | "recurring" | "report" | "vpp">("checklist");
   const [recurringSubTab, setRecurringSubTab] = useState<"suppliers" | "payments">("suppliers");
 
+  // Hộp thông báo giữa màn hình — cùng thiết kế với trang Lịch
+  // (calendar/page.tsx:1803), thay cho alert() mặc định của trình duyệt.
+  const [notice, setNotice] = useState<{
+    kind: "success" | "error" | "warning";
+    title: string;
+    message?: string;
+  } | null>(null);
+  const showNotice = (kind: "success" | "error" | "warning", title: string, message?: string) =>
+    setNotice({ kind, title, message });
+
+  // Hộp hỏi trước khi làm việc không hoàn tác, thay window.confirm().
+  // Trả về Promise<boolean> để chỗ gọi vẫn viết `if (await askConfirm(...))`
+  // y như cũ — không phải xé nhỏ thân hàm ra thành callback.
+  const [confirmBox, setConfirmBox] = useState<{
+    title: string;
+    message?: string;
+    confirmLabel: string;
+    tone: "danger" | "primary";
+  } | null>(null);
+  const confirmResolver = useRef<((ok: boolean) => void) | null>(null);
+
+  const askConfirm = (
+    title: string,
+    message?: string,
+    confirmLabel = "Xác nhận",
+    tone: "danger" | "primary" = "danger"
+  ) =>
+    new Promise<boolean>((resolve) => {
+      confirmResolver.current = resolve;
+      setConfirmBox({ title, message, confirmLabel, tone });
+    });
+
+  // Đóng hộp và trả kết quả đúng MỘT lần (bấm nền, bấm Huỷ hay bấm xác nhận
+  // đều đi qua đây), tránh treo Promise khiến luồng gọi đứng im.
+  const closeConfirm = (ok: boolean) => {
+    setConfirmBox(null);
+    const resolve = confirmResolver.current;
+    confirmResolver.current = null;
+    resolve?.(ok);
+  };
+
   // States for interactive monthly cost report
   const [reportRows, setReportRows] = useState<AdminMonthlyReport[]>([]);
   const [reportLoading, setReportLoading] = useState(false);
@@ -526,7 +569,7 @@ export default function AdministrationPage() {
   };
 
   const handleDeleteTask = async (id: string) => {
-    if (!window.confirm("Bạn có chắc chắn muốn xóa công việc này không?")) return;
+    if (!(await askConfirm("Xoá công việc này?", "Công việc sẽ bị xoá khỏi danh sách và không khôi phục được.", "Xoá"))) return;
     
     // Optimistic update
     setChecklist(prev => prev.filter(item => item.id !== id));
@@ -541,7 +584,7 @@ export default function AdministrationPage() {
       fetchChecklist();
     } catch (err: any) {
       console.error("Error deleting checklist task from Supabase:", err);
-      alert("Lỗi khi xóa công việc: " + (err.message || err));
+      showNotice("error", "Không xoá được công việc", err.message || String(err));
       fetchChecklist();
     }
   };
@@ -573,7 +616,7 @@ export default function AdministrationPage() {
       fetchChecklist();
     } catch (err: any) {
       console.error("Error adding checklist task to Supabase:", err);
-      alert("Lỗi khi thêm công việc: " + (err.message || err));
+      showNotice("error", "Không thêm được công việc", err.message || String(err));
     }
   };
 
@@ -1459,9 +1502,11 @@ export default function AdministrationPage() {
     } catch (err: any) {
       console.error("Error inserting supply:", err);
       // 23505 = trùng khoá; chỉ số duy nhất chặn trùng tên không phân biệt hoa/thường.
-      alert(err?.code === "23505"
-        ? `Vật tư "${item.name}" đã có trong danh mục.`
-        : NO_VPP_PERMISSION_MSG);
+      showNotice(
+        "warning",
+        err?.code === "23505" ? "Vật tư đã có trong danh mục" : "Không thêm được vật tư",
+        err?.code === "23505" ? `"${item.name}" đã tồn tại.` : NO_VPP_PERMISSION_MSG
+      );
       return null;
     }
   };
@@ -1483,7 +1528,7 @@ export default function AdministrationPage() {
     } catch (err) {
       console.error("Error updating supply:", err);
       setSupplies(previous);
-      alert(NO_VPP_PERMISSION_MSG);
+      showNotice("warning", "Không đủ quyền", NO_VPP_PERMISSION_MSG);
     }
   };
 
@@ -1697,14 +1742,14 @@ export default function AdministrationPage() {
 
   // Delete Supply Handler — xoá đúng dòng theo id
   const handleDeleteSupply = async (item: SupplyItem) => {
-    if (!window.confirm(`Bạn có chắc chắn muốn xóa vật tư "${item.name}" khỏi danh mục kho không?`)) return;
+    if (!(await askConfirm("Xoá vật tư khỏi danh mục kho?", `"${item.name}" sẽ bị xoá khỏi danh mục.`, "Xoá"))) return;
     try {
       const { error } = await supabase.from("vpp_supplies").delete().eq("id", item.id);
       if (error) throw error;
       setSupplies(prev => prev.filter(s => s.id !== item.id));
     } catch (err) {
       console.error("Error deleting supply:", err);
-      alert("Không xoá được vật tư. Bạn cần quyền phụ trách VPP (Admin / cờ can_manage_vpp / phòng HCNS).");
+      showNotice("warning", "Không xoá được vật tư", "Bạn cần quyền phụ trách VPP (Admin / cờ can_manage_vpp / phòng HCNS).");
     }
   };
 
@@ -1713,7 +1758,7 @@ export default function AdministrationPage() {
     if (!itemName || !itemName.trim()) return;
     const cleanName = itemName.trim();
     if (supplies.some(s => s.name.toLowerCase() === cleanName.toLowerCase())) {
-      alert(`Vật tư "${cleanName}" đã tồn tại trong danh mục.`);
+      showNotice("warning", "Vật tư đã tồn tại", `"${cleanName}" đã có trong danh mục.`);
       return;
     }
     
@@ -1742,7 +1787,11 @@ export default function AdministrationPage() {
     });
     if (!inserted) return;
 
-    alert(`Đã thêm nhanh vật tư "${cleanName}" (Đơn vị: ${guessedUnit}, Danh mục: ${guessedCat}) vào danh mục tồn kho hành chính với số lượng tồn kho mặc định là 0. Bạn có thể nhấp vào biểu tượng bút chì để cập nhật số lượng tồn kho!`);
+    showNotice(
+      "success",
+      `Đã thêm vật tư "${cleanName}"`,
+      `Đơn vị: ${guessedUnit} · Danh mục: ${guessedCat} · Tồn kho mặc định 0.\nBấm biểu tượng bút chì để cập nhật số lượng tồn kho.`
+    );
   };
 
   const handleDeleteRequest = async (reqId: string) => {
@@ -1753,16 +1802,20 @@ export default function AdministrationPage() {
     // "Chờ duyệt" — đã cấp phát rồi thì kho đã trừ, xoá đi là số liệu lệch.
     if (!isHcnsViewer) {
       if (!canSeeVppRequest(request.targetName) || request.status !== "Chờ duyệt") {
-        alert("Chỉ huỷ được yêu cầu của phòng bạn khi còn ở trạng thái Chờ duyệt.");
+        showNotice("warning", "Không huỷ được yêu cầu", "Chỉ huỷ được yêu cầu của phòng bạn khi còn ở trạng thái Chờ duyệt.");
         return;
       }
     }
 
     const confirmText = isHcnsViewer
-      ? "Bạn có chắc chắn muốn xóa yêu cầu cấp phát này không?"
+      ? "Yêu cầu cấp phát này sẽ bị xoá khỏi danh sách."
       : `Huỷ yêu cầu "${request.item}" (${request.qty} ${request.unit || ""}) của phòng bạn?`;
 
-    if (window.confirm(confirmText)) {
+    if (await askConfirm(
+      isHcnsViewer ? "Xoá yêu cầu cấp phát?" : "Huỷ yêu cầu cấp phát?",
+      confirmText,
+      isHcnsViewer ? "Xoá" : "Huỷ yêu cầu"
+    )) {
       try {
         if (reqId.includes("__")) {
           const [parentTaskId, itemIdStr] = reqId.split("__");
@@ -1779,7 +1832,7 @@ export default function AdministrationPage() {
             .maybeSingle();
           if (fetchErr) throw fetchErr;
           if (!taskData) {
-            alert("Không mở được phiếu gốc của yêu cầu này — có thể phiếu vừa bị xoá ở nơi khác. Danh sách sẽ được tải lại.");
+            showNotice("warning", "Không mở được phiếu gốc", "Có thể phiếu vừa bị xoá ở nơi khác. Danh sách sẽ được tải lại.");
             fetchDeptRequests();
             fetchChecklist();
             return;
@@ -1847,12 +1900,12 @@ export default function AdministrationPage() {
         // đã tự trả số dư cuối kỳ về đúng. Khối cộng tay cột `stock` trước đây
         // còn làm cộng đúp trên các vật tư chưa có `initialStock`.
 
-        alert("Đã xóa yêu cầu cấp phát thành công.");
+        showNotice("success", "Đã xoá yêu cầu cấp phát");
         fetchDeptRequests();
         fetchChecklist();
       } catch (err: any) {
         console.error("Error deleting VPP request from Supabase:", err);
-        alert("Lỗi khi xóa yêu cầu: " + (err.message || err));
+        showNotice("error", "Không xoá được yêu cầu", err.message || String(err));
       }
     }
   };
@@ -1871,7 +1924,7 @@ export default function AdministrationPage() {
   const handleAddSupplier = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!supplierNameState.trim() || !supplierAccountState.trim() || !supplierBankState.trim()) {
-      alert("Vui lòng nhập đầy đủ thông tin nhà cung cấp!");
+      showNotice("warning", "Chưa đủ thông tin", "Vui lòng nhập đầy đủ thông tin nhà cung cấp.");
       return;
     }
 
@@ -1892,7 +1945,7 @@ export default function AdministrationPage() {
       if (error) throw error;
 
       setSuppliers(prev => [...prev, newSupplier]);
-      alert("Đã thêm Nhà cung cấp thành công!");
+      showNotice("success", "Đã thêm nhà cung cấp");
     } catch (err: any) {
       console.error("Failed to add supplier to Supabase:", err);
       // Fallback
@@ -1901,7 +1954,7 @@ export default function AdministrationPage() {
       if (typeof window !== "undefined") {
         localStorage.setItem("tnec_suppliers", JSON.stringify(updated));
       }
-      alert("Đã thêm Nhà cung cấp (Lưu tạm trên trình duyệt)!");
+      showNotice("warning", "Đã thêm nhà cung cấp", "Mới lưu tạm trên trình duyệt do chưa đồng bộ được lên hệ thống.");
     }
 
     // Reset form
@@ -1914,7 +1967,7 @@ export default function AdministrationPage() {
   };
 
   const handleDeleteSupplier = async (id: string) => {
-    if (confirm("Bạn có chắc chắn muốn xóa Nhà cung cấp này không?")) {
+    if (await askConfirm("Xoá nhà cung cấp?", "Nhà cung cấp sẽ bị xoá khỏi danh mục.", "Xoá")) {
       try {
         const { error } = await supabase
           .from("suppliers")
@@ -1949,7 +2002,7 @@ export default function AdministrationPage() {
     e.preventDefault();
     const supp = suppliers.find(s => s.id === selectedSupplierId);
     if (!supp || !payAmount || isNaN(Number(payAmount))) {
-      alert("Vui lòng chọn Nhà cung cấp và nhập số tiền hợp lệ!");
+      showNotice("warning", "Chưa đủ thông tin", "Vui lòng chọn nhà cung cấp và nhập số tiền hợp lệ.");
       return;
     }
 
@@ -1991,7 +2044,7 @@ export default function AdministrationPage() {
         };
         addedInv = savedInv;
         setInvoices(prev => [savedInv, ...prev]);
-        alert("Đã thêm khoản thanh toán và đồng bộ thành công lên Supabase!");
+        showNotice("success", "Đồng bộ hóa đơn lên hệ thống");
       }
     } catch (err: any) {
       console.warn("Could not sync to Supabase (saving locally):", err.message || err);
@@ -2009,7 +2062,7 @@ export default function AdministrationPage() {
       };
       addedInv = newInv;
       setInvoices(prev => [newInv, ...prev]);
-      alert("Đã lưu khoản thanh toán thành công (lưu tạm thời trên trình duyệt do lỗi kết nối Supabase)!");
+      showNotice("warning", "Đã lưu khoản thanh toán", "Mới lưu tạm trên trình duyệt do lỗi kết nối hệ thống.");
     }
 
     const newPayment: SupplierPayment = {
@@ -2042,7 +2095,7 @@ export default function AdministrationPage() {
   };
 
   const handleDeletePendingPayment = async (id: string) => {
-    if (confirm("Bạn có chắc chắn muốn xóa khoản thanh toán này?")) {
+    if (await askConfirm("Xoá khoản thanh toán?", "Khoản thanh toán sẽ bị xoá khỏi danh sách.", "Xoá")) {
       try {
         if (!id.startsWith("PAY-") && !id.startsWith("INV-")) {
           const { error } = await supabase
@@ -2095,7 +2148,7 @@ export default function AdministrationPage() {
   const handleExportDeNghiChuyenTien = async () => {
     const currentMonthPayments = pendingPayments.filter(p => p.month === payMonth);
     if (currentMonthPayments.length === 0) {
-      alert("Danh sách thanh toán trống, không thể xuất file!");
+      showNotice("warning", "Danh sách thanh toán trống", "Không có dữ liệu để xuất file.");
       return;
     }
 
@@ -2147,7 +2200,7 @@ export default function AdministrationPage() {
         await new Promise(resolve => setTimeout(resolve, 300));
       }
     } catch (error: any) {
-      alert("Lỗi khi xuất phiếu đề nghị chuyển tiền: " + error.message);
+      showNotice("error", "Không xuất được phiếu đề nghị chuyển tiền", error.message);
     } finally {
       setExportLoading(false);
     }
@@ -2354,7 +2407,7 @@ export default function AdministrationPage() {
       document.body.removeChild(a);
       window.URL.revokeObjectURL(url);
     } catch (err: any) {
-      alert("Lỗi khi kết xuất báo cáo: " + err.message);
+      showNotice("error", "Không kết xuất được báo cáo", err.message);
     }
   };
 
@@ -2570,7 +2623,7 @@ export default function AdministrationPage() {
   };
 
   const handleDeleteReportRow = async (rowId: string, content: string) => {
-    if (!window.confirm(`Bạn có chắc chắn muốn xóa hạng mục "${content}" không?`)) return;
+    if (!(await askConfirm("Xoá hạng mục?", `"${content}" sẽ bị xoá khỏi báo cáo.`, "Xoá"))) return;
 
     try {
       const { error } = await supabase
@@ -2582,7 +2635,7 @@ export default function AdministrationPage() {
       setReportRows(prev => prev.filter(row => row.id !== rowId));
     } catch (err) {
       console.error("Failed to delete custom row:", err);
-      alert("Lỗi khi xóa hạng mục!");
+      showNotice("error", "Không xoá được hạng mục");
     }
   };
 
@@ -2946,12 +2999,12 @@ export default function AdministrationPage() {
 
       setReportRows(finalRows);
       if (!silent) {
-        alert("Đồng bộ dữ liệu chi phí từ hóa đơn và thanh toán định kỳ thành công!");
+        showNotice("success", "Đồng bộ dữ liệu chi phí thành công", "Đã lấy từ hoá đơn và thanh toán định kỳ.");
       }
     } catch (err: any) {
       console.error("Error during auto fill:", err);
       if (!silent) {
-        alert("Lỗi khi đồng bộ dữ liệu: " + err.message);
+        showNotice("error", "Không đồng bộ được dữ liệu", err.message);
       }
     } finally {
       if (!silent) setAutoFillLoading(false);
@@ -3001,7 +3054,7 @@ export default function AdministrationPage() {
           window.URL.revokeObjectURL(url);
         } catch (error: any) {
           console.error("Lỗi xuất báo cáo:", error);
-          alert("Đã xảy ra lỗi khi tải báo cáo: " + error.message);
+          showNotice("error", "Không tải được báo cáo", error.message);
         } finally {
           setIsExportingReport(false);
         }
@@ -3047,7 +3100,7 @@ export default function AdministrationPage() {
       document.body.removeChild(a);
       window.URL.revokeObjectURL(url);
     } catch (err: any) {
-      alert("Lỗi khi kết xuất báo cáo: " + err.message);
+      showNotice("error", "Không kết xuất được báo cáo", err.message);
     }
   };
 
@@ -3093,7 +3146,7 @@ export default function AdministrationPage() {
       document.body.removeChild(a);
       window.URL.revokeObjectURL(url);
     } catch (error: any) {
-      alert("Lỗi khi xuất phiếu đề nghị chuyển tiền: " + error.message);
+      showNotice("error", "Không xuất được phiếu đề nghị chuyển tiền", error.message);
     } finally {
       setExportLoading(false);
     }
@@ -3107,8 +3160,11 @@ export default function AdministrationPage() {
     // Check if stock is sufficient
     const supply = findMatchingSupplyDynamic(request.item);
     if (supply && supply.ending < request.qty) {
-      const confirmProceed = window.confirm(
-        `Cảnh báo: Số lượng tồn kho của "${request.item}" (Còn lại: ${supply.ending} ${supply.unit}) ít hơn số lượng yêu cầu (${request.qty} ${supply.unit}).\nBạn vẫn muốn tiếp tục cấp phát?`
+      const confirmProceed = await askConfirm(
+        "Tồn kho không đủ",
+        `"${request.item}" chỉ còn ${supply.ending} ${supply.unit}, ít hơn số yêu cầu (${request.qty} ${supply.unit}).\nVẫn tiếp tục cấp phát?`,
+        "Vẫn cấp phát",
+        "primary"
       );
       if (!confirmProceed) return;
     }
@@ -3165,14 +3221,14 @@ export default function AdministrationPage() {
       // Update deptRequests state locally (optimistic/immediate update)
       setDeptRequests(prev => prev.map(r => r.id === reqId ? { ...r, status: "Đã cấp phát" } : r));
 
-      alert(`Đã duyệt cấp phát ${request.qty} ${request.item} cho ${request.dept}. Tồn kho đã tự động khấu trừ.`);
+      showNotice("success", "Đã duyệt cấp phát", `${request.qty} ${request.item} cho ${request.dept}. Tồn kho đã tự động khấu trừ.`);
       
       // Refresh list from Supabase
       fetchDeptRequests();
       fetchChecklist();
     } catch (err: any) {
       console.error("Error approving request in Supabase:", err);
-      alert("Lỗi khi phê duyệt cấp phát: " + (err.message || err));
+      showNotice("error", "Không phê duyệt được cấp phát", err.message || String(err));
     }
   };
 
@@ -3185,7 +3241,7 @@ export default function AdministrationPage() {
     );
 
     if (pendingReqs.length === 0) {
-      alert("Không có yêu cầu cấp phát nào đang chờ duyệt.");
+      showNotice("warning", "Không có yêu cầu chờ duyệt");
       return;
     }
 
@@ -3201,12 +3257,20 @@ export default function AdministrationPage() {
     });
 
     if (hasInsufficientStock) {
-      const confirmProceed = window.confirm(
-        `Cảnh báo: Có một số vật tư yêu cầu vượt quá lượng tồn kho thực tế:${warningDetails}\n\nBạn vẫn muốn tiếp tục phê duyệt tất cả?`
+      const confirmProceed = await askConfirm(
+        "Một số vật tư vượt tồn kho",
+        `Các vật tư sau vượt quá tồn kho thực tế:${warningDetails}\n\nVẫn tiếp tục phê duyệt tất cả?`,
+        "Vẫn phê duyệt",
+        "primary"
       );
       if (!confirmProceed) return;
     } else {
-      const confirmProceed = window.confirm(`Bạn có chắc chắn muốn phê duyệt toàn bộ ${pendingReqs.length} yêu cầu đang chờ duyệt của bộ phận này không?`);
+      const confirmProceed = await askConfirm(
+        "Phê duyệt toàn bộ yêu cầu?",
+        `${pendingReqs.length} yêu cầu đang chờ duyệt của bộ phận này sẽ được duyệt cùng lúc.`,
+        "Phê duyệt",
+        "primary"
+      );
       if (!confirmProceed) return;
     }
 
@@ -3279,12 +3343,12 @@ export default function AdministrationPage() {
       const ids = pendingReqs.map(r => r.id);
       setDeptRequests(prev => prev.map(r => ids.includes(r.id) ? { ...r, status: "Đã cấp phát" } : r));
 
-      alert(`Đã phê duyệt cấp phát thành công ${pendingReqs.length} yêu cầu.`);
+      showNotice("success", "Đã phê duyệt cấp phát", `${pendingReqs.length} yêu cầu đã được duyệt.`);
       fetchDeptRequests();
       fetchChecklist();
     } catch (err: any) {
       console.error("Error approving all requests in Supabase:", err);
-      alert("Lỗi khi phê duyệt tất cả: " + (err.message || err));
+      showNotice("error", "Không phê duyệt được toàn bộ", err.message || String(err));
     }
   };
 
@@ -3295,7 +3359,7 @@ export default function AdministrationPage() {
       const filteredRequests = slipRequestsOf(type, targetName);
 
       if (filteredRequests.length === 0) {
-        alert("Bộ phận này chưa có yêu cầu văn phòng phẩm nào để điền vào phiếu.");
+        showNotice("warning", "Chưa có yêu cầu nào", "Bộ phận này chưa có yêu cầu văn phòng phẩm để điền vào phiếu.");
         return;
       }
 
@@ -3351,7 +3415,7 @@ export default function AdministrationPage() {
       window.URL.revokeObjectURL(url);
     } catch (err: any) {
       console.error("Lỗi xuất file Word VPP:", err);
-      alert("Lỗi xuất file Word: " + err.message);
+      showNotice("error", "Không xuất được file Word", err.message);
     }
   };
 
@@ -3359,13 +3423,13 @@ export default function AdministrationPage() {
   const handleAddSupply = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newSupplyName.trim() || !newSupplyUnit.trim()) {
-      alert("Vui lòng điền đầy đủ thông tin vật tư.");
+      showNotice("warning", "Chưa đủ thông tin", "Vui lòng điền đầy đủ thông tin vật tư.");
       return;
     }
 
     // Check duplicate (chỉ số duy nhất trên DB là chốt chặn cuối)
     if (supplies.some(s => s.name.toLowerCase() === newSupplyName.trim().toLowerCase())) {
-      alert("Vật tư này đã tồn tại trong kho.");
+      showNotice("warning", "Vật tư đã tồn tại", "Vật tư này đã có trong kho.");
       return;
     }
 
@@ -3383,7 +3447,7 @@ export default function AdministrationPage() {
     setNewSupplyName("");
     setNewSupplyUnit("");
     setNewSupplyStock("");
-    alert("Đã thêm vật tư mới vào kho thành công.");
+    showNotice("success", "Đã thêm vật tư mới vào kho");
   };
 
   // VPP Edit stock handlers (Beginning and Imported)
@@ -3436,7 +3500,9 @@ export default function AdministrationPage() {
     // state trên giao diện đang là gì.
     const targetName = isHcnsViewer ? newPYCTargetName : myVppTargetName;
     if (!targetName) {
-      alert(
+      showNotice(
+        "warning",
+        "Chưa xác định được bộ phận nhận cấp phát",
         isHcnsViewer
           ? "Vui lòng chọn bộ phận nhận cấp phát."
           : "Hồ sơ của bạn chưa có phòng ban nên chưa tạo được phiếu. Vui lòng báo Hành chính Nhân sự cập nhật giúp."
@@ -3447,7 +3513,7 @@ export default function AdministrationPage() {
     // ô rồi quên là chuyện thường, không đáng bắt làm lại từ đầu.
     const lines = newPYCLines.filter(l => l.name && Number(l.qty) > 0);
     if (lines.length === 0) {
-      alert("Vui lòng chọn ít nhất một vật tư và nhập số lượng lớn hơn 0.");
+      showNotice("warning", "Chưa chọn vật tư", "Vui lòng chọn ít nhất một vật tư và nhập số lượng lớn hơn 0.");
       return;
     }
 
@@ -3513,8 +3579,10 @@ export default function AdministrationPage() {
 
         if (updateErr) throw updateErr;
 
-        alert(
-          `Đã thêm ${lines.length} vật tư vào phiếu yêu cầu cấp phát VPP tháng ${currentMonthStr} của ${targetName}.`
+        showNotice(
+          "success",
+          "Đã thêm vật tư vào phiếu yêu cầu",
+          `${lines.length} vật tư vào phiếu cấp phát VPP tháng ${currentMonthStr} của ${targetName}.`
         );
       } else {
         const items = lines.map((line, i) => ({
@@ -3552,7 +3620,7 @@ export default function AdministrationPage() {
 
         if (error) throw error;
 
-        alert(`Đã tạo thành công Phiếu yêu cầu cấp phát VPP (${lines.length} vật tư) cho ${deptName}.`);
+        showNotice("success", "Đã tạo phiếu yêu cầu cấp phát VPP", `${lines.length} vật tư cho ${deptName}.`);
       }
 
       setShowNewPYCModal(false);
@@ -3567,7 +3635,7 @@ export default function AdministrationPage() {
       fetchChecklist();
     } catch (err: any) {
       console.error("Error creating PYC in Supabase:", err);
-      alert("Lỗi khi tạo phiếu yêu cầu: " + (err.message || err));
+      showNotice("error", "Không tạo được phiếu yêu cầu", err.message || String(err));
     }
   };
 
@@ -3621,7 +3689,7 @@ export default function AdministrationPage() {
     const isOfficeFile = /\.(xlsx|xls|docx|doc)$/.test(lowerName);
 
     if (!isImageFile && !isPdfFile && !isOfficeFile) {
-      alert("Định dạng file không hỗ trợ. Vui lòng chọn Excel (.xlsx/.xls), Word (.docx/.doc), PDF hoặc ảnh (.png/.jpg/.jpeg).");
+      showNotice("warning", "Định dạng file không hỗ trợ", "Vui lòng chọn Excel (.xlsx/.xls), Word (.docx/.doc), PDF hoặc ảnh (.png/.jpg/.jpeg).");
       e.target.value = "";
       return;
     }
@@ -3640,8 +3708,10 @@ export default function AdministrationPage() {
     if (file.size > 4 * 1024 * 1024) {
       setVppFileUploading(false);
       e.target.value = "";
-      alert(
-        `File "${originalFile.name}" nặng ${(file.size / 1024 / 1024).toFixed(1)}MB, vượt giới hạn 4MB.\n` +
+      showNotice(
+        "warning",
+        "File vượt giới hạn 4MB",
+        `File "${originalFile.name}" nặng ${(file.size / 1024 / 1024).toFixed(1)}MB.\n` +
         "Vui lòng nén lại file PDF hoặc chụp/quét lại ảnh với dung lượng nhỏ hơn."
       );
       return;
@@ -3703,7 +3773,7 @@ export default function AdministrationPage() {
       setShowVppPreviewModal(true);
     } catch (err: any) {
       console.error("Error analyzing VPP document:", err);
-      alert("Lỗi khi phân tích tài liệu: " + (err.message || err));
+      showNotice("error", "Không phân tích được tài liệu", err.message || String(err));
     } finally {
       setVppFileUploading(false);
     }
@@ -3712,11 +3782,11 @@ export default function AdministrationPage() {
   const handleConfirmVppPreview = async () => {
     const selectedItems = vppPreviewItems.filter(item => item.checked && item.qty > 0 && item.name.trim() !== "");
     if (selectedItems.length === 0) {
-      alert("Vui lòng chọn ít nhất một vật tư hợp lệ để tạo phiếu yêu cầu.");
+      showNotice("warning", "Chưa chọn vật tư", "Vui lòng chọn ít nhất một vật tư hợp lệ để tạo phiếu yêu cầu.");
       return;
     }
     if (!vppPreviewTargetName) {
-      alert("Vui lòng chọn phòng ban hoặc dự án yêu cầu.");
+      showNotice("warning", "Chưa chọn nơi yêu cầu", "Vui lòng chọn phòng ban hoặc dự án yêu cầu.");
       return;
     }
 
@@ -3752,7 +3822,7 @@ export default function AdministrationPage() {
           sourceFileName = vppPreviewSourceFile.name;
         } catch (uploadErr: any) {
           console.error("Lỗi tải phiếu gốc VPP lên Storage:", uploadErr);
-          alert("Không lưu được file gốc lên hệ thống (" + (uploadErr.message || uploadErr) + ").\nPhiếu yêu cầu vẫn được tạo nhưng sẽ không xem lại được phiếu gốc.");
+          showNotice("warning", "Không lưu được file gốc", (uploadErr.message || String(uploadErr)) + "\nPhiếu yêu cầu vẫn được tạo nhưng sẽ không xem lại được phiếu gốc.");
         }
       }
 
@@ -3795,7 +3865,7 @@ export default function AdministrationPage() {
 
       if (error) throw error;
 
-      alert(`Đã tạo thành công Phiếu yêu cầu cấp phát VPP cho ${deptName} với ${items.length} vật tư.`);
+      showNotice("success", "Đã tạo phiếu yêu cầu cấp phát VPP", `${items.length} vật tư cho ${deptName}.`);
       setShowVppPreviewModal(false);
       setVppPreviewRequesterName("");
       setVppPreviewSourceFile(null);
@@ -3805,7 +3875,7 @@ export default function AdministrationPage() {
       fetchChecklist();
     } catch (err: any) {
       console.error("Error creating batch PYC in Supabase:", err);
-      alert("Lỗi khi tạo danh sách phiếu yêu cầu: " + (err.message || err));
+      showNotice("error", "Không tạo được danh sách phiếu yêu cầu", err.message || String(err));
     }
   };
 
@@ -3902,7 +3972,7 @@ export default function AdministrationPage() {
       }));
     } catch (err: any) {
       console.error("Error updating VPP field:", err);
-      alert("Lỗi khi cập nhật dữ liệu: " + (err.message || err));
+      showNotice("error", "Không cập nhật được dữ liệu", err.message || String(err));
     }
   };
 
@@ -3913,7 +3983,7 @@ export default function AdministrationPage() {
 
     // Check duplicate
     if (allocationTargets.some(t => t.type === newTargetType && t.name.toLowerCase() === newTargetName.trim().toLowerCase())) {
-      alert("Đối tượng cấp phát này đã tồn tại trong danh mục.");
+      showNotice("warning", "Đối tượng đã tồn tại", "Đối tượng cấp phát này đã có trong danh mục.");
       return;
     }
 
@@ -3933,12 +4003,12 @@ export default function AdministrationPage() {
     setNewTargetName("");
     setNewTargetReceiver("");
     setNewTargetNotes("");
-    alert("Đã thêm đối tượng cấp phát mới thành công.");
+    showNotice("success", "Đã thêm đối tượng cấp phát mới");
   };
 
   // Delete Allocation Target Handler
-  const handleDeleteAllocationTarget = (id: string) => {
-    if (!window.confirm("Bạn có chắc chắn muốn xóa đối tượng cấp phát này không? Các phiếu yêu cầu hiện tại của đối tượng này vẫn được giữ nguyên.")) return;
+  const handleDeleteAllocationTarget = async (id: string) => {
+    if (!(await askConfirm("Xoá đối tượng cấp phát?", "Các phiếu yêu cầu hiện tại của đối tượng này vẫn được giữ nguyên.", "Xoá"))) return;
     const updated = allocationTargets.filter(t => t.id !== id);
     setAllocationTargets(updated);
     localStorage.setItem("tnec_allocation_targets", JSON.stringify(updated));
@@ -4166,7 +4236,7 @@ export default function AdministrationPage() {
       document.body.removeChild(a);
       window.URL.revokeObjectURL(url);
     } catch (error: any) {
-      alert("Lỗi khi xuất phiếu đề nghị thanh toán: " + error.message);
+      showNotice("error", "Không xuất được phiếu đề nghị thanh toán", error.message);
     } finally {
       setExportLoading(false);
     }
@@ -4284,7 +4354,7 @@ export default function AdministrationPage() {
 
       const res = await fetchInvoices();
       setInvoiceQueue([]);
-      alert("Đã đồng bộ lưu tất cả hóa đơn thành công vào danh sách lịch sử trên Supabase!");
+      showNotice("success", "Đồng bộ hóa đơn lên hệ thống", "Đã lưu toàn bộ hóa đơn vào danh sách lịch sử.");
       if (res) {
         await handleAutoFillReport(res.invoices, res.pendingPayments, true);
       }
@@ -4325,13 +4395,13 @@ export default function AdministrationPage() {
       const updatedInvs = [...newInvs, ...invoices];
       setInvoices(updatedInvs);
       setInvoiceQueue([]);
-      alert(`Đã lưu hóa đơn thành công vào danh sách tạm thời! Lỗi kết nối Supabase: ${dbErr.message}`);
+      showNotice("warning", "Đã lưu hóa đơn tạm thời", `Chưa đồng bộ được lên hệ thống: ${dbErr.message}`);
       await handleAutoFillReport(updatedInvs, pendingPayments, true);
     }
   };
 
   const handleDeleteInvoice = async (id: string) => {
-    if (confirm("Bạn có chắc chắn muốn xóa hóa đơn này khỏi lịch sử không?")) {
+    if (await askConfirm("Xoá hóa đơn khỏi lịch sử?", "Hóa đơn sẽ bị xoá khỏi danh sách lịch sử.", "Xoá")) {
       try {
         // If it's a UUID from Supabase (not starting with INV- and not HD-DK-)
         if (!id.startsWith("INV-") && !id.startsWith("HD-DK-")) {
@@ -4347,7 +4417,7 @@ export default function AdministrationPage() {
         handleAutoFillReport(updated, pendingPayments, true);
       } catch (err: any) {
         console.error("Delete invoice error:", err);
-        alert("Lỗi khi xóa hóa đơn từ Supabase: " + err.message);
+        showNotice("error", "Không xoá được hóa đơn", err.message);
       }
     }
   };
@@ -4369,7 +4439,7 @@ export default function AdministrationPage() {
         if (error) throw error;
       } catch (err: any) {
         console.error("Failed to update invoice number:", err);
-        alert("Lỗi khi cập nhật số hóa đơn trên Supabase: " + err.message);
+        showNotice("error", "Không cập nhật được số hóa đơn", err.message);
       }
     }
 
@@ -4394,7 +4464,7 @@ export default function AdministrationPage() {
         if (error) throw error;
       } catch (err: any) {
         console.error("Failed to update invoice project:", err);
-        alert("Lỗi khi cập nhật Ban điều hành trên Supabase: " + err.message);
+        showNotice("error", "Không cập nhật được Ban điều hành", err.message);
       }
     }
 
@@ -4439,10 +4509,10 @@ export default function AdministrationPage() {
       if (typeof window !== "undefined") {
         localStorage.setItem("tnec_pending_payments", JSON.stringify(updated));
       }
-      alert("Tải lên hóa đơn thành công!");
+      showNotice("success", "Tải lên hóa đơn thành công");
     } catch (err: any) {
       console.error("Upload payment file error:", err);
-      alert("Lỗi khi tải lên hóa đơn: " + (err.message || err));
+      showNotice("error", "Không tải lên được hóa đơn", err.message || String(err));
     } finally {
       setUploadingPaymentId(null);
     }
@@ -4490,14 +4560,14 @@ export default function AdministrationPage() {
       if (typeof window !== "undefined") {
         localStorage.setItem("tnec_pending_payments", JSON.stringify(updatedPayments));
       }
-      alert("Cập nhật thông tin thanh toán thành công!");
+      showNotice("success", "Cập nhật thông tin thanh toán thành công");
       setEditingPayment(null);
 
       // Trigger silent auto sync with updated lists
       handleAutoFillReport(updatedInvs, updatedPayments, true);
     } catch (err: any) {
       console.error("Update payment error:", err);
-      alert("Lỗi khi cập nhật thanh toán: " + (err.message || err));
+      showNotice("error", "Không cập nhật được thanh toán", err.message || String(err));
     }
   };
 
@@ -7857,7 +7927,7 @@ export default function AdministrationPage() {
                               onClick={() => {
                                 const currentMonthPayments = pendingPayments.filter(p => p.month === payMonth);
                                 if (currentMonthPayments.length === 0) {
-                                  alert("Danh sách thanh toán trống, không thể xem trước!");
+                                  showNotice("warning", "Danh sách thanh toán trống", "Không có dữ liệu để xem trước.");
                                   return;
                                 }
                                 setSelectedRecurringPreviewIdx(0);
@@ -8888,7 +8958,7 @@ DROP POLICY IF EXISTS "Allow public update for invoices" ON public.invoices;
 CREATE POLICY "Allow public update for invoices" ON public.invoices FOR UPDATE USING (true);
 DROP POLICY IF EXISTS "Allow public delete for invoices" ON public.invoices;
 CREATE POLICY "Allow public delete for invoices" ON public.invoices FOR DELETE USING (true);`);
-                    alert('Đã sao chép mã SQL vào Clipboard!');
+                    showNotice("success", "Đã sao chép mã SQL");
                   }}
                   className="absolute top-2 right-2 px-2.5 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-lg text-[9px] font-bold transition-all cursor-pointer border-none"
                 >
@@ -9341,6 +9411,114 @@ CREATE POLICY "Allow public delete for invoices" ON public.invoices FOR DELETE U
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Hộp thông báo giữa màn hình — thay alert() của trình duyệt.
+          Giữ đúng thiết kế đang dùng ở trang Lịch (calendar/page.tsx:1803):
+          nền mờ, hộp bo tròn, vòng tròn biểu tượng, một nút đóng. */}
+      {notice && (
+        <div
+          className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => setNotice(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-2xl w-full max-w-sm p-7 shadow-2xl border border-slate-100 text-center space-y-5 animate-in fade-in-50 zoom-in-95 duration-200"
+          >
+            <div className="flex justify-center">
+              <div
+                className={`w-16 h-16 rounded-full flex items-center justify-center ring-8 ${
+                  notice.kind === "success"
+                    ? "bg-emerald-50 text-emerald-500 ring-emerald-500/10"
+                    : notice.kind === "warning"
+                    ? "bg-amber-50 text-amber-500 ring-amber-500/10"
+                    : "bg-rose-50 text-rose-500 ring-rose-500/10"
+                }`}
+              >
+                {notice.kind === "success"
+                  ? <CheckCircle2 size={36} strokeWidth={2.2} />
+                  : <AlertCircle size={36} strokeWidth={2.2} />}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <h3 className="font-heading font-extrabold text-sm text-slate-800">{notice.title}</h3>
+              {notice.message && (
+                <p className="text-[11px] font-semibold text-slate-500 leading-relaxed whitespace-pre-line">
+                  {notice.message}
+                </p>
+              )}
+            </div>
+
+            <button
+              type="button"
+              autoFocus
+              onClick={() => setNotice(null)}
+              className="w-full bg-[#005BAC] hover:bg-blue-700 text-white text-xs font-bold py-2.5 rounded-xl shadow-sm shadow-blue-500/20 transition-all active:scale-95"
+            >
+              Đã hiểu
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Hộp hỏi trước khi làm việc không hoàn tác — thay window.confirm().
+          Bấm nền hoặc Huỷ đều trả false nên luồng đang await không bị treo. */}
+      {confirmBox && (
+        <div
+          className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => closeConfirm(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-2xl w-full max-w-sm p-7 shadow-2xl border border-slate-100 text-center space-y-5 animate-in fade-in-50 zoom-in-95 duration-200"
+          >
+            <div className="flex justify-center">
+              <div
+                className={`w-16 h-16 rounded-full flex items-center justify-center ring-8 ${
+                  confirmBox.tone === "danger"
+                    ? "bg-rose-50 text-rose-500 ring-rose-500/10"
+                    : "bg-amber-50 text-amber-500 ring-amber-500/10"
+                }`}
+              >
+                {confirmBox.tone === "danger"
+                  ? <Trash2 size={32} strokeWidth={2.2} />
+                  : <AlertCircle size={32} strokeWidth={2.2} />}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <h3 className="font-heading font-extrabold text-sm text-slate-800">{confirmBox.title}</h3>
+              {confirmBox.message && (
+                <p className="text-[11px] font-semibold text-slate-500 leading-relaxed whitespace-pre-line text-left">
+                  {confirmBox.message}
+                </p>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => closeConfirm(false)}
+                className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold py-2.5 rounded-xl transition-all active:scale-95"
+              >
+                Huỷ bỏ
+              </button>
+              <button
+                type="button"
+                autoFocus
+                onClick={() => closeConfirm(true)}
+                className={`flex-1 text-white text-xs font-bold py-2.5 rounded-xl shadow-sm transition-all active:scale-95 ${
+                  confirmBox.tone === "danger"
+                    ? "bg-rose-600 hover:bg-rose-700 shadow-rose-500/20"
+                    : "bg-[#005BAC] hover:bg-blue-700 shadow-blue-500/20"
+                }`}
+              >
+                {confirmBox.confirmLabel}
+              </button>
+            </div>
           </div>
         </div>
       )}
