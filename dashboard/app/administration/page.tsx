@@ -1675,6 +1675,13 @@ export default function AdministrationPage() {
     isManagerRole(currentUser.role)
   ));
 
+  // Xoá Nhà cung cấp: CHỈ Admin. Danh mục NCC ai cũng tự thêm được, nhưng xoá thì
+  // kéo theo hồ sơ thanh toán tham chiếu tới nó nên không mở cho cấp quản lý.
+  const canDeleteSupplier = !!(currentUser && (
+    currentUser.isAdmin ||
+    currentUser.role.toLowerCase() === "admin"
+  ));
+
   const canApproveRequests = !!(currentUser && (
     currentUser.isAdmin ||
     currentUser.role.toLowerCase() === "admin" ||
@@ -7684,7 +7691,7 @@ export default function AdministrationPage() {
                                 <th className="py-2.5 px-3">Ngân Hàng Thụ Hưởng</th>
                                 <th className="py-2.5 px-3">Hàng Hóa / Dịch Vụ</th>
                                 <th className="py-2.5 px-3">Dự án / Bộ phận</th>
-                                <th className="py-2.5 px-3 w-12 text-center">Xóa</th>
+                                {canDeleteSupplier && <th className="py-2.5 px-3 w-12 text-center">Xóa</th>}
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
@@ -7696,20 +7703,22 @@ export default function AdministrationPage() {
                                   <td className="py-3 px-3 text-slate-500 text-[11px] leading-snug">{s.bank}</td>
                                   <td className="py-3 px-3 text-slate-400 italic text-[11px]">{s.service || "—"}</td>
                                   <td className="py-3 px-3 text-slate-600 font-bold text-[11px]">{s.project_name || "Văn phòng HCM"}</td>
-                                  <td className="py-3 px-3 text-center">
-                                    <button
-                                      onClick={() => handleDeleteSupplier(s.id)}
-                                      className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                                      title="Xóa nhà cung cấp"
-                                    >
-                                      <Trash2 size={13} />
-                                    </button>
-                                  </td>
+                                  {canDeleteSupplier && (
+                                    <td className="py-3 px-3 text-center">
+                                      <button
+                                        onClick={() => handleDeleteSupplier(s.id)}
+                                        className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                        title="Xóa nhà cung cấp"
+                                      >
+                                        <Trash2 size={13} />
+                                      </button>
+                                    </td>
+                                  )}
                                 </tr>
                               ))}
                               {suppliers.length === 0 && (
                                 <tr>
-                                  <td colSpan={7} className="py-10 text-center text-slate-400 italic">Danh sách NCC trống. Hãy thêm nhà cung cấp mới.</td>
+                                  <td colSpan={canDeleteSupplier ? 7 : 6} className="py-10 text-center text-slate-400 italic">Danh sách NCC trống. Hãy thêm nhà cung cấp mới.</td>
                                 </tr>
                               )}
                             </tbody>
