@@ -10,6 +10,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 import {
   Users,
   UserPlus,
+  UserMinus,
   BadgeCheck,
   Wallet,
   Building2,
@@ -321,7 +322,17 @@ export default function DashboardPage() {
       const t = (c.type || "").trim();
       return t !== "" && t !== "Thử việc";
     }).length;
-    return { headcount, official };
+    // Nghỉ việc: dùng cờ `is_resigned` do view employees_directory tính sẵn
+    // (migration 031). Không tự so chuỗi ở đây vì view không có cột `notes`
+    // — mà nhiều hồ sơ chỉ đánh dấu "NV Nghỉ việc" ở Ghi chú, đếm theo
+    // `status` không thôi sẽ ra số thấp hơn module "Danh sách nhân viên".
+    // Fallback theo status để trang không vỡ nếu migration chưa chạy.
+    const resigned = employees.filter((e: any) =>
+      e.is_resigned !== undefined
+        ? !!e.is_resigned
+        : (e.status || "").toLowerCase().includes("nghỉ việc")
+    ).length;
+    return { headcount, official, resigned };
   }, [employees, contracts]);
 
   // Chi phí của tôi trong THÁNG HIỆN TẠI (theo ngày phiếu) + tổng lũy kế
@@ -348,9 +359,15 @@ export default function DashboardPage() {
   // Admin / người có cờ "Xem lương & HĐLĐ" (migration 018). Người khác đọc ra 0
   // dòng, hiện số 0 sẽ trông như lỗi -> ẩn hẳn ô đó với họ.
   const canSeeContractStat = user.isAdmin || user.perms.canViewSalary;
+
+  // Hai khối "Tuyển dụng nhân sự" và "Nhân sự & Phúc lợi" chỉ dành cho
+  // Giám đốc / Phó Giám đốc / Admin. Tài khoản khác chỉ thấy Tin tức và
+  // Chi phí hành chính tổng hợp.
+  const canSeeHrBlocks = user.isAdmin || user.isDirector;
   const hrCards = [
     { label: "Nhân sự hiện tại", value: hr.headcount, icon: Users, grad: "from-indigo-500 to-blue-600" },
     { label: "Nhân sự mới vào (nhận việc)", value: recruit.acceptedHires, icon: UserPlus, grad: "from-emerald-500 to-teal-600" },
+    { label: "Nhân sự nghỉ việc", value: hr.resigned, icon: UserMinus, grad: "from-amber-500 to-orange-600" },
     ...(canSeeContractStat
       ? [{ label: "HĐ lao động chính thức", value: hr.official, icon: BadgeCheck, grad: "from-blue-500 to-cyan-600" }]
       : []),
@@ -444,7 +461,8 @@ export default function DashboardPage() {
                 </section>
               )}
 
-              {/* ── Tuyển dụng nhân sự 2 khối ── */}
+              {/* ── Tuyển dụng nhân sự 2 khối (chỉ Giám đốc/Phó GĐ/Admin) ── */}
+              {canSeeHrBlocks && (
               <section className="space-y-4 animate-in fade-in duration-300">
                 <div className="flex items-center justify-between gap-3">
                   <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Tuyển dụng nhân sự</h2>
@@ -528,8 +546,10 @@ export default function DashboardPage() {
                   />
                 </div>
               </section>
+              )}
 
-              {/* ── Nhân sự & Phúc lợi ── */}
+              {/* ── Nhân sự & Phúc lợi (chỉ Giám đốc/Phó GĐ/Admin) ── */}
+              {canSeeHrBlocks && (
               <section className="space-y-4 animate-in fade-in duration-300">
                 <div className="flex items-center justify-between">
                   <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Nhân sự &amp; Phúc lợi</h2>
@@ -537,7 +557,9 @@ export default function DashboardPage() {
                     Lương &amp; Phúc lợi (C&amp;B) <ChevronRight size={12} />
                   </a>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                {/* 3 ô với người thường, 4 ô khi có thêm "HĐ lao động chính thức"
+                    -> chia cột theo số ô để không bị lẻ một ô trơ trọi cuối hàng. */}
+                <div className={`grid grid-cols-1 sm:grid-cols-2 gap-5 ${hrCards.length >= 4 ? "lg:grid-cols-4" : "lg:grid-cols-3"}`}>
                   {hrCards.map((c) => {
                     const Icon = c.icon;
                     return (
@@ -554,6 +576,7 @@ export default function DashboardPage() {
                   })}
                 </div>
               </section>
+              )}
             </>
           )}
         </main>
