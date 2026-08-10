@@ -756,23 +756,54 @@ function SettingsContent() {
   // Ba danh sách dời nguyên từ cột phải trang Lịch công việc. Bên đó lọc trên
   // `filteredTasks` (theo ô tìm kiếm / nhân sự / độ ưu tiên của trang Lịch);
   // trang này không có mấy bộ lọc đó nên đọc thẳng `tasks`.
+  // Phạm vi xem 3 danh sách này: CHỈ Admin / Giám đốc / Phó Giám đốc thấy toàn công
+  // ty. Mọi người còn lại (kể cả Chỉ huy trưởng Ban điều hành, Trưởng/Phó phòng, Tổ
+  // trưởng) chỉ thấy nhân sự CÙNG ĐƠN VỊ với mình — trước đây đọc thẳng `tasks` nên
+  // tài khoản Ban điều hành nhìn thấy đơn của mọi phòng ban khác.
+  const seesAllDoneLists = !!(
+    currentUser && (
+      currentUser.isAdmin ||
+      (currentUser.role || "").toLowerCase() === "admin" ||
+      currentUser.isDirector ||
+      isDirectorRole(currentUser.role)
+    )
+  );
+
+  // Phòng ban của người làm đơn tra từ danh bạ (bảng `tasks` chỉ lưu TÊN).
+  // Thiếu dữ liệu phòng ban ở một trong hai bên thì KHÔNG suy đoán — thà không hiện
+  // còn hơn hiện nhầm đơn vị khác.
+  const inMyDoneScope = useCallback(
+    (t: any) => {
+      if (seesAllDoneLists) return true;
+      if (!currentUser) return false;
+      if (normalizeName(t.assignee) === normalizeName(currentUser.name)) return true;
+      const mine = normalizeName(currentUser.department || "");
+      const theirs = normalizeName(departmentOfPerson(t.assignee) || "");
+      if (!mine || !theirs) return false;
+      return mine === theirs;
+    },
+    [seesAllDoneLists, currentUser, departmentOfPerson]
+  );
+
   const doneTasksWithoutDate = useMemo(() => {
-    return tasks.filter(t => !t.due_date && !t.start_date);
-  }, [tasks]);
+    return tasks.filter(t => !t.due_date && !t.start_date && inMyDoneScope(t));
+  }, [tasks, inMyDoneScope]);
 
   const doneLeaveTasks = useMemo(() => {
     return tasks.filter(t =>
       (t.title.toLowerCase().startsWith("nghỉ phép") || t.title.toLowerCase().includes("nghi phep"))
       && taskOverlapsMonth(t, doneMonth)
+      && inMyDoneScope(t)
     );
-  }, [tasks, doneMonth]);
+  }, [tasks, doneMonth, inMyDoneScope]);
 
   const doneTripTasks = useMemo(() => {
     return tasks.filter(t =>
       (t.title.toLowerCase().startsWith("công tác") || t.title.toLowerCase().includes("cong tac"))
       && taskOverlapsMonth(t, doneMonth)
+      && inMyDoneScope(t)
     );
-  }, [tasks, doneMonth]);
+  }, [tasks, doneMonth, inMyDoneScope]);
 
   // Hai helper đọc metadata trong notes — bê nguyên từ trang Lịch công việc
   const getCleanLocation = (notes: string) => {
@@ -957,7 +988,7 @@ function SettingsContent() {
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   {([
-                    { key: "basic" as Plan, desc: "Dashboard, Công việc, Lịch, Đăng ký xe/phòng họp, Hành chính & Tài sản, Biên bản họp, Vị trí dự án, Lương & Phúc lợi (C&B), Phòng ban, Cài đặt", accent: "border-slate-300", badge: "bg-slate-100 text-slate-600" },
+                    { key: "basic" as Plan, desc: "Dashboard, Công việc, Lịch, Đăng ký xe/phòng họp, Duyệt yêu cầu, Hành chính & Tài sản, Biên bản họp, Vị trí dự án, Lương & Phúc lợi (C&B), Phòng ban, Cài đặt", accent: "border-slate-300", badge: "bg-slate-100 text-slate-600" },
                     { key: "professional" as Plan, desc: "+ Danh sách nhân viên, Góp ý & Kiến nghị, Tuyển dụng, Văn thư, Tổng hợp", accent: "border-blue-300", badge: "bg-blue-50 text-blue-600" },
                     { key: "enterprise" as Plan, desc: "+ Tìm kiếm AI thông minh", accent: "border-indigo-300", badge: "bg-indigo-50 text-indigo-600" },
                   ]).map(p => {
