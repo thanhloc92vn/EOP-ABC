@@ -2128,18 +2128,20 @@ export default function AdministrationPage() {
   // Bản sao nằm ở ĐÚNG THÁNG của dòng gốc (tháng suy ra từ cột `date` của hoá đơn
   // `HD-DK-`), muốn chuyển tháng thì bấm bút chì sửa ô "Tháng thanh toán".
   // KHÔNG chép file gốc — hoá đơn tháng sau là chứng từ khác.
+  // KHÔNG thêm dòng vào state khi ghi CSDL hỏng: bảng này được DỰNG LẠI TỪ ĐẦU
+  // theo các hoá đơn `HD-DK-` mỗi lần fetchInvoices chạy, nên một dòng chỉ sống
+  // trong state sẽ hiện ra như thật rồi biến mất ngay lần đọc lại kế tiếp — đúng
+  // triệu chứng "nhân đôi xong, sửa & lưu thì nhảy về dòng cũ".
   const handleDuplicatePayment = async (p: SupplierPayment) => {
     const [mm, yyyy] = (p.month || "").split("/");
     const dateStr = mm && yyyy ? `${yyyy}-${mm}-01` : new Date().toISOString().slice(0, 10);
-    const tempId = `PAY-${Date.now().toString().slice(-4)}`;
-    let finalId = tempId;
-    let addedInv: Invoice | null = null;
 
     try {
       const { data, error } = await supabase
         .from("invoices")
         .insert([{
-          number: `HD-DK-${Date.now().toString().slice(-4)}`,
+          // Đủ dài để không đụng số của bản gốc khi bấm liên tiếp trong cùng giây.
+          number: `HD-DK-${Date.now().toString().slice(-6)}`,
           date: dateStr,
           description: p.content,
           amount: p.amount,
@@ -2151,37 +2153,25 @@ export default function AdministrationPage() {
         }])
         .select();
       if (error) throw error;
-      if (data && data[0]) {
-        finalId = data[0].id;
-        addedInv = {
-          id: data[0].id,
-          number: data[0].number,
-          date: data[0].date,
-          desc: data[0].description || "",
-          amount: Number(data[0].amount),
-          file_url: data[0].file_url || "",
-          beneficiary_name: data[0].beneficiary_name || "",
-          bank_account: data[0].bank_account || "",
-          bank_name_branch: data[0].bank_name_branch || "",
-          project_name: data[0].project_name || "",
-        };
-        setInvoices(prev => [addedInv as Invoice, ...prev]);
+      // insert chạy nhưng RLS chặn đọc lại -> data rỗng. Vẫn là hỏng đối với luồng
+      // này vì không có id thật thì bản sao không sửa/xoá được.
+      if (!data || !data[0]) {
+        throw new Error("Ghi được hoá đơn nhưng không đọc lại được dòng vừa tạo (RLS bảng invoices).");
       }
+
+      // Đọc lại từ CSDL để bảng hiển thị đúng thứ đang có thật, không phải bản
+      // dựng tay trong state.
+      const res = await fetchInvoices();
+      const fresh = res?.pendingPayments.find(x => x.id === data[0].id) || null;
+      if (res) handleAutoFillReport(res.invoices, res.pendingPayments, true);
+
+      showNotice("success", "Đã nhân đôi khoản thanh toán", "Sửa lại số tiền / nội dung / tháng rồi bấm Lưu thay đổi.");
+      // Mở luôn form sửa cho bản sao — nhân đôi xong gần như luôn phải sửa ngay.
+      if (fresh) setEditingPayment(fresh);
     } catch (err: any) {
-      console.warn("Could not sync duplicated payment to Supabase:", err.message || err);
-      showNotice("warning", "Đã nhân đôi khoản thanh toán", "Mới lưu tạm trên trình duyệt do lỗi kết nối hệ thống.");
+      console.error("Duplicate payment error:", err);
+      showNotice("error", "Không nhân đôi được khoản thanh toán", err.message || String(err));
     }
-
-    const copy: SupplierPayment = { ...p, id: finalId, fileUrl: "" };
-    const updatedPayments = [...pendingPayments, copy];
-    setPendingPayments(updatedPayments);
-    if (typeof window !== "undefined") {
-      localStorage.setItem("tnec_pending_payments", JSON.stringify(updatedPayments));
-    }
-    if (addedInv) handleAutoFillReport([addedInv, ...invoices], updatedPayments, true);
-
-    // Mở luôn form sửa cho bản sao — nhân đôi xong gần như luôn phải sửa ngay.
-    setEditingPayment(copy);
   };
 
   const handleUpdatePaymentProject = async (paymentId: string, projectName: string) => {
@@ -4668,8 +4658,11 @@ export default function AdministrationPage() {
       showNotice("success", "Cập nhật thông tin thanh toán thành công");
       setEditingPayment(null);
 
-      // Trigger silent auto sync with updated lists
-      handleAutoFillReport(updatedInvs, updatedPayments, true);
+      // Đọc lại từ CSDL để bảng hiển thị đúng dữ liệu đã ghi được thật. Không có
+      // bước này thì một dòng chỉ tồn tại trong state vẫn trông như đã lưu, tới
+      // lần fetchInvoices kế tiếp mới lặng lẽ biến mất.
+      const res = await fetchInvoices();
+      handleAutoFillReport(res?.invoices || updatedInvs, res?.pendingPayments || updatedPayments, true);
     } catch (err: any) {
       console.error("Update payment error:", err);
       showNotice("error", "Không cập nhật được thanh toán", err.message || String(err));
