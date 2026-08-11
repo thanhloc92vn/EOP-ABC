@@ -397,6 +397,24 @@ const isMonthInRange = (month: string, from: string, to: string): boolean => {
   return true;
 };
 
+// ─── Mốc thời gian "bây giờ" cho các giá trị mặc định ───
+// Trước đây tháng mặc định bị viết cứng 06/2026 ở 3 chỗ, nên sang tháng khác là
+// bảng/báo cáo mở ra rỗng và trông như mất dữ liệu. Gom về đây để chỉ có MỘT nguồn.
+const currentMonthMMYYYY = (): string => {
+  const now = new Date();
+  return `${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`;
+};
+// Ngày đầu / ngày cuối tháng hiện tại theo dạng YYYY-MM-DD (input type="date").
+const currentMonthFirstDay = (() => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+})();
+const currentMonthLastDay = (() => {
+  const now = new Date();
+  const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  return `${last.getFullYear()}-${String(last.getMonth() + 1).padStart(2, "0")}-${String(last.getDate()).padStart(2, "0")}`;
+})();
+
 // ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
 export default function AdministrationPage() {
   // Danh sách phòng ban / BĐH đọc từ bảng departments
@@ -502,13 +520,21 @@ export default function AdministrationPage() {
   const [selectedSupplierId, setSelectedSupplierId] = useState("");
   const [payAmount, setPayAmount] = useState("");
   const [payContent, setPayContent] = useState("");
+  // Tháng đang xem/lập phiếu. Có nhớ lại tháng đã chọn để F5 không nhảy về mặc
+  // định, NHƯNG chỉ nhớ khi tháng đó chưa trôi qua: trước đây giá trị cũ trong
+  // localStorage được dùng vô điều kiện, nên ai mở trang hồi tháng 7 thì sang
+  // tháng 8 vẫn bị dính ở "TỔNG CỘNG THÁNG 07" và tưởng hệ thống khoá cứng tháng.
   const [payMonth, setPayMonth] = useState(() => {
+    const now = new Date();
+    const mmNow = String(now.getMonth() + 1).padStart(2, "0");
+    const currentMonth = `${mmNow}/${now.getFullYear()}`;
     if (typeof window !== "undefined") {
       const saved = window.localStorage.getItem("tnec_pay_month");
-      if (saved) return saved;
+      const m = (saved || "").match(/^(\d{2})\/(\d{4})$/);
+      // So sánh dạng YYYYMM để tháng đã lưu cũ hơn tháng hiện tại thì bỏ qua.
+      if (m && `${m[2]}${m[1]}` >= `${now.getFullYear()}${mmNow}`) return saved as string;
     }
-    const now = new Date();
-    return `${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`;
+    return currentMonth;
   });
 
   // Bộ lọc xem bảng thanh toán theo khoảng tháng (từ tháng - đến tháng), độc lập
@@ -748,12 +774,14 @@ export default function AdministrationPage() {
   const [editingPayment, setEditingPayment] = useState<SupplierPayment | null>(null);
   const [uploadingPaymentId, setUploadingPaymentId] = useState<string | null>(null);
 
-  // Report date range states
-  const [reportStartDate, setReportStartDate] = useState("2026-06-01");
-  const [reportEndDate, setReportEndDate] = useState("2026-06-30");
+  // Report date range states — mặc định là THÁNG HIỆN TẠI (ngày đầu → ngày cuối
+  // tháng), không viết cứng 06/2026 nữa: tab Báo cáo từng mở ra ở tháng 6 và
+  // trông như không có số liệu.
+  const [reportStartDate, setReportStartDate] = useState(currentMonthFirstDay);
+  const [reportEndDate, setReportEndDate] = useState(currentMonthLastDay);
   const [showDatePickerPopover, setShowDatePickerPopover] = useState(false);
-  const [tempStartDate, setTempStartDate] = useState("2026-06-01");
-  const [tempEndDate, setTempEndDate] = useState("2026-06-30");
+  const [tempStartDate, setTempStartDate] = useState(currentMonthFirstDay);
+  const [tempEndDate, setTempEndDate] = useState(currentMonthLastDay);
 
   // Form metadata for document generation
   const [employeeName, setEmployeeName] = useState(TENANT_DEFAULTS.admin_staff[0]?.full_name || TENANT_DEFAULTS.admin_staff[0]?.name || "");
@@ -2075,7 +2103,7 @@ export default function AdministrationPage() {
       service: supp.service,
       amount: Number(payAmount),
       content: payContent || `Thanh toán định kỳ ${supp.name}`,
-      month: payMonth || "06/2026",
+      month: payMonth || currentMonthMMYYYY(),
       project_name: supp.project_name || "Văn phòng HCM"
     };
 
@@ -4335,8 +4363,10 @@ export default function AdministrationPage() {
         // Dynamically populate pendingPayments (recurring payments) state from HD-DK- invoices
         const recurringInvs = data.filter((row: any) => row.number && row.number.startsWith("HD-DK-"));
         const mappedPayments: SupplierPayment[] = recurringInvs.map((row: any) => {
-          // Parse month from date (YYYY-MM-DD) to MM/YYYY
-          let monthStr = "06/2026";
+          // Parse month from date (YYYY-MM-DD) to MM/YYYY. Hoá đơn thiếu ngày thì
+          // xếp vào tháng hiện tại — trước đây rơi hết vào 06/2026 viết cứng, càng
+          // xa tháng đó thì phiếu càng "mất tích" khỏi bảng.
+          let monthStr = currentMonthMMYYYY();
           if (row.date) {
             const parts = row.date.split("-");
             if (parts.length >= 2) {
