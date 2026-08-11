@@ -116,6 +116,9 @@ const parseBirthdate = (dateStr: string) => {
 // nguồn, ghép chuỗi kiểu `lg:${...}` sẽ KHÔNG sinh ra CSS.
 const HR_BLOCK_H = "h-[296px]";
 const HR_BLOCK_H_LG = "lg:h-[296px]";
+// Tài khoản không có cờ xem ứng viên / xem lương chỉ còn 2 ô -> cụm rút về một
+// hàng. 140px = (296 − 16px gap) / 2, tức ô vẫn vuông y như khi đủ 4 ô.
+const HR_BLOCK_H_ONE_ROW = "h-[140px]";
 
 const CONFETTI_COLORS = ["#6366F1", "#EC4899", "#F59E0B", "#10B981", "#3B82F6", "#F43F5E"];
 const CONFETTI_PIECES = Array.from({ length: 30 }, (_, i) => ({
@@ -476,13 +479,21 @@ export default function DashboardPage() {
   // dòng, hiện số 0 sẽ trông như lỗi -> ẩn hẳn ô đó với họ.
   const canSeeContractStat = user.isAdmin || user.perms.canViewSalary;
 
+  // Y hệt lý do trên với ô "Nhân sự mới vào": số này đếm từ bảng `candidates`,
+  // đã siết RLS chỉ cho Admin / cờ can_view_candidates
+  // (supabase_schema_candidates_access_control.sql). Tài khoản thường đọc ra 0
+  // dòng nên ô hiện số 0 — sai và trông như lỗi -> ẩn hẳn ô đó với họ.
+  const canSeeHireStat = user.isAdmin || user.perms.canViewCandidates;
+
   // Chỉ còn khối "Tuyển dụng nhân sự" dành riêng cho Giám đốc / Phó Giám đốc /
   // Admin. Hai khối "Nhân sự & Phúc lợi" và "Sinh nhật theo tháng" đã mở lại
   // cho mọi tài khoản.
   const canSeeHrBlocks = user.isAdmin || user.isDirector;
   const hrCards = [
     { label: "Nhân sự hiện tại", value: hr.headcount, icon: Users, grad: "from-indigo-500 to-blue-600" },
-    { label: "Nhân sự mới vào (nhận việc)", value: recruit.acceptedHires, icon: UserPlus, grad: "from-emerald-500 to-teal-600" },
+    ...(canSeeHireStat
+      ? [{ label: "Nhân sự mới vào (nhận việc)", value: recruit.acceptedHires, icon: UserPlus, grad: "from-emerald-500 to-teal-600" }]
+      : []),
     { label: "Nhân sự nghỉ việc", value: hr.resigned, icon: UserMinus, grad: "from-amber-500 to-orange-600" },
     ...(canSeeContractStat
       ? [{ label: "HĐ lao động chính thức", value: hr.official, icon: BadgeCheck, grad: "from-blue-500 to-cyan-600" }]
@@ -683,12 +694,16 @@ export default function DashboardPage() {
                   )}
                 </div>
                 {/* Cụm 2×2: 2 trên, 2 dưới. Chốt chiều cao đúng bằng khối Sinh
-                    nhật bên cạnh (HR_BLOCK_H) để hai khối bằng nhau trên dưới. */}
-                <div className={`grid grid-cols-2 gap-4 ${HR_BLOCK_H}`}>
-                  {hrCards.map((c) => {
+                    nhật bên cạnh (HR_BLOCK_H) để hai khối bằng nhau trên dưới.
+                    Số ô thay đổi theo quyền, nên chiều cao tính theo số HÀNG —
+                    nếu để cứng 296px mà chỉ có 2 ô thì ô sẽ bị kéo cao gấp đôi. */}
+                <div className={`grid grid-cols-2 gap-4 ${hrCards.length > 2 ? HR_BLOCK_H : HR_BLOCK_H_ONE_ROW}`}>
+                  {hrCards.map((c, i) => {
                     const Icon = c.icon;
+                    // Số ô lẻ thì ô cuối kéo dài hết hàng, không để hở một ô trống.
+                    const isLastOdd = hrCards.length % 2 === 1 && i === hrCards.length - 1;
                     return (
-                      <div key={c.label} className="glass h-full rounded-2xl p-4 bg-white/80 hover-elevate flex flex-col justify-between border border-slate-100">
+                      <div key={c.label} className={`glass h-full rounded-2xl p-4 bg-white/80 hover-elevate flex flex-col justify-between border border-slate-100 ${isLastOdd ? "col-span-2" : ""}`}>
                         <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${c.grad} flex items-center justify-center shadow-md`}>
                           <Icon className="text-white" size={18} />
                         </div>
