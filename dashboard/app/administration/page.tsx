@@ -29,6 +29,7 @@ import {
   Eye,
   X,
   Pencil,
+  Copy,
   Calendar,
   ChevronDown,
   Building2,
@@ -2120,6 +2121,67 @@ export default function AdministrationPage() {
       // Trigger silent auto sync with updated lists
       handleAutoFillReport(updatedInvs, updatedPayments, true);
     }
+  };
+
+  // ─── Nhân đôi một khoản thanh toán định kỳ ───
+  // Khoản định kỳ lặp lại hằng tháng nên chép nguyên dòng rồi sửa nhanh là đủ.
+  // Bản sao nằm ở ĐÚNG THÁNG của dòng gốc (tháng suy ra từ cột `date` của hoá đơn
+  // `HD-DK-`), muốn chuyển tháng thì bấm bút chì sửa ô "Tháng thanh toán".
+  // KHÔNG chép file gốc — hoá đơn tháng sau là chứng từ khác.
+  const handleDuplicatePayment = async (p: SupplierPayment) => {
+    const [mm, yyyy] = (p.month || "").split("/");
+    const dateStr = mm && yyyy ? `${yyyy}-${mm}-01` : new Date().toISOString().slice(0, 10);
+    const tempId = `PAY-${Date.now().toString().slice(-4)}`;
+    let finalId = tempId;
+    let addedInv: Invoice | null = null;
+
+    try {
+      const { data, error } = await supabase
+        .from("invoices")
+        .insert([{
+          number: `HD-DK-${Date.now().toString().slice(-4)}`,
+          date: dateStr,
+          description: p.content,
+          amount: p.amount,
+          beneficiary_name: p.supplierName,
+          bank_account: p.account,
+          bank_name_branch: p.bank,
+          project_name: p.project_name || "Văn phòng HCM",
+          created_by: currentUser?.email || null,
+        }])
+        .select();
+      if (error) throw error;
+      if (data && data[0]) {
+        finalId = data[0].id;
+        addedInv = {
+          id: data[0].id,
+          number: data[0].number,
+          date: data[0].date,
+          desc: data[0].description || "",
+          amount: Number(data[0].amount),
+          file_url: data[0].file_url || "",
+          beneficiary_name: data[0].beneficiary_name || "",
+          bank_account: data[0].bank_account || "",
+          bank_name_branch: data[0].bank_name_branch || "",
+          project_name: data[0].project_name || "",
+        };
+        setInvoices(prev => [addedInv as Invoice, ...prev]);
+      }
+    } catch (err: any) {
+      console.warn("Could not sync duplicated payment to Supabase:", err.message || err);
+      showNotice("warning", "Đã nhân đôi khoản thanh toán", "Mới lưu tạm trên trình duyệt do lỗi kết nối hệ thống.");
+    }
+
+    const copy: SupplierPayment = { ...p, id: finalId, fileUrl: "" };
+    const updatedPayments = [...pendingPayments, copy];
+    setPendingPayments(updatedPayments);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("tnec_pending_payments", JSON.stringify(updatedPayments));
+    }
+    if (addedInv) handleAutoFillReport([addedInv, ...invoices], updatedPayments, true);
+
+    // Mở luôn form sửa cho bản sao — nhân đôi xong gần như luôn phải sửa ngay.
+    setEditingPayment(copy);
   };
 
   const handleUpdatePaymentProject = async (paymentId: string, projectName: string) => {
@@ -4559,6 +4621,12 @@ export default function AdministrationPage() {
     try {
       const { id, supplierName, account, bank, content, amount, month } = editingPayment;
 
+      // `month` không có cột riêng: lúc nạp, tháng được suy ra từ cột `date` của hoá
+      // đơn (xem chỗ map recurringInvs). Nên đổi tháng phải ghi lại `date` về ngày 01
+      // của tháng đó, nếu không F5 một cái là tháng nhảy về như cũ.
+      const monthMatch = (month || "").match(/^(\d{2})\/(\d{4})$/);
+      const dateFromMonth = monthMatch ? `${monthMatch[2]}-${monthMatch[1]}-01` : null;
+
       // Update in Supabase invoices table
       if (!id.startsWith("PAY-") && !id.startsWith("INV-")) {
         const { error: updateError } = await supabase
@@ -4568,7 +4636,8 @@ export default function AdministrationPage() {
             amount: Number(amount),
             beneficiary_name: supplierName,
             bank_account: account,
-            bank_name_branch: bank
+            bank_name_branch: bank,
+            ...(dateFromMonth ? { date: dateFromMonth } : {})
           })
           .eq("id", id);
         if (updateError) throw updateError;
@@ -4580,14 +4649,15 @@ export default function AdministrationPage() {
       );
       setPendingPayments(updatedPayments);
 
-      const updatedInvs = invoices.map(inv => 
+      const updatedInvs = invoices.map(inv =>
         inv.id === id ? {
           ...inv,
           desc: content,
           amount: Number(amount),
           beneficiary_name: supplierName,
           bank_account: account,
-          bank_name_branch: bank
+          bank_name_branch: bank,
+          ...(dateFromMonth ? { date: dateFromMonth } : {})
         } : inv
       );
       setInvoices(updatedInvs);
@@ -8004,7 +8074,7 @@ export default function AdministrationPage() {
                                 <th className="py-2.5 px-3">Ban điều hành</th>
                                 <th className="py-2.5 px-3 text-right">Số tiền (đ)</th>
                                 <th className="py-2.5 px-3 text-center">File gốc</th>
-                                <th className="py-2.5 px-3 w-20 text-center">Thao tác</th>
+                                <th className="py-2.5 px-3 w-28 text-center">Thao tác</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
@@ -8082,16 +8152,25 @@ export default function AdministrationPage() {
                                     </td>
                                     <td className="py-3 px-3 text-center" onClick={(e) => e.stopPropagation()}>
                                       <div className="flex items-center justify-center gap-1">
+                                        {/* Bút chì mở form SỬA (modal editingPayment bên dưới).
+                                            Trước đây nó mở modal xem trước chứng từ nên không
+                                            sửa được gì — xem trước vẫn còn ở nút "Xem trước"
+                                            và ở thao tác bấm vào dòng. */}
                                         <button
                                           type="button"
-                                          onClick={() => {
-                                            setActivePreviewPayment(p);
-                                            setShowRecurringPreviewModal(true);
-                                          }}
+                                          onClick={() => setEditingPayment(p)}
                                           className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer bg-transparent border-none"
                                           title="Chỉnh sửa thanh toán"
                                         >
                                           <Pencil size={13} />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleDuplicatePayment(p)}
+                                          className="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer bg-transparent border-none"
+                                          title="Nhân đôi khoản thanh toán này"
+                                        >
+                                          <Copy size={13} />
                                         </button>
                                         <button
                                           type="button"
