@@ -720,6 +720,7 @@ export default function CBPage() {
   });
   const [showEmailConfigModal, setShowEmailConfigModal] = useState(false);
   const [showTimesheetMatrixModal, setShowTimesheetMatrixModal] = useState(false);
+  const [timesheetDeptFilter, setTimesheetDeptFilter] = useState("");
   const [modalProvider, setModalProvider] = useState("gmail");
 
   useEffect(() => {
@@ -1441,15 +1442,38 @@ export default function CBPage() {
     return val === undefined ? emp.totalDays : val;
   };
 
+  // Bộ lọc phòng ban của bảng tổng hợp: "" = tất cả các phòng
+  const timesheetDeptOptions = useMemo(() => {
+    const names = new Set<string>();
+    timesheetMatrix.rows.forEach(row => names.add(row.department || "Chưa xếp phòng"));
+    return Array.from(names).sort((a, b) => a.localeCompare(b, "vi"));
+  }, [timesheetMatrix]);
+
+  const timesheetMatrixRows = useMemo(() => {
+    if (!timesheetDeptFilter) return timesheetMatrix.rows;
+    return timesheetMatrix.rows.filter(row => (row.department || "Chưa xếp phòng") === timesheetDeptFilter);
+  }, [timesheetMatrix, timesheetDeptFilter]);
+
+  // Tải file công tháng khác mà phòng đang lọc không còn thì tự trả về "tất cả"
+  useEffect(() => {
+    if (timesheetDeptFilter && !timesheetDeptOptions.includes(timesheetDeptFilter)) {
+      setTimesheetDeptFilter("");
+    }
+  }, [timesheetDeptOptions, timesheetDeptFilter]);
+
   const handleExportTimesheetSummary = async () => {
-    if (timesheetMatrix.rows.length === 0) {
+    // Xuất đúng phạm vi đang xem: đang lọc phòng nào thì chỉ tải phòng đó, không lọc thì tải tất cả
+    const rows = timesheetMatrixRows;
+    if (rows.length === 0) {
       alert("Chưa có dữ liệu chấm công để xuất bảng tổng hợp!");
       return;
     }
-    const { rows, daysInMonth, month, year } = timesheetMatrix;
-    const deptTitle = rows[0]?.department?.toUpperCase().includes("HCNS") || rows[0]?.department?.toUpperCase().includes("HÀNH CHÍNH")
-      ? "PHÒNG HCNS"
-      : `PHÒNG ${(rows[0]?.department || "").toUpperCase()}`;
+    const { daysInMonth, month, year } = timesheetMatrix;
+    const deptTitle = timesheetDeptFilter
+      ? (timesheetDeptFilter.toUpperCase().includes("HCNS") || timesheetDeptFilter.toUpperCase().includes("HÀNH CHÍNH")
+        ? "PHÒNG HCNS"
+        : `PHÒNG ${timesheetDeptFilter.toUpperCase()}`)
+      : "TOÀN CÔNG TY";
 
     // Gom nhóm theo phòng ban, giống cấu trúc "I. PHÒNG..." / "II. TỔ..." trong file mẫu Word
     const groups: { name: string; rows: typeof rows }[] = [];
@@ -1638,7 +1662,10 @@ export default function CBPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `Bang_tong_hop_cham_cong_${month}_${year}.xlsx`;
+    const deptSlug = timesheetDeptFilter
+      ? "_" + normalizeText(timesheetDeptFilter).replace(/\s+/g, "_")
+      : "";
+    a.download = `Bang_tong_hop_cham_cong${deptSlug}_${month}_${year}.xlsx`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -8136,6 +8163,18 @@ export default function CBPage() {
                     <p className="text-white/80 text-[10px] font-bold mt-0.5">x = Đi làm · x/2 = Làm nửa ngày · CT = Công tác · GT = Giải trình chấm công (đã duyệt) · P = Phép · P/2 = Phép nửa ngày · Ro = Nghỉ không lương</p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
+                    <select
+                      value={timesheetDeptFilter}
+                      onChange={e => setTimesheetDeptFilter(e.target.value)}
+                      className="px-3 py-1.5 rounded-lg bg-white/95 text-[#005BAC] font-bold text-[11px] cursor-pointer border-0 outline-none shadow max-w-[220px]"
+                    >
+                      <option value="">Tất cả phòng ban ({timesheetMatrix.rows.length})</option>
+                      {timesheetDeptOptions.map(dept => (
+                        <option key={dept} value={dept}>
+                          {dept} ({timesheetMatrix.rows.filter(r => (r.department || "Chưa xếp phòng") === dept).length})
+                        </option>
+                      ))}
+                    </select>
                     <button
                       onClick={handleExportTimesheetSummary}
                       className="flex items-center gap-1.5 px-3 py-1.5 bg-white/95 hover:bg-white text-[#005BAC] font-bold rounded-lg cursor-pointer text-[11px] transition-all shadow active:scale-95"
@@ -8152,10 +8191,10 @@ export default function CBPage() {
                 </div>
 
                 <div className="p-4 overflow-auto flex-1">
-                  {timesheetMatrix.rows.some(r => r.hasDateMismatch) && (
+                  {timesheetMatrixRows.some(r => r.hasDateMismatch) && (
                     <div className="mb-3 px-3 py-2 rounded-xl bg-red-50 border border-red-200 text-red-700 text-[10px] font-bold leading-relaxed">
                       Có dữ liệu chấm công không rơi vào tháng {timesheetMonth} nên không xếp được vào bảng:{" "}
-                      {timesheetMatrix.rows.filter(r => r.hasDateMismatch).map(r => r.name).join(", ")}. Vui lòng kiểm tra lại cột "Ngày" trong file Excel.
+                      {timesheetMatrixRows.filter(r => r.hasDateMismatch).map(r => r.name).join(", ")}. Vui lòng kiểm tra lại cột "Ngày" trong file Excel.
                     </div>
                   )}
                   <table className="text-[9px] text-center border-collapse">
@@ -8176,7 +8215,7 @@ export default function CBPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 font-bold text-slate-700">
-                      {timesheetMatrix.rows.map((row, idx) => (
+                      {timesheetMatrixRows.map((row, idx) => (
                         <tr key={idx} className="hover:bg-slate-50/50">
                           <td className="py-1.5 px-2 text-left sticky left-0 bg-white whitespace-nowrap">{row.name}</td>
                           {row.days.map((tag, dIdx) => {
@@ -8200,6 +8239,11 @@ export default function CBPage() {
                       ))}
                     </tbody>
                   </table>
+                  {timesheetMatrixRows.length === 0 && (
+                    <div className="text-slate-400 text-xs italic py-6 text-center bg-slate-50 rounded-2xl border border-slate-100">
+                      Không có nhân viên nào thuộc phòng "{timesheetDeptFilter}" trong bảng công tháng này.
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
