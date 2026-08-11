@@ -2640,6 +2640,19 @@ export default function AdministrationPage() {
   };
 
   const handleAutoFillReport = async (customInvoices?: Invoice[], customPayments?: SupplierPayment[], silent: boolean = false) => {
+    // ── CHỐT CHẶN QUAN TRỌNG ──
+    // Hàm này DỰNG LẠI TOÀN BỘ bảng chi phí từ danh sách hoá đơn mà tài khoản
+    // hiện tại đọc được, rồi XOÁ mọi dòng không khớp (bước 5 bên dưới).
+    // Nhân viên phòng khác chỉ đọc được phiếu của CHÍNH HỌ
+    // (RLS invoices: created_by — supabase_schema_invoices_owner_access.sql),
+    // mà bảng admin_monthly_reports lại cho mọi tài khoản đăng nhập xoá/sửa.
+    // => Nếu để họ chạy, bảng tổng bị dựng lại từ đúng 1 phiếu và xoá sạch số
+    // của người khác. Đó chính là triệu chứng "tổng bị thay bằng số mới nhất":
+    // Lộc tạo phiếu 950.000 -> tổng còn 950.000; người kế tạo 540.000 -> tổng
+    // còn 540.000. Chỉ Admin / HCNS (can_view_invoices) mới thấy đủ hoá đơn để
+    // dựng lại đúng, nên chỉ họ được chạy đồng bộ.
+    if (!isHcnsViewer) return;
+
     if (!silent) setAutoFillLoading(true);
     try {
       const activeInvoices = customInvoices || invoices;
@@ -4309,6 +4322,28 @@ export default function AdministrationPage() {
   useEffect(() => {
     fetchInvoices();
   }, [fetchInvoices]);
+
+  // Tự đồng bộ bảng chi phí ngay khi mở trang — không phải bấm nút "Đồng bộ từ
+  // Hóa đơn" bằng tay nữa. Nhờ vậy phiếu do nhân viên phòng khác tạo (họ không
+  // được phép tự đồng bộ, xem chốt chặn trong handleAutoFillReport) vẫn được
+  // gộp vào bảng tổng ngay lần kế tài khoản HCNS/Admin mở trang.
+  //
+  // Chạy đúng MỘT lần mỗi lần mở trang: hàm đồng bộ có ghi lại vào reportRows
+  // nên không chốt bằng ref sẽ thành vòng lặp vô tận.
+  // Đọc lại hoá đơn từ DB thay vì dùng state: lần fetch đầu có thể chạy trước
+  // khi biết quyền, lấy tươi cho chắc.
+  const autoSyncedRef = useRef(false);
+  useEffect(() => {
+    if (autoSyncedRef.current || !isHcnsViewer) return;
+    autoSyncedRef.current = true;
+    (async () => {
+      const res = await fetchInvoices();
+      if (res) await handleAutoFillReport(res.invoices, res.pendingPayments, true);
+    })();
+    // handleAutoFillReport tạo lại mỗi lần render nên KHÔNG đưa vào deps —
+    // hiệu ứng này cố ý chỉ chạy một lần, đưa vào sẽ thành vòng lặp.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHcnsViewer, fetchInvoices]);
 
   // Save successful queue items to main processed table (grouped as a single request)
   const saveQueueToHistory = async () => {
