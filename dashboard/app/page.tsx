@@ -114,6 +114,10 @@ const parseBirthdate = (dateStr: string) => {
 // khối luôn thẳng hàng, không phụ thuộc số dòng danh sách sinh nhật nhiều hay ít.
 // Viết đủ cả tên lớp có tiền tố `lg:` — Tailwind quét chuỗi nguyên văn trong mã
 // nguồn, ghép chuỗi kiểu `lg:${...}` sẽ KHÔNG sinh ra CSS.
+// Bảng chi phí hành chính (admin_monthly_reports) chỉ có 12 cột m1..m12, không
+// có cột năm — dữ liệu nạp vào đã lọc cứng năm 2026 ở handleAutoFillReport.
+const COST_REPORT_YEAR = "2026";
+
 const HR_BLOCK_H = "h-[296px]";
 const HR_BLOCK_H_LG = "lg:h-[296px]";
 // Tài khoản không có cờ xem ứng viên / xem lương chỉ còn 2 ô -> cụm rút về một
@@ -257,6 +261,10 @@ export default function DashboardPage() {
   const [recruitFrom, setRecruitFrom] = useState<string>(monthFirstDay(currentMonthKey));
   const [recruitTo, setRecruitTo] = useState<string>(monthLastDay(currentMonthKey));
   const [showRecruitFilter, setShowRecruitFilter] = useState(false);
+  // Bộ lọc tháng cho khối "Chi phí hành chính tổng hợp". Mặc định rỗng = lũy kế
+  // cả năm, giữ nguyên con số mọi người đang quen thấy khi mới mở trang.
+  const [costMonth, setCostMonth] = useState<string>("");
+  const [showCostFilter, setShowCostFilter] = useState(false);
   const [birthdayMonth, setBirthdayMonth] = useState<number>(new Date().getMonth() + 1);
   const { ref: birthdayCardRef, inView: birthdayInView } = useInViewOnce<HTMLDivElement>();
 
@@ -342,8 +350,13 @@ export default function DashboardPage() {
   }, [recruitMonth]);
 
   // ─── Admin cost totals (2 blocks) ───────────────────────────────────────────
+  // costMonth = "" -> lũy kế cả năm (mặc định, giữ đúng hành vi cũ);
+  //             "2026-08" -> chỉ cộng cột tháng đó.
   const cost = useMemo(() => {
+    const monthNum = costMonth ? parseInt(costMonth.slice(5), 10) : 0;
+    const isOneMonth = monthNum >= 1 && monthNum <= 12;
     const sumRows = (rows: any[]) => {
+      if (isOneMonth) return rows.reduce((s, r) => s + (Number(r[`m${monthNum}`]) || 0), 0);
       let total = 0;
       for (let i = 1; i <= 12; i++) total += rows.reduce((s, r) => s + (Number(r[`m${i}`]) || 0), 0);
       return total;
@@ -353,7 +366,12 @@ export default function DashboardPage() {
     const office = sumRows(officeRows);
     const project = sumRows(projectRows);
     return { office, project, grand: office + project };
-  }, [reportRows]);
+  }, [reportRows, costMonth]);
+
+  // Nhãn dùng chung cho nút lọc và dòng chú thích dưới mỗi ô số.
+  const costRangeLabel = costMonth
+    ? `Tháng ${parseInt(costMonth.slice(5), 10)}/${costMonth.slice(0, 4)}`
+    : "Lũy kế năm";
 
   // ─── Recruitment stats by block (theo khoảng ngày đang lọc) ─────────────────
   const recruit = useMemo(() => {
@@ -522,9 +540,61 @@ export default function DashboardPage() {
                 <section className="space-y-4 animate-in fade-in duration-200">
                   <div className="flex items-center justify-between">
                     <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Chi phí hành chính tổng hợp</h2>
-                    <a href="/administration" className="text-xs text-blue-600 font-semibold hover:underline flex items-center gap-1">
-                      Xem chi tiết <ChevronRight size={12} />
-                    </a>
+                    <div className="flex items-center gap-3">
+                      {/* Bộ lọc tháng — cùng kiểu nút gọn với cụm Tuyển dụng.
+                          Bảng admin_monthly_reports chỉ có 12 cột m1..m12 của
+                          năm 2026 (xem handleAutoFillReport), không có cột năm,
+                          nên giới hạn ô chọn trong 2026 để không ra số sai. */}
+                      <div className="relative">
+                        <button
+                          onClick={() => setShowCostFilter(v => !v)}
+                          className="flex items-center gap-2 bg-white border border-slate-200 hover:border-blue-300 hover:bg-blue-50/40 px-3 py-1.5 rounded-xl shadow-sm text-xs font-bold text-slate-700 transition-colors"
+                        >
+                          <span>📅</span>
+                          <span>{costRangeLabel}</span>
+                          <ChevronRight size={12} className={`transition-transform ${showCostFilter ? "rotate-90" : ""}`} />
+                        </button>
+
+                        {showCostFilter && (
+                          <>
+                            {/* Lớp phủ trong suốt: bấm ra ngoài để đóng */}
+                            <div className="fixed inset-0 z-20" onClick={() => setShowCostFilter(false)} />
+                            <div className="absolute right-0 top-full mt-2 z-30 bg-white border border-slate-200 rounded-2xl shadow-xl p-4 w-64 space-y-3">
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Chọn nhanh theo tháng</label>
+                                <input
+                                  type="month"
+                                  value={costMonth}
+                                  min={`${COST_REPORT_YEAR}-01`}
+                                  max={`${COST_REPORT_YEAR}-12`}
+                                  onChange={(e) => setCostMonth(e.target.value)}
+                                  className="w-full text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 outline-none focus:border-blue-300 cursor-pointer"
+                                />
+                              </div>
+                              <button
+                                onClick={() => setCostMonth("")}
+                                className={`w-full text-xs font-bold rounded-lg py-2 border transition-colors ${
+                                  costMonth
+                                    ? "border-slate-200 text-slate-600 hover:bg-slate-50"
+                                    : "border-blue-200 bg-blue-50 text-blue-700"
+                                }`}
+                              >
+                                Lũy kế cả năm {COST_REPORT_YEAR}
+                              </button>
+                              <button
+                                onClick={() => setShowCostFilter(false)}
+                                className="w-full text-xs font-black text-white bg-[#005BAC] hover:bg-blue-700 rounded-lg py-2 transition-colors"
+                              >
+                                Xong
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                      <a href="/administration" className="text-xs text-blue-600 font-semibold hover:underline flex items-center gap-1">
+                        Xem chi tiết <ChevronRight size={12} />
+                      </a>
+                    </div>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                     {[
@@ -540,7 +610,7 @@ export default function DashboardPage() {
                             <Icon size={18} className="opacity-70" />
                           </div>
                           <p className="font-heading font-extrabold text-3xl mt-2 leading-none">{formatMoney(c.value)}</p>
-                          <p className="text-[10px] opacity-70 mt-1.5">VNĐ · Lũy kế năm</p>
+                          <p className="text-[10px] opacity-70 mt-1.5">VNĐ · {costRangeLabel}</p>
                         </div>
                       );
                     })}
