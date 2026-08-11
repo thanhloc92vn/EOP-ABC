@@ -55,10 +55,17 @@ export async function POST(request: NextRequest) {
       tls: { rejectUnauthorized: false },
     });
 
+    // start_time/end_time lưu ở dạng UTC (trang Đăng ký ghi bằng toISOString()).
+    // Trình duyệt hiển thị đúng 15h vì máy người dùng ở giờ VN, nhưng route này
+    // chạy trên server Vercel — múi giờ hệ thống là UTC. Tham số "vi-VN" chỉ
+    // quyết định KIỂU hiển thị (dd/mm/yyyy), KHÔNG đổi múi giờ, nên 15h VN bị
+    // in ra thành 08h. Phải chỉ định múi giờ tường minh.
+    const TZ = "Asia/Ho_Chi_Minh";
+
     const fmtTime = (iso: string) => {
       if (!iso) return "-";
       const d = new Date(iso);
-      return `${d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })} ngày ${d.toLocaleDateString("vi-VN")}`;
+      return `${d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", timeZone: TZ })} ngày ${d.toLocaleDateString("vi-VN", { timeZone: TZ })}`;
     };
 
     const attendees: string[] = Array.isArray(booking.attendees) ? booking.attendees : [];
@@ -73,7 +80,7 @@ export async function POST(request: NextRequest) {
         <td style="padding: 10px 14px; color: #1e293b; font-size: 13px; font-weight: 600;">${value || "-"}</td>
       </tr>`;
 
-    const dateStr2 = booking.start_time ? new Date(booking.start_time).toLocaleDateString("vi-VN") : "";
+    const dateStr2 = booking.start_time ? new Date(booking.start_time).toLocaleDateString("vi-VN", { timeZone: TZ }) : "";
 
     // ━━━ CHẾ ĐỘ THÔNG BÁO NGƯỜI DUYỆT: có yêu cầu mới chờ xử lý ━━━
     if (isNotifyMode) {
@@ -293,7 +300,7 @@ export async function POST(request: NextRequest) {
       </html>
     `;
 
-    const dateStr = booking.start_time ? new Date(booking.start_time).toLocaleDateString("vi-VN") : "";
+    const dateStr = booking.start_time ? new Date(booking.start_time).toLocaleDateString("vi-VN", { timeZone: TZ }) : "";
     await transporter.sendMail({
       from: `"${cfg.email_sender_name}" <${smtpUser}>`,
       to: booking.requester_email,
