@@ -476,9 +476,9 @@ export default function DashboardPage() {
   // dòng, hiện số 0 sẽ trông như lỗi -> ẩn hẳn ô đó với họ.
   const canSeeContractStat = user.isAdmin || user.perms.canViewSalary;
 
-  // Hai khối "Tuyển dụng nhân sự" và "Nhân sự & Phúc lợi" chỉ dành cho
-  // Giám đốc / Phó Giám đốc / Admin. Tài khoản khác chỉ thấy Tin tức và
-  // Chi phí hành chính tổng hợp.
+  // Chỉ còn khối "Tuyển dụng nhân sự" dành riêng cho Giám đốc / Phó Giám đốc /
+  // Admin. Hai khối "Nhân sự & Phúc lợi" và "Sinh nhật theo tháng" đã mở lại
+  // cho mọi tài khoản.
   const canSeeHrBlocks = user.isAdmin || user.isDirector;
   const hrCards = [
     { label: "Nhân sự hiện tại", value: hr.headcount, icon: Users, grad: "from-indigo-500 to-blue-600" },
@@ -666,16 +666,21 @@ export default function DashboardPage() {
 
               {/* ── Nhân sự & Phúc lợi + Sinh nhật theo tháng nằm cạnh nhau ──
                   Cụm 2×2 chỉ rộng 36rem nên còn thừa cả nửa màn hình bên phải;
-                  đặt khối Sinh nhật vào đúng chỗ trống đó. Màn hẹp thì xuống hàng. */}
-              {canSeeHrBlocks && (
+                  đặt khối Sinh nhật vào đúng chỗ trống đó. Màn hẹp thì xuống hàng.
+                  MỌI tài khoản đều thấy hai khối này; riêng khối "Tuyển dụng
+                  nhân sự" ở trên vẫn chỉ dành cho Giám đốc / Phó GĐ / Admin. */}
               <div className="grid grid-cols-1 xl:grid-cols-[19rem_1fr] gap-6 items-start">
 
               <section className="space-y-4 animate-in fade-in duration-300">
                 <div className="flex items-center justify-between gap-3 min-h-[34px]">
                   <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Nhân sự &amp; Phúc lợi</h2>
-                  <a href="/cb" className="text-xs text-blue-600 font-semibold hover:underline flex items-center gap-1 shrink-0">
-                    C&amp;B <ChevronRight size={12} />
-                  </a>
+                  {/* Lối vào trang C&B chỉ mở cho Giám đốc / Phó GĐ / Admin.
+                      Tài khoản thường xem số tổng ở đây, không vào chi tiết. */}
+                  {canSeeHrBlocks && (
+                    <a href="/cb" className="text-xs text-blue-600 font-semibold hover:underline flex items-center gap-1 shrink-0">
+                      C&amp;B <ChevronRight size={12} />
+                    </a>
+                  )}
                 </div>
                 {/* Cụm 2×2: 2 trên, 2 dưới. Chốt chiều cao đúng bằng khối Sinh
                     nhật bên cạnh (HR_BLOCK_H) để hai khối bằng nhau trên dưới. */}
@@ -711,9 +716,13 @@ export default function DashboardPage() {
                         <option key={m} value={m}>Tháng {m}</option>
                       ))}
                     </select>
-                    <a href="/cb" className="text-xs text-blue-600 font-semibold hover:underline flex items-center gap-1">
-                      Xem chi tiết <ChevronRight size={12} />
-                    </a>
+                    {/* Cùng lý do như khối bên trái: chỉ lãnh đạo mới có lối
+                        vào trang C&B, tài khoản thường dừng ở số tổng. */}
+                    {canSeeHrBlocks && (
+                      <a href="/cb" className="text-xs text-blue-600 font-semibold hover:underline flex items-center gap-1">
+                        Xem chi tiết <ChevronRight size={12} />
+                      </a>
+                    )}
                   </div>
                 </div>
                 {/* Chia 2/5 – 3/5: ô đếm đủ chỗ cho icon bánh cỡ lớn, phần còn
@@ -775,7 +784,6 @@ export default function DashboardPage() {
               </section>
 
               </div>
-              )}
             </>
           )}
         </main>
