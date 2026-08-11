@@ -20,6 +20,8 @@ import {
   UserCheck,
   Calendar,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   Plus,
   Search,
   CheckCircle,
@@ -156,12 +158,8 @@ const MOCK_CONCURRENTS = [
   { name: "Phạm Văn Dũng", primary: "Chỉ huy phó Vàm Lẽo", concurrent: "Giám sát ATLĐ dự án Vàm Lẽo", dept: "Khối Dự án", allowance: 3000000, date: "2026-04-01" }
 ];
 
-const MOCK_ATTENDANCE_LOGS = [
-  { date: "2026-06-09", name: "Nguyễn Văn An", checkin: "07:55", checkout: "17:05", hours: 8, status: "Đúng giờ" },
-  { date: "2026-06-09", name: "Trần Thị Bích", checkin: "08:02", checkout: "17:15", hours: 8, status: "Muộn (2')" },
-  { date: "2026-06-09", name: "Lê Thị Chi", checkin: "07:45", checkout: "17:00", hours: 8, status: "Đúng giờ" },
-  { date: "2026-06-09", name: "Phạm Văn Dũng", checkin: "08:15", checkout: "17:30", hours: 8, status: "Muộn (15')" }
-];
+// Số bản ghi chấm công máy hiển thị khi thu gọn
+const MACHINE_LOGS_PREVIEW_COUNT = 5;
 
 const MOCK_EXPLANATIONS: any[] = [];
 
@@ -602,9 +600,8 @@ export default function CBPage() {
     last_salary_adj_date: "",
   });
 
-  // Biometric sync state
-  const [isSyncingMachine, setIsSyncingMachine] = useState(false);
-  const [syncedCount, setSyncedCount] = useState(0);
+  // Bản ghi chấm công máy: mặc định thu gọn còn 5 dòng
+  const [showAllMachineLogs, setShowAllMachineLogs] = useState(false);
 
   // Search keyword
   const [searchQuery, setSearchQuery] = useState("");
@@ -1012,6 +1009,12 @@ export default function CBPage() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   };
 
+  // "YYYY-MM-DD" -> "DD/MM/YYYY" để hiển thị
+  const formatDayKey = (key: string): string => {
+    const m = String(key || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    return m ? `${m[3]}/${m[2]}/${m[1]}` : String(key || "");
+  };
+
   // Nhân viên có lịch công tác đã được duyệt vào ngày này hay không
   const findApprovedTripForDay = (employeeName: string, dateVal: string, tripList: any[]) => {
     const dayKey = toDateOnlyKey(dateVal);
@@ -1082,6 +1085,14 @@ export default function CBPage() {
             return;
           }
 
+          // Bắt buộc phải có cột "Ngày": bảng tổng hợp xếp công theo đúng ngày trong tháng,
+          // thiếu cột này thì không có cách nào xác định ngày nào là ngày nào.
+          if (colIndices.date === -1) {
+            alert("File Excel thiếu cột bắt buộc: 'Ngày'! Không thể xếp ngày công vào bảng tổng hợp.");
+            setIsParsingExcel(false);
+            return;
+          }
+
           // Group rows by employee
           const employeeMap: Record<string, any[]> = {};
           let detectedMonth = "";
@@ -1116,36 +1127,22 @@ export default function CBPage() {
             const cleanedName = rawName.replace(/^EC\s*-\s*/gi, "").trim();
             const dept = colIndices.dept !== -1 ? String(firstRow[colIndices.dept] || "").trim() : "";
 
+            // Nhận diện nhân viên hoàn toàn dựa vào danh bạ employees_directory (mã NV hoặc họ tên
+            // không dấu) — không còn trường hợp nào được gán cứng mã/email/tên trong code.
             const cleanCode = (c: string) => String(c || "").replace(/^0+/, "").trim();
             const dbEmp = dbEmployees?.find(e => {
               const dbCode = cleanCode(e.employee_code);
               const excelCode = cleanCode(code);
-              const dbNormName = normalizeText(e.name);
-              const excelNormName = normalizeText(cleanedName);
-              
               const codeMatches = dbCode && excelCode && dbCode === excelCode;
-              const nameMatches = dbNormName === excelNormName;
-              const specialQuyenMatches = (excelNormName === "nttquyen" || excelCode === "5897") && dbNormName === "nguyen truong thuy quyen";
-              
-              return codeMatches || nameMatches || specialQuyenMatches;
+              const nameMatches = normalizeText(e.name) === normalizeText(cleanedName);
+              return codeMatches || nameMatches;
             });
 
-            let email = dbEmp?.email || "";
-            if (!email && (normalizeText(cleanedName) === "nttquyen" || cleanCode(code) === "5897")) {
-              email = "quyenntt@trungnamgroup.com.vn, quyen.0408@gmail.com";
-            }
+            const email = dbEmp?.email || "";
             const emailFound = !!email;
 
-            let displayName = cleanedName;
-            if (dbEmp) {
-              if (normalizeText(dbEmp.name) === "nguyen truong thuy quyen") {
-                displayName = "Nguyễn Trương Thùy Quyên - CV Tuyển dụng";
-              } else {
-                displayName = dbEmp.name;
-              }
-            } else if (normalizeText(cleanedName) === "nttquyen" || cleanCode(code) === "5897") {
-              displayName = "Nguyễn Trương Thùy Quyên - CV Tuyển dụng";
-            }
+            // Tên hiển thị lấy đúng tên trong danh bạ để khớp được với phép / giải trình / công tác
+            const displayName = dbEmp?.name || cleanedName;
 
             let totalDays = 0;
             let totalLate = 0;
@@ -1234,15 +1231,13 @@ export default function CBPage() {
                 }
               }
 
-              // Bù công tác: nếu ngày này khuyết chấm công máy nhưng nằm trong lịch trình công tác đã được duyệt
-              // thì vẫn tính đủ 1.0 ngày công (không tính là vắng mặt)
+              // Công tác đã duyệt được ưu tiên cao nhất: kể cả hôm đó có quẹt vân tay (đi công tác về
+              // ghé qua văn phòng quẹt thêm) thì vẫn tính là ngày công tác, đủ 1.0 ngày công.
               let isBusinessTrip = false;
-              if (workdayVal === 0) {
-                const approvedTrip = findApprovedTripForDay(displayName, dateVal, travels);
-                if (approvedTrip) {
-                  workdayVal = 1.0;
-                  isBusinessTrip = true;
-                }
+              const approvedTrip = findApprovedTripForDay(displayName, dateVal, travels);
+              if (approvedTrip) {
+                workdayVal = 1.0;
+                isBusinessTrip = true;
               }
 
               totalDays += workdayVal;
@@ -1299,6 +1294,7 @@ export default function CBPage() {
 
   // ─── BẢNG TỔNG HỢP CHẤM CÔNG THEO THÁNG (ma trận ngày x nhân viên) ───
   interface TimesheetMatrixRow {
+    employeeCode: string;
     name: string;
     department: string;
     days: string[]; // tag mỗi ngày trong tháng: "x" | "CT" | "P" | "P/2" | "Ro" | ""
@@ -1307,6 +1303,7 @@ export default function CBPage() {
     congTac: number;
     nghiKhongLuong: number;
     tongNgayCong: number;
+    hasDateMismatch: boolean;
   }
 
   const parseMonthYear = (monthStr: string): { month: number; year: number } => {
@@ -1331,14 +1328,14 @@ export default function CBPage() {
       const days: string[] = [];
       let vanPhong = 0, phepCoLuong = 0, congTac = 0, nghiKhongLuong = 0;
 
-      // Nếu không nhận diện được cột "Ngày" trong Excel (không khớp được ngày nào trong tháng), dùng vị trí dòng
-      // theo đúng thứ tự trong file (dòng 1 = ngày 01, dòng 2 = ngày 02...) làm phương án dự phòng
+      // Công chỉ được xếp theo đúng ngày đọc từ cột "Ngày" của file Excel. Nếu không khớp
+      // được ngày nào trong tháng thì báo cho HCNS biết, tuyệt đối không đoán theo vị trí dòng.
       let matchedDaysCount = 0;
       for (let dd = 1; dd <= daysInMonth; dd++) {
         const key = `${year}-${String(month).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
         if (emp.details.some(d => toDateOnlyKey(d.date) === key)) matchedDaysCount += 1;
       }
-      const usePositional = matchedDaysCount === 0 && emp.details.length > 0;
+      const hasDateMismatch = matchedDaysCount === 0 && emp.details.length > 0;
 
       for (let d = 1; d <= daysInMonth; d++) {
         const dateObj = new Date(year, month - 1, d);
@@ -1346,13 +1343,19 @@ export default function CBPage() {
         const isSunday = dateObj.getDay() === 0;
         const isSaturday = dateObj.getDay() === 6;
 
-        const detail = usePositional ? emp.details[d - 1] : emp.details.find(dd => toDateOnlyKey(dd.date) === dayKey);
+        const detail = emp.details.find(dd => toDateOnlyKey(dd.date) === dayKey);
 
         let tag = "";
         if (detail && (detail.workday || 0) > 0) {
+          const wd = detail.workday || 0;
           if (detail.isBusinessTrip) {
             tag = "CT";
             congTac += 1;
+          } else if (wd < 1) {
+            // Ngày thường chỉ làm nửa buổi thì đếm đúng 0.5 công. Thứ Bảy làm buổi sáng
+            // đã được ép tròn 1.0 ngay ở khâu đọc Excel nên không rơi vào nhánh này.
+            tag = "x/2";
+            vanPhong += 0.5;
           } else {
             tag = "x";
             vanPhong += 1;
@@ -1363,6 +1366,9 @@ export default function CBPage() {
         } else if (isSunday) {
           tag = "";
         } else {
+          // Thứ tự ưu tiên khi ngày đó không có dòng chấm công máy: Công tác > Giải trình > Nghỉ phép
+          const approvedTripDay = findApprovedTripForDay(emp.name, dayKey, travels);
+
           // Khuyết chấm công máy (VD: quên quét vân tay lúc về) nhưng có giải trình đã được duyệt => vẫn tính đủ công
           const approvedExplanation = explanations.find(e => {
             if (e.status !== "Đã duyệt") return false;
@@ -1370,7 +1376,10 @@ export default function CBPage() {
             return toDateOnlyKey(e.date) === dayKey;
           });
 
-          if (approvedExplanation) {
+          if (approvedTripDay) {
+            tag = "CT";
+            congTac += 1;
+          } else if (approvedExplanation) {
             tag = "GT";
             vanPhong += 1;
           } else {
@@ -1402,6 +1411,7 @@ export default function CBPage() {
       }
 
       return {
+        employeeCode: emp.employeeCode,
         name: emp.name,
         department: emp.department || "Chưa xếp phòng",
         days,
@@ -1409,12 +1419,27 @@ export default function CBPage() {
         phepCoLuong,
         congTac,
         nghiKhongLuong,
-        tongNgayCong: vanPhong + congTac + phepCoLuong
+        tongNgayCong: vanPhong + congTac + phepCoLuong,
+        hasDateMismatch
       };
     });
 
     return { rows, daysInMonth, month, year };
-  }, [parsedEmployees, leaves, explanations, timesheetMonth]);
+  }, [parsedEmployees, leaves, explanations, travels, timesheetMonth]);
+
+  // Số ngày công CHÍNH THỨC của mỗi nhân viên = đúng cột "Tổng ngày công" của bảng tổng hợp
+  // (văn phòng + công tác + phép có lương, đã ưu tiên giải trình trước ngày phép).
+  // Danh sách, ô chi tiết và email báo cáo đều lấy chung con số này để không lệch nhau.
+  const officialWorkdaysByCode = useMemo(() => {
+    const map = new Map<string, number>();
+    timesheetMatrix.rows.forEach(row => map.set(row.employeeCode, row.tongNgayCong));
+    return map;
+  }, [timesheetMatrix]);
+
+  const getOfficialWorkdays = (emp: ParsedEmployeeAttendance): number => {
+    const val = officialWorkdaysByCode.get(emp.employeeCode);
+    return val === undefined ? emp.totalDays : val;
+  };
 
   const handleExportTimesheetSummary = async () => {
     if (timesheetMatrix.rows.length === 0) {
@@ -1646,7 +1671,7 @@ export default function CBPage() {
             employeeCode: emp.employeeCode
           },
           summary: {
-            totalDays: emp.totalDays,
+            totalDays: getOfficialWorkdays(emp),
             totalLate: emp.totalLate,
             totalEarly: emp.totalEarly,
             totalOvertime: emp.totalOvertime
@@ -3244,16 +3269,6 @@ export default function CBPage() {
     }
   }, []);
 
-  // Sync fingerprint machine mock
-  const handleSyncBiometricMachine = () => {
-    setIsSyncingMachine(true);
-    setTimeout(() => {
-      setIsSyncingMachine(false);
-      setSyncedCount(145);
-      alert("Đồng bộ dữ liệu từ máy chấm công vân tay thành công! Đã nạp 145 bản ghi ngày công hôm nay.");
-    }, 1200);
-  };
-
   // Group real employees by department for Org Chart
   const orgChartData = useMemo(() => {
     const groups: Record<string, Employee[]> = {};
@@ -3278,12 +3293,62 @@ export default function CBPage() {
     );
   }, [employees, searchQuery]);
 
+  // Bảng công thật gần nhất đã tải lên (attendance_imports) — ưu tiên tháng mới nhất,
+  // trong cùng tháng thì lấy lần tải lên sau cùng.
+  const latestAttendanceImport = useMemo(() => {
+    if (importedTimesheets.length === 0) return null;
+    return [...importedTimesheets].sort((a, b) => {
+      const ka = `${a.year || ""}-${String(a.month_val || "").padStart(2, "0")}`;
+      const kb = `${b.year || ""}-${String(b.month_val || "").padStart(2, "0")}`;
+      if (ka !== kb) return kb.localeCompare(ka);
+      return String(b.created_at || "").localeCompare(String(a.created_at || ""));
+    })[0];
+  }, [importedTimesheets]);
+
+  // Bản ghi chấm công thật: bung dữ liệu từng ngày của file máy chấm công đã tải lên
+  const machineAttendanceLogs = useMemo(() => {
+    const src = latestAttendanceImport?.parsed_data;
+    if (!Array.isArray(src)) return [] as any[];
+    const logs: any[] = [];
+    src.forEach((emp: any) => {
+      (emp?.details || []).forEach((d: any) => {
+        const checkin = String(d?.checkin || "").trim();
+        const checkout = String(d?.checkout || "").trim();
+        // Chỉ liệt kê ngày thực sự có quét vân tay
+        if ((!checkin || checkin === "-") && (!checkout || checkout === "-")) return;
+        const dateKey = toDateOnlyKey(d?.date || "");
+        if (!dateKey) return;
+        const late = Number(d?.late) || 0;
+        logs.push({
+          dateKey,
+          name: emp?.name || "",
+          checkin: checkin || "-",
+          checkout: checkout || "-",
+          hours: Number(d?.hours) || 0,
+          status: late > 0 ? `Muộn (${late}')` : "Đúng giờ"
+        });
+      });
+    });
+    return logs.sort((a, b) => b.dateKey.localeCompare(a.dateKey));
+  }, [latestAttendanceImport]);
+
   const filteredAttendanceLogs = useMemo(() => {
-    return MOCK_ATTENDANCE_LOGS
-      .filter(log => hasFullAccess || log.name === currentUser?.name)
-      .filter(log => !machineFilterFrom || new Date(log.date) >= new Date(machineFilterFrom))
-      .filter(log => !machineFilterTo || new Date(log.date) <= new Date(machineFilterTo));
-  }, [hasFullAccess, currentUser, machineFilterFrom, machineFilterTo]);
+    let logs = machineAttendanceLogs
+      .filter(log => hasFullAccess || normalizeText(log.name) === normalizeText(currentUser?.name || ""))
+      .filter(log => !machineFilterFrom || log.dateKey >= machineFilterFrom)
+      .filter(log => !machineFilterTo || log.dateKey <= machineFilterTo);
+    // Không đặt bộ lọc ngày thì chỉ hiển thị ngày chấm công gần nhất có dữ liệu
+    if (!machineFilterFrom && !machineFilterTo && logs.length > 0) {
+      const newestDay = logs[0].dateKey;
+      logs = logs.filter(log => log.dateKey === newestDay);
+    }
+    return logs.slice(0, 300);
+  }, [machineAttendanceLogs, hasFullAccess, currentUser, machineFilterFrom, machineFilterTo]);
+
+  // Mặc định chỉ hiện 5 bản ghi cho gọn, bấm "Xem thêm" mới bung hết
+  const visibleAttendanceLogs = useMemo(() => {
+    return showAllMachineLogs ? filteredAttendanceLogs : filteredAttendanceLogs.slice(0, MACHINE_LOGS_PREVIEW_COUNT);
+  }, [filteredAttendanceLogs, showAllMachineLogs]);
 
   // Helper to determine if a role represents a manager/department head
   const isManagerRole = (role: string): boolean => {
@@ -4766,40 +4831,30 @@ export default function CBPage() {
                         <div className="flex items-center gap-3">
                           <span className="w-11 h-11 rounded-2xl bg-white/20 backdrop-blur flex items-center justify-center shrink-0"><Fingerprint size={20} /></span>
                           <div>
-                            <h3 className="font-heading font-black text-base leading-tight">Đồng bộ dữ liệu máy chấm công vân tay</h3>
-                            <p className="text-white/80 text-xs font-medium mt-0.5">Kết nối TCP/IP trực tiếp với máy chấm công tại văn phòng &amp; công trường</p>
+                            <h3 className="font-heading font-black text-base leading-tight">Dữ liệu máy chấm công vân tay</h3>
+                            <p className="text-white/80 text-xs font-medium mt-0.5">
+                              {latestAttendanceImport
+                                ? `Lấy từ bảng công tháng ${latestAttendanceImport.month} đã tải lên: ${latestAttendanceImport.file_name}`
+                                : "Chưa có bảng công nào được tải lên hệ thống"}
+                            </p>
                           </div>
                         </div>
-                        {hasFullAccess && (
-                          <button
-                            onClick={handleSyncBiometricMachine}
-                            disabled={isSyncingMachine}
-                            className="flex items-center justify-center gap-2 px-4 py-2 bg-white/95 hover:bg-white text-blue-700 font-bold rounded-xl active:scale-95 transition-all text-xs cursor-pointer shadow-md disabled:opacity-50 shrink-0 self-start md:self-auto"
-                          >
-                            {isSyncingMachine ? (
-                              <>
-                                <Loader2 size={13} className="animate-spin" /> Đang đồng bộ...
-                              </>
-                            ) : (
-                              <>
-                                <RefreshCw size={13} /> Lấy dữ liệu công máy chấm công
-                              </>
-                            )}
-                          </button>
-                        )}
                       </div>
                     </div>
 
                     <div className="p-6 space-y-5">
 
-                    {syncedCount > 0 && (
-                      <div className="bg-emerald-50 border border-emerald-250 p-3 rounded-xl flex items-center gap-2.5 text-emerald-800 text-xs font-semibold">
-                        <CheckCircle size={15} /> Đồng bộ hoàn tất! Hệ thống đã ghi nhận {syncedCount} bản ghi chấm công từ văn phòng và các dự án trong ngày.
-                      </div>
-                    )}
-
                     <div className="space-y-3">
-                      <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Bản ghi chấm công hôm nay (Mẫu)</h4>
+                      <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                        {filteredAttendanceLogs.length > 0
+                          ? `Bản ghi chấm công ngày ${formatDayKey(filteredAttendanceLogs[0].dateKey)}${machineFilterFrom || machineFilterTo ? " (theo bộ lọc)" : " (gần nhất)"}`
+                          : "Bản ghi chấm công"}
+                      </h4>
+                      {filteredAttendanceLogs.length === 0 && (
+                        <div className="text-slate-400 text-xs italic py-4 text-center bg-slate-50 rounded-2xl border border-slate-100">
+                          Chưa có dữ liệu chấm công. Vui lòng tải file Excel từ máy chấm công lên ở khối bên dưới và bấm "Lưu bảng công này".
+                        </div>
+                      )}
                       <div className="overflow-x-auto">
                         <table className="w-full text-xs text-left border-collapse">
                           <thead>
@@ -4813,9 +4868,9 @@ export default function CBPage() {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                            {filteredAttendanceLogs.map((log, idx) => (
+                            {visibleAttendanceLogs.map((log, idx) => (
                               <tr key={idx} className="hover:bg-slate-50/50">
-                                <td className="py-3 px-3 font-semibold">{new Date(log.date).toLocaleDateString("vi-VN")}</td>
+                                <td className="py-3 px-3 font-semibold">{formatDayKey(log.dateKey)}</td>
                                 <td className="py-3 px-3 font-bold text-slate-800">{log.name}</td>
                                 <td className="py-3 px-3 text-center font-mono font-bold text-emerald-600">{log.checkin}</td>
                                 <td className="py-3 px-3 text-center font-mono font-bold text-[#005BAC]">{log.checkout}</td>
@@ -4830,6 +4885,22 @@ export default function CBPage() {
                           </tbody>
                         </table>
                       </div>
+                      {filteredAttendanceLogs.length > MACHINE_LOGS_PREVIEW_COUNT && (
+                        <button
+                          onClick={() => setShowAllMachineLogs(v => !v)}
+                          className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-150 text-slate-600 font-bold text-[11px] cursor-pointer transition-all active:scale-[0.99]"
+                        >
+                          {showAllMachineLogs ? (
+                            <>
+                              <ChevronUp size={13} /> Thu gọn
+                            </>
+                          ) : (
+                            <>
+                              <ChevronDown size={13} /> Xem thêm {filteredAttendanceLogs.length - MACHINE_LOGS_PREVIEW_COUNT} bản ghi
+                            </>
+                          )}
+                        </button>
+                      )}
                     </div>
                     </div>
                   </div>
@@ -5005,7 +5076,7 @@ export default function CBPage() {
                                     <div className="text-[10px] text-slate-400 font-bold font-mono uppercase">{emp.employeeCode}</div>
                                   </td>
                                   <td className="py-3 px-3 text-slate-500">{emp.department || "Chưa phân loại"}</td>
-                                  <td className="py-3 px-3 text-center font-bold text-slate-800">{emp.totalDays} ngày</td>
+                                  <td className="py-3 px-3 text-center font-bold text-slate-800">{getOfficialWorkdays(emp)} ngày</td>
                                   <td className="py-3 px-3 text-center text-amber-600 font-bold">{emp.totalLate}</td>
                                   <td className="py-3 px-3 text-center text-orange-500 font-bold">{emp.totalEarly}</td>
                                   <td className="py-3 px-3 text-center text-emerald-600 font-bold">{emp.totalOvertime}</td>
@@ -7977,7 +8048,7 @@ export default function CBPage() {
                   <div className="grid grid-cols-4 gap-3">
                     <div className="bg-slate-50 p-3 rounded-xl border border-slate-150 text-center">
                       <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Tổng ngày công</div>
-                      <div className="text-lg font-black text-slate-800">{selectedEmployeeForDetail.totalDays} ngày</div>
+                      <div className="text-lg font-black text-slate-800">{getOfficialWorkdays(selectedEmployeeForDetail)} ngày</div>
                     </div>
                     <div className="bg-slate-50 p-3 rounded-xl border border-slate-150 text-center">
                       <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Tổng giờ tăng ca</div>
@@ -8062,7 +8133,7 @@ export default function CBPage() {
                 <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100 bg-[#005BAC] text-white shrink-0">
                   <div>
                     <h3 className="font-heading font-black text-sm">Bảng tổng hợp ngày công trong tháng {timesheetMonth}</h3>
-                    <p className="text-white/80 text-[10px] font-bold mt-0.5">x = Đi làm · CT = Công tác · GT = Giải trình chấm công (đã duyệt) · P = Phép · P/2 = Phép nửa ngày · Ro = Nghỉ không lương</p>
+                    <p className="text-white/80 text-[10px] font-bold mt-0.5">x = Đi làm · x/2 = Làm nửa ngày · CT = Công tác · GT = Giải trình chấm công (đã duyệt) · P = Phép · P/2 = Phép nửa ngày · Ro = Nghỉ không lương</p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <button
@@ -8081,6 +8152,12 @@ export default function CBPage() {
                 </div>
 
                 <div className="p-4 overflow-auto flex-1">
+                  {timesheetMatrix.rows.some(r => r.hasDateMismatch) && (
+                    <div className="mb-3 px-3 py-2 rounded-xl bg-red-50 border border-red-200 text-red-700 text-[10px] font-bold leading-relaxed">
+                      Có dữ liệu chấm công không rơi vào tháng {timesheetMonth} nên không xếp được vào bảng:{" "}
+                      {timesheetMatrix.rows.filter(r => r.hasDateMismatch).map(r => r.name).join(", ")}. Vui lòng kiểm tra lại cột "Ngày" trong file Excel.
+                    </div>
+                  )}
                   <table className="text-[9px] text-center border-collapse">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 font-extrabold uppercase tracking-wider">
