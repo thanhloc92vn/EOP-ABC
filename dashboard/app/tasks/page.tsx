@@ -180,6 +180,11 @@ export default function TaskManagementPage() {
   const currentMonthKey = `${nowD.getFullYear()}-${String(nowD.getMonth() + 1).padStart(2, "0")}`;
   // Ngày hôm nay theo giờ máy người dùng — dùng để bật cảnh báo đỏ "đến hạn hôm nay".
   const todayKey = `${currentMonthKey}-${String(nowD.getDate()).padStart(2, "0")}`;
+  // Ngày mai — bật cảnh báo VÀNG "sắp đến hạn" (trước hạn 1 ngày). Phải dựng qua
+  // Date rồi format lại, không được cộng 1 vào chuỗi ngày: cộng thẳng là sai bét
+  // ở cuối tháng (31 -> 32) và cuối năm (31/12 -> 32/12).
+  const tomorrowD = new Date(nowD.getFullYear(), nowD.getMonth(), nowD.getDate() + 1);
+  const tomorrowKey = `${tomorrowD.getFullYear()}-${String(tomorrowD.getMonth() + 1).padStart(2, "0")}-${String(tomorrowD.getDate()).padStart(2, "0")}`;
   const [taskMonth, setTaskMonth] = useState<string>(currentMonthKey);
   const [taskFrom, setTaskFrom] = useState<string>(monthFirstDay(currentMonthKey));
   const [taskTo, setTaskTo] = useState<string>(monthLastDay(currentMonthKey));
@@ -1078,12 +1083,17 @@ export default function TaskManagementPage() {
                           // Đến hạn ĐÚNG HÔM NAY -> viền + nền đỏ cảnh báo. Việc đã xong
                           // thì thôi, không còn gì để nhắc.
                           const isDueToday = dayKey(task.due_date) === todayKey && task.status !== "completed";
+                          // Trước hạn ĐÚNG 1 NGÀY -> cảnh báo vàng. Luôn xét sau
+                          // isDueToday để hạn hôm nay giữ màu đỏ, không bị vàng đè.
+                          const isDueTomorrow = dayKey(task.due_date) === tomorrowKey && task.status !== "completed";
                           // Phải THAY nền theo trạng thái chứ không chồng thêm class: nền
                           // gốc là gradient (background-image) nên sẽ phủ lên màu đỏ
                           // (background-color) và cảnh báo coi như mất.
                           const cardBg = isDueToday
                             ? "bg-rose-500/20 border-rose-300/70 border-l-4 border-l-rose-600"
-                            : cardStyle.bg;
+                            : isDueTomorrow
+                              ? "bg-amber-500/20 border-amber-300/70 border-l-4 border-l-amber-600"
+                              : cardStyle.bg;
                           return (
                             <div
                               key={task.id}
@@ -1100,7 +1110,9 @@ export default function TaskManagementPage() {
                                   ? "scale-[1.04] ring-2 ring-emerald-400/80 shadow-xl shadow-emerald-500/25"
                                   : isDueToday
                                     ? "ring-2 ring-rose-500 shadow-lg shadow-rose-500/25"
-                                    : ""
+                                    : isDueTomorrow
+                                      ? "ring-2 ring-amber-500 shadow-lg shadow-amber-500/25"
+                                      : ""
                               }`}
                             >
                               <div className="space-y-1.5">
@@ -1112,7 +1124,12 @@ export default function TaskManagementPage() {
                                   }`}>
                                     {task.priority}
                                   </span>
-                                  {(canManageTasks || (currentUser && (task.assignee.toLowerCase().includes(currentUser.name.toLowerCase()) || currentUser.name.toLowerCase().includes(task.assignee.toLowerCase())))) && (
+                                  {/* Chỉ cấp quản lý mới thấy dấu X xoá. Trước đây còn nối
+                                      thêm vế "là người phụ trách task này" nên nhân viên
+                                      thường rê chuột vào thẻ của mình là xoá được, dù nút
+                                      "Xóa Task" trong modal (gate bằng canManageTasks) đã ẩn
+                                      — hai chỗ lệch nhau. Nay dùng chung một điều kiện. */}
+                                  {canManageTasks && (
                                     <button
                                       onClick={() => handleDeleteTask(task.id)}
                                       className="text-slate-400 hover:text-rose-600 opacity-0 group-hover:opacity-100 transition-opacity bg-white/60 p-0.5 rounded-full shadow-sm hover:scale-105 active:scale-95 transition-all"
@@ -1151,9 +1168,10 @@ export default function TaskManagementPage() {
 
                                 {/* Footer Info */}
                                 <div className="flex items-center justify-between text-[9px] text-slate-500 font-bold">
-                                  <span className={`flex items-center gap-0.5 ${isDueToday ? "text-rose-600 font-extrabold" : ""}`}>
+                                  <span className={`flex items-center gap-0.5 ${isDueToday ? "text-rose-600 font-extrabold" : isDueTomorrow ? "text-amber-600 font-extrabold" : ""}`}>
                                     <Calendar size={10} className="opacity-75" /> {task.due_date ? new Date(task.due_date).toLocaleDateString("vi-VN", { day: '2-digit', month: '2-digit' }) : "Không hạn"}
                                     {isDueToday && <span className="ml-1 bg-rose-600 text-white px-1.5 py-0.5 rounded-full text-[8px] uppercase tracking-wide">Hôm nay</span>}
+                                    {isDueTomorrow && <span className="ml-1 bg-amber-600 text-white px-1.5 py-0.5 rounded-full text-[8px] uppercase tracking-wide">Ngày mai</span>}
                                   </span>
                                   <div className="flex items-center gap-1.5">
                                     {task.attachments > 0 && <span className="flex items-center gap-0.5"><Paperclip size={10} /> {task.attachments}</span>}

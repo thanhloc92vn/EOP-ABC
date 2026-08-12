@@ -582,7 +582,11 @@ html.dark .to-blue-50\/20 { --tw-gradient-to: rgba(59, 130, 246, 0.06); }
 html.dark .bg-transparent { background-color: transparent !important; }
 
 /* Viền còn sót của module này */
+/* border-amber-300/70: thẻ Kanban "sắp đến hạn" (trước hạn 1 ngày) — cặp song
+   sinh của .border-rose-300/70 ở trên, phải remap y hệt nếu không nền tối thấy
+   viền vàng chói hơn hẳn viền đỏ của thẻ đến hạn hôm nay. */
 html.dark .border-amber-200\/65,
+html.dark .border-amber-300\/70,
 html.dark .border-amber-300 { border-color: rgba(245, 158, 11, 0.4) !important; }
 html.dark .border-blue-100\/20,
 html.dark .border-blue-100\/50,
