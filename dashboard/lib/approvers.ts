@@ -297,11 +297,16 @@ export function isLeaveTripCap1Approver(params: {
     return assigneeGroup.leader_name.trim().toLowerCase() === currentUserName.trim().toLowerCase();
   }
 
-  const isOneDay = taskTitleLower.includes("1 ngày") || taskTitleLower.includes("1 ngay");
+  // Đơn NGẮN = đúng 1 ngày hoặc nửa ngày. Nửa ngày trước đây tự động duyệt nên
+  // không bao giờ chạy tới đây; nay đã bỏ tự duyệt, đơn nửa ngày phải dùng chung
+  // nhánh đặc cách với đơn 1 ngày, khớp resolveCap1Approver(..., duration <= 1)
+  // trong calendar/page.tsx — lệch là người nhận mail không phải người duyệt được.
+  const isShortLeave = taskTitleLower.includes("1 ngày") || taskTitleLower.includes("1 ngay")
+                    || taskTitleLower.includes("nửa ngày") || taskTitleLower.includes("nua ngay");
 
-  // Ngoại lệ duyệt nghỉ 1 ngày (bảng leave_exceptions, VD Quỳnh->Hằng,
+  // Ngoại lệ duyệt nghỉ ngắn ngày (bảng leave_exceptions, VD Quỳnh->Hằng,
   // Hoành Anh->Quyên): đặc cách theo quy định nội bộ
-  if (isOneDay) {
+  if (isShortLeave) {
     const userNorm = normalizeName(currentUserName);
     const assigneeNorm = normalizeName(assigneeName);
     const matched = activeLeaveExceptions().some(ex => {

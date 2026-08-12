@@ -911,24 +911,25 @@ function CalendarContent() {
       return;
     }
 
-    let status = "pending_approval";
-    let titleStr = `Nghỉ phép (${leaveType}): ${modalName} (${duration} ngày)`;
-    let notesStr = modalNotes || "";
+    // Nghỉ NỬA NGÀY trước đây được duyệt tự động ngay lúc gửi. Bỏ hẳn cơ chế đó:
+    // mọi đơn nghỉ phép, kể cả 0,5 ngày, đều phải qua cấp quản lý duyệt y như đơn
+    // 1 ngày. Chỉ còn khác nhau ở chuỗi tiêu đề để bảng công vẫn chấm ra "P/2"
+    // (cb/page.tsx parseTaskToLeave đọc chữ "Nửa ngày").
+    const titleStr = duration === 0.5
+      ? `Nghỉ phép (${leaveType}): ${modalName} (Nửa ngày ${halfDayPeriod})`
+      : `Nghỉ phép (${leaveType}): ${modalName} (${duration} ngày)`;
 
     // Người duyệt cấp 1 do hệ thống suy ra, không bắt người gửi chọn nữa.
     // Rỗng cũng vẫn cho gửi đơn: đơn nằm chờ ở trang Duyệt yêu cầu, cấp quản lý
     // vẫn duyệt được — chặn ở đây chỉ làm người dùng bí mà không giải quyết gì.
-    const cap1Approver = resolveCap1Approver(modalName, duration === 1);
+    // `duration <= 1` để nửa ngày dùng chung nhánh người duyệt đặc cách với đơn
+    // 1 ngày — phải khớp với isLeaveTripCap1Approver (lib/approvers.ts), lệch là
+    // mail bay một nẻo còn quyền duyệt một đằng.
+    const cap1Approver = resolveCap1Approver(modalName, duration <= 1);
 
-    if (duration === 0.5) {
-      status = "completed"; // Auto-approved
-      titleStr = `Nghỉ phép (${leaveType}): ${modalName} (Nửa ngày ${halfDayPeriod})`;
-      notesStr = `Loại nghỉ phép: ${leaveType}. Được duyệt tự động. ${modalNotes ? `Lý do: ${modalNotes}` : ""}`;
-    } else {
-      // Giữ nguyên chuỗi "Người duyệt: X" trong notes — isLeaveTripCap1Approver và
-      // getCleanDept đều đọc chuỗi này, đổi dạng là gãy cả hai.
-      notesStr = `Loại nghỉ phép: ${leaveType}.${cap1Approver ? ` Người duyệt: ${cap1Approver}.` : ""} ${modalNotes ? `Lý do: ${modalNotes}` : ""}`;
-    }
+    // Giữ nguyên chuỗi "Người duyệt: X" trong notes — isLeaveTripCap1Approver và
+    // getCleanDept đều đọc chuỗi này, đổi dạng là gãy cả hai.
+    const notesStr = `Loại nghỉ phép: ${leaveType}.${cap1Approver ? ` Người duyệt: ${cap1Approver}.` : ""} ${modalNotes ? `Lý do: ${modalNotes}` : ""}`;
 
     try {
       const { error } = await supabase
@@ -939,10 +940,10 @@ function CalendarContent() {
           start_date: modalStart,
           due_date: modalEnd,
           priority: "Thấp",
-          progress: duration === 0.5 ? 100 : 0,
-          status: status,
+          progress: 0,
+          status: "pending_approval",
           notes: notesStr,
-          approval_stage: duration === 0.5 ? null : "pending_manager"
+          approval_stage: "pending_manager"
         }]);
 
       if (error) throw error;
@@ -951,41 +952,24 @@ function CalendarContent() {
       const taskForEmail = { title: titleStr, assignee: modalName, start_date: modalStart, due_date: modalEnd, notes: notesStr };
       const smtpConfig = readSmtpConfig();
       try {
-        if (duration === 0.5) {
-          // Nửa ngày: tự động duyệt ngay, vẫn gửi email xác nhận cho người xin nghỉ
-          const requesterEmail = employeeDirectory.find(e => e.name === modalName)?.email || "";
-          if (requesterEmail) {
-            apiFetch("/api/send-request-email", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                requestType: "leave",
-                smtpConfig,
-                task: taskForEmail,
-                requesterEmail,
-                decision: "approved",
-                deciderName: "Hệ thống (Tự động duyệt - Nghỉ nửa ngày)",
-              }),
-            }).catch(e => console.warn("Không gửi được email xác nhận nghỉ nửa ngày:", e));
-          }
-        } else {
-          // Báo email cho người duyệt cấp 1 mà hệ thống đã suy ra ở trên
-          const approverEmail = employeeDirectory.find(e => e.name === cap1Approver)?.email || "";
-          if (approverEmail) {
-            apiFetch("/api/send-request-email", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                mode: "notify_approver",
-                stage: "manager",
-                requestType: "leave",
-                smtpConfig,
-                task: taskForEmail,
-                approverEmails: approverEmail,
-                siteUrl: window.location.origin,
-              }),
-            }).catch(e => console.warn("Không gửi được email báo người duyệt cấp 1:", e));
-          }
+        // Báo email cho người duyệt cấp 1 mà hệ thống đã suy ra ở trên — áp dụng
+        // cho MỌI độ dài đơn, kể cả nửa ngày (trước đây nửa ngày gửi thẳng thư
+        // "đã duyệt" cho người xin nghỉ vì hệ thống tự duyệt).
+        const approverEmail = employeeDirectory.find(e => e.name === cap1Approver)?.email || "";
+        if (approverEmail) {
+          apiFetch("/api/send-request-email", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              mode: "notify_approver",
+              stage: "manager",
+              requestType: "leave",
+              smtpConfig,
+              task: taskForEmail,
+              approverEmails: approverEmail,
+              siteUrl: window.location.origin,
+            }),
+          }).catch(e => console.warn("Không gửi được email báo người duyệt cấp 1:", e));
         }
       } catch (notifyErr) {
         console.warn("Bỏ qua lỗi gửi email nghỉ phép:", notifyErr);
@@ -999,11 +983,7 @@ function CalendarContent() {
       setLeaveType("Nghỉ phép năm hưởng lương");
       setIsLeaveModalOpen(false);
       fetchData();
-      if (duration === 0.5) {
-        showNotice("success", "Đã duyệt đơn nghỉ phép", "Đơn nghỉ nửa ngày được duyệt tự động, không cần chờ xác nhận.");
-      } else {
-        showNotice("success", "Đã gửi đơn nghỉ phép", "Đang chờ Trưởng phòng / Tổ trưởng xác nhận.");
-      }
+      showNotice("success", "Đã gửi đơn nghỉ phép", "Đang chờ Trưởng phòng / Tổ trưởng xác nhận.");
     } catch (err: any) {
       console.error(err);
       showNotice("error", "Không gửi được đơn nghỉ phép", err.message || String(err));
@@ -1736,24 +1716,18 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                 </div>
               )}
 
-              {leaveDaysCount === 0.5 && (
-                <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl flex items-center gap-2 text-emerald-700 animate-in fade-in duration-200">
-                  <span className="text-sm font-bold">✓</span>
-                  <span className="text-[10px] font-bold">Đơn nghỉ nửa ngày sẽ được tự động duyệt ngay lập tức.</span>
-                </div>
-              )}
-
               {/* Người duyệt cấp 1 do hệ thống tự xác định — chỉ hiện để người gửi
-                  biết đơn sẽ tới tay ai, không phải ô nhập liệu. */}
-              {leaveDaysCount >= 1 && (
+                  biết đơn sẽ tới tay ai, không phải ô nhập liệu. Nửa ngày cũng phải
+                  qua duyệt nên khối này hiện với mọi độ dài đơn. */}
+              {leaveDaysCount > 0 && (
                 <div className="bg-indigo-50/40 border border-indigo-100 rounded-xl p-3 flex items-start gap-2 animate-in fade-in duration-200">
                   <CheckCircle2 size={14} className="text-indigo-500 shrink-0 mt-0.5" />
                   <div className="text-[11px] leading-relaxed">
-                    {resolveCap1Approver(modalName, leaveDaysCount === 1) ? (
+                    {resolveCap1Approver(modalName, leaveDaysCount <= 1) ? (
                       <>
                         <span className="text-slate-500 font-semibold">Đơn sẽ chuyển tới </span>
                         <span className="font-extrabold text-indigo-700">
-                          {resolveCap1Approver(modalName, leaveDaysCount === 1)}
+                          {resolveCap1Approver(modalName, leaveDaysCount <= 1)}
                         </span>
                         <span className="text-slate-500 font-semibold"> xác nhận, sau đó HCNS duyệt cuối.</span>
                       </>
