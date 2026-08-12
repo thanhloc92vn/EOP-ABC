@@ -4,8 +4,9 @@ import { apiFetch } from "@/lib/apiClient";
 import { useState, useEffect, useMemo, useCallback, Suspense } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
-import { Settings, Database, Info, Key, CheckCircle, ShieldAlert, ShieldCheck, Check, X, Calendar, Briefcase, User, CarFront, DoorOpen, Mail, Package, Users, CalendarClock, ChevronRight, AlertCircle } from "lucide-react";
+import { Settings, Database, Info, Key, CheckCircle, ShieldAlert, ShieldCheck, Check, X, Calendar, Briefcase, User, CarFront, DoorOpen, Mail, Package, Users, CalendarClock, ChevronRight, AlertCircle, BarChart3 } from "lucide-react";
 import UserPermissionsModal, { type UserPermissionsTab } from "@/components/UserPermissionsModal";
+import UsageReportPanel from "@/components/UsageReportPanel";
 import AvatarUploadCard from "@/components/AvatarUploadCard";
 import { supabase } from "@/lib/supabase";
 import { usePlan } from "@/lib/plan";
@@ -45,6 +46,9 @@ function SettingsContent() {
   const searchParams = useSearchParams();
   const activeTab = searchParams.get("tab") || "system";
   const isApprovalsTab = activeTab === "approvals";
+  // Tab "Đo lường sử dụng" — chỉ Admin. Bản thân UsageReportPanel tự chặn quyền,
+  // và 2 hàm RPC nó gọi cũng chặn độc lập ở tầng DB.
+  const isUsageTab = activeTab === "usage";
   const { plan: activePlan } = usePlan();
   const [changingPlan, setChangingPlan] = useState(false);
 
@@ -954,9 +958,9 @@ function SettingsContent() {
     <div className="flex min-h-screen bg-[#F7F9FC]">
       <Sidebar />
       <div className="ml-60 flex-1 flex flex-col min-w-0">
-        <Header 
-          title={isApprovalsTab ? "Phê duyệt yêu cầu" : "Cài đặt hệ thống"} 
-          subtitle={isApprovalsTab ? "Xem và phê duyệt các yêu cầu đi công tác, nghỉ phép của nhân sự" : undefined} 
+        <Header
+          title={isApprovalsTab ? "Phê duyệt yêu cầu" : isUsageTab ? "Đo lường sử dụng" : "Cài đặt hệ thống"}
+          subtitle={isApprovalsTab ? "Xem và phê duyệt các yêu cầu đi công tác, nghỉ phép của nhân sự" : isUsageTab ? "Tài khoản nào thực sự dùng phần mềm — không tính đăng nhập rồi treo tab" : undefined}
         />
 
         <main className="flex-1 p-8 space-y-6 overflow-y-auto w-full">
@@ -970,12 +974,34 @@ function SettingsContent() {
             </div>
           )}
 
-          {!isApprovalsTab && (
+          {/* ─── TAB ĐO LƯỜNG SỬ DỤNG (chỉ Admin) ─── */}
+          {isUsageTab && <UsageReportPanel />}
+
+          {!isApprovalsTab && !isUsageTab && (
             <div className="flex flex-col 2xl:flex-row gap-6 items-start">
             <div className="flex-1 min-w-0 w-full">
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
               {/* ═══ CỘT TRÁI: Gói dịch vụ + Bảo mật & Kết nối ═══ */}
               <div className="space-y-6">
+              {/* ─── LỐI VÀO "ĐO LƯỜNG SỬ DỤNG" (chỉ Admin) ─── */}
+              {currentUser?.isAdmin && (
+                <a
+                  href="/settings?tab=usage"
+                  className="glass bg-white rounded-2xl p-5 border border-slate-200/50 shadow-premium flex items-center gap-4 hover:border-blue-300 hover:shadow-lg transition-all group"
+                >
+                  <div className="w-11 h-11 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                    <BarChart3 size={21} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h2 className="font-heading font-bold text-slate-800 text-sm mb-0.5">Đo lường sử dụng</h2>
+                    <p className="text-[11px] text-slate-400 font-medium leading-tight">
+                      Xếp hạng tài khoản dùng phần mềm tích cực nhất. Chỉ Admin xem được.
+                    </p>
+                  </div>
+                  <ChevronRight size={18} className="text-slate-300 shrink-0 group-hover:text-blue-500 transition-colors" />
+                </a>
+              )}
+
               {/* ─── GÓI DỊCH VỤ (chỉ Admin thấy và đổi được) ─── */}
               {currentUser?.isAdmin && (
               <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium">
