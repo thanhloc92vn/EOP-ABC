@@ -23,7 +23,8 @@ import {
   ChevronDown,
   ChevronRight,
   Users,
-  Filter
+  Filter,
+  CheckCircle2
 } from "lucide-react";
 
 // Một dòng trong "Danh sách nhân viên" — gốc để suy ra task thuộc phòng nào.
@@ -583,7 +584,14 @@ export default function TaskManagementPage() {
     setIsEditModalOpen(true);
   };
 
-  const handleUpdateTask = async (e: React.FormEvent) => {
+  // `overrides` phục vụ nút "Phê duyệt hoàn thành": lưu nguyên mọi chỉnh sửa đang
+  // có trên form RỒI mới ép status/progress, để cấp quản lý vừa sửa vừa duyệt chỉ
+  // bằng một lần bấm. Nhận React.SyntheticEvent vì hàm dùng cho cả onSubmit của
+  // form lẫn onClick của nút.
+  const handleUpdateTask = async (
+    e: React.SyntheticEvent,
+    overrides?: { status?: string; progress?: number }
+  ) => {
     e.preventDefault();
     if (!editingTask) return;
 
@@ -593,6 +601,17 @@ export default function TaskManagementPage() {
     }
     if (!editAssignee) {
       alert("Vui lòng chọn Người nhận!");
+      return;
+    }
+
+    // Chốt id trước: setEditingTask(null) bên dưới chạy trước hiệu ứng chúc mừng.
+    const taskId = editingTask.id;
+    const isApproving = overrides?.status === "completed";
+
+    // Cùng một lớp chặn với thao tác kéo thẻ sang cột "Đã hoàn thành"
+    // (handleDrop) — kết luận công việc xong là quyền của cấp quản lý.
+    if (isApproving && !canManageTasks) {
+      alert('Chỉ Trưởng phòng, Phó phòng, Tổ trưởng, Ban lãnh đạo hoặc Admin mới được phê duyệt hoàn thành công việc.');
       return;
     }
 
@@ -609,7 +628,8 @@ export default function TaskManagementPage() {
           description: editDescription,
           start_date: editStartDate || null,
           link: editLink,
-          notes: editNotes
+          notes: editNotes,
+          ...overrides
         })
         .eq("id", editingTask.id);
 
@@ -618,6 +638,12 @@ export default function TaskManagementPage() {
       setIsEditModalOpen(false);
       setEditingTask(null);
       fetchTasks();
+
+      if (isApproving) {
+        // Hiệu ứng chúc mừng y hệt khi kéo thẻ vào cột "Đã hoàn thành"
+        setJustCompletedId(taskId);
+        setTimeout(() => setJustCompletedId(cur => (cur === taskId ? null : cur)), 1400);
+      }
     } catch (err) {
       console.error("Error updating task:", err);
       alert("Lỗi khi cập nhật công việc!");
@@ -1674,6 +1700,19 @@ export default function TaskManagementPage() {
                   >
                     Hủy
                   </button>
+                  {/* Phê duyệt = đường tắt tương đương kéo thẻ sang cột "Đã hoàn
+                      thành": lưu các sửa đổi đang có rồi ép status=completed,
+                      progress=100. Cùng gate canManageTasks với handleDrop. Việc
+                      đã xong rồi thì ẩn — không còn gì để duyệt. */}
+                  {canManageTasks && editStatus !== "completed" && (
+                    <button
+                      type="button"
+                      onClick={(e) => handleUpdateTask(e, { status: "completed", progress: 100 })}
+                      className="py-2.5 px-5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-colors cursor-pointer shadow-md shadow-emerald-500/10 flex items-center gap-1.5 active:scale-95"
+                    >
+                      <CheckCircle2 size={14} /> Phê duyệt hoàn thành
+                    </button>
+                  )}
                   <button
                     type="submit"
                     className="py-2.5 px-6 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-colors cursor-pointer shadow-md shadow-blue-500/10"
