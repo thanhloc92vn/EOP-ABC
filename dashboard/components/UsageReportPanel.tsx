@@ -21,7 +21,7 @@ import { supabase } from "@/lib/supabase";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import {
   BarChart3, RefreshCw, ShieldAlert, Users, CalendarDays,
-  MousePointerClick, PenLine, Loader2, Award, Moon,
+  MousePointerClick, PenLine, Loader2, Award, Moon, Download,
 } from "lucide-react";
 
 // ─── Cách tính điểm ───
@@ -163,6 +163,55 @@ export default function UsageReportPanel() {
 
   useEffect(() => { load(); }, [load]);
 
+  // ─── Tải Excel ───
+  // Thư viện xlsx nặng ~800KB nên nạp ĐỘNG ngay trong lúc bấm, không import ở
+  // đầu file — để người chỉ vào xem bảng không phải tải kèm thứ họ không dùng.
+  const [exporting, setExporting] = useState(false);
+  const exportExcel = async () => {
+    if (!rows.length) return;
+    setExporting(true);
+    try {
+      const XLSX = await import("xlsx");
+      const label = monthOptions.find((o) => o.value === month)?.label || month;
+
+      const sheet1 = XLSX.utils.aoa_to_sheet([
+        ["Bảng xếp hạng mức độ sử dụng phần mềm"],
+        [`Kỳ: ${label}`, "", `Xuất lúc: ${new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}`],
+        [],
+        ["STT", "Họ tên", "Email", "Phòng ban", "Ngày hoạt động", "Số module", "Hành động ghi", "Lượt mở", "Điểm", "Lần cuối"],
+        ...rows.map((r, i) => [
+          i + 1, r.name, r.email, r.department, r.days, r.modules, r.actions, r.opens, r.score,
+          r.lastSeen ? new Date(r.lastSeen).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "",
+        ]),
+        [],
+        [`Điểm = (ngày hoạt động x ${W_DAY}) + (module x ${W_MODULE}) + (hành động ghi x ${W_ACTION}) + (lượt mở / ${OPENS_PER_POINT}, tối đa ${OPENS_POINT_CAP} điểm)`],
+        ["Cột Hành động có số liệu hồi tố từ trước; các cột còn lại chỉ tính từ ngày bật tính năng."],
+      ]);
+      sheet1["!cols"] = [
+        { wch: 5 }, { wch: 24 }, { wch: 30 }, { wch: 22 },
+        { wch: 14 }, { wch: 10 }, { wch: 13 }, { wch: 9 }, { wch: 8 }, { wch: 20 },
+      ];
+
+      const sheet2 = XLSX.utils.aoa_to_sheet([
+        ["Nhân sự không có hoạt động trong kỳ"],
+        [`Kỳ: ${label}`],
+        [],
+        ["STT", "Họ tên", "Phòng ban"],
+        ...idle.map((p, i) => [i + 1, p.name, p.department]),
+      ]);
+      sheet2["!cols"] = [{ wch: 5 }, { wch: 24 }, { wch: 22 }];
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, sheet1, "Xếp hạng");
+      XLSX.utils.book_append_sheet(wb, sheet2, "Không hoạt động");
+      XLSX.writeFile(wb, `do-luong-su-dung_${month}.xlsx`);
+    } catch (err: any) {
+      setError("Không xuất được Excel: " + (err?.message || String(err)));
+    } finally {
+      setExporting(false);
+    }
+  };
+
   // ─── Chặn tầng giao diện (tầng DB vẫn chặn độc lập) ───
   if (user.loading) {
     return (
@@ -226,6 +275,14 @@ export default function UsageReportPanel() {
               className="flex items-center gap-2 bg-[#005BAC] hover:bg-blue-700 disabled:opacity-60 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all active:scale-95"
             >
               <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Tải lại
+            </button>
+            <button
+              onClick={exportExcel}
+              disabled={exporting || loading || rows.length === 0}
+              title={rows.length === 0 ? "Chưa có dữ liệu để xuất" : "Tải bảng xếp hạng về máy dạng Excel"}
+              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all active:scale-95"
+            >
+              {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} Tải Excel
             </button>
           </div>
         </div>
