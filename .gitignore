@@ -34,6 +34,11 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 
+# File khoa tam cua Microsoft Office (~$ + ten goc bi cat 2 ky tu dau).
+# Sinh ra khi mo file .docx/.xlsx, thuong tu xoa luc dong; Word tat dot ngot thi
+# no ket lai. Chi 162 byte, khong phai template — dung commit len.
+~$*
+
 # IDE
 .vscode/
 .idea/

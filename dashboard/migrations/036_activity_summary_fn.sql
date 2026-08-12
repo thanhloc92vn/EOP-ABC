@@ -36,6 +36,13 @@ begin
     raise exception 'Chỉ Admin mới được xem thống kê hoạt động.';
   end if;
 
+  -- Lọc bằng MỐC THỜI GIAN chứ không bọc hàm quanh cột occurred_at.
+  -- Viết `(occurred_at at time zone ...)::date >= p_from` thì Postgres không
+  -- dùng được index activity_events_occurred_idx, phải quét cả bảng — hiện chưa
+  -- thấy gì vì bảng còn nhỏ, nhưng sau vài năm (~500k dòng) sẽ ì rõ.
+  -- Đổi sang so sánh 2 mốc timestamptz thì index chạy được.
+  -- Mốc cuối lấy 00:00 của NGÀY KẾ TIẾP + dấu `<` để không cắt mất các sự kiện
+  -- trong ngày cuối kỳ.
   return query
   select e.email,
          count(*)::bigint,
@@ -43,8 +50,8 @@ begin
          count(distinct e.module)::bigint,
          max(e.occurred_at)
     from public.activity_events e
-   where (e.occurred_at at time zone 'Asia/Ho_Chi_Minh')::date >= p_from
-     and (e.occurred_at at time zone 'Asia/Ho_Chi_Minh')::date <= p_to
+   where e.occurred_at >= (p_from::timestamp at time zone 'Asia/Ho_Chi_Minh')
+     and e.occurred_at <  ((p_to + 1)::timestamp at time zone 'Asia/Ho_Chi_Minh')
    group by e.email;
 end
 $fn$;
