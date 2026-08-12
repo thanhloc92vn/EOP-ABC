@@ -9,6 +9,7 @@ import { useCurrentUser } from "@/lib/useCurrentUser";
 import { isHrDept, isDirectorRole } from "@/lib/access";
 import { normalizeName } from "@/lib/approvers";
 import { useDepartments } from "@/lib/departments";
+import { useProjectCatalog } from "@/lib/projectCatalog";
 import {
   Calendar,
   Paperclip,
@@ -50,6 +51,14 @@ interface Task {
   start_date?: string;
   link?: string;
   notes?: string;
+  // 4 trường của công ty xây dựng (migration 037). Đều tuỳ chọn: task cũ tạo
+  // trước migration không có 4 cột này, và form vẫn cho bỏ trống.
+  // Mã + tên dự án lưu SONG SONG dạng text, cố ý không dùng khoá ngoại — đổi
+  // tên dự án trong danh mục không được sửa ngược tên đã ghi trên task cũ.
+  project_code?: string | null;
+  project_name?: string | null;
+  work_group?: string | null;
+  work_source?: string | null;
 }
 
 // Trưởng phòng / Phó phòng / Tổ trưởng — quản lý cấp phòng: thấy cả phòng mình,
@@ -166,6 +175,11 @@ export default function TaskManagementPage() {
   });
   const [newLink, setNewLink] = useState("");
   const [newNotes, setNewNotes] = useState("");
+  // 4 trường dự án/phân loại. Ô dự án lưu theo MÃ (khoá chọn), tên suy ra từ mã
+  // lúc lưu — không giữ 2 state dễ lệch nhau.
+  const [newProjectCode, setNewProjectCode] = useState("");
+  const [newWorkGroup, setNewWorkGroup] = useState("");
+  const [newWorkSource, setNewWorkSource] = useState("");
   const [isAiSuggesting, setIsAiSuggesting] = useState(false);
   const [employeesList, setEmployeesList] = useState<EmployeeRef[]>([]);
 
@@ -197,6 +211,14 @@ export default function TaskManagementPage() {
   const [filterDept, setFilterDept] = useState("all");
   const [filterBdh, setFilterBdh] = useState("all");
 
+  // Danh mục dự án / nhóm / nguồn công việc (Cài đặt hệ thống -> Danh mục công việc).
+  // Chưa chạy migration 037 thì cả 3 danh sách rỗng — form vẫn mở, chỉ là 3 ô
+  // dropdown trống, không sập trang.
+  const { projects, workGroups, workSources } = useProjectCatalog();
+  // Chọn dự án chỉ giữ MÃ trong state; tên tra ngược từ mã lúc lưu để hai giá
+  // trị không bao giờ lệch nhau.
+  const projectNameOf = (code: string) => projects.find(p => p.code === code)?.name || "";
+
   const handleTaskMonthChange = (mk: string) => {
     if (!mk) return;
     setTaskMonth(mk);
@@ -217,6 +239,9 @@ export default function TaskManagementPage() {
   const [editStartDate, setEditStartDate] = useState("");
   const [editLink, setEditLink] = useState("");
   const [editNotes, setEditNotes] = useState("");
+  const [editProjectCode, setEditProjectCode] = useState("");
+  const [editWorkGroup, setEditWorkGroup] = useState("");
+  const [editWorkSource, setEditWorkSource] = useState("");
 
   // Drag State
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
@@ -507,7 +532,11 @@ export default function TaskManagementPage() {
           description: newDescription,
           start_date: newStartDate || null,
           link: newLink,
-          notes: newNotes
+          notes: newNotes,
+          project_code: newProjectCode || null,
+          project_name: projectNameOf(newProjectCode) || null,
+          work_group: newWorkGroup || null,
+          work_source: newWorkSource || null
         }]);
 
       if (error) throw error;
@@ -539,6 +568,9 @@ export default function TaskManagementPage() {
       setNewStatus("planning");
       setNewLink("");
       setNewNotes("");
+      setNewProjectCode("");
+      setNewWorkGroup("");
+      setNewWorkSource("");
       setIsModalOpen(false);
 
       // Refresh tasks
@@ -581,6 +613,9 @@ export default function TaskManagementPage() {
     setEditStartDate(task.start_date || "");
     setEditLink(task.link || "");
     setEditNotes(task.notes || "");
+    setEditProjectCode(task.project_code || "");
+    setEditWorkGroup(task.work_group || "");
+    setEditWorkSource(task.work_source || "");
     setIsEditModalOpen(true);
   };
 
@@ -629,6 +664,15 @@ export default function TaskManagementPage() {
           start_date: editStartDate || null,
           link: editLink,
           notes: editNotes,
+          project_code: editProjectCode || null,
+          // Bỏ chọn dự án -> xoá cả mã lẫn tên, không để tên mồ côi không mã.
+          // Còn chọn mà tra không ra tên (dự án đã bị xoá khỏi danh mục) thì giữ
+          // tên cũ trên task, đừng xoá trắng dữ liệu lịch sử.
+          project_name: editProjectCode
+            ? (projectNameOf(editProjectCode) || editingTask.project_name || null)
+            : null,
+          work_group: editWorkGroup || null,
+          work_source: editWorkSource || null,
           ...overrides
         })
         .eq("id", editingTask.id);
@@ -1397,6 +1441,64 @@ export default function TaskManagementPage() {
                 </div>
               </div>
 
+              {/* ─── DỰ ÁN + PHÂN LOẠI (danh mục ở Cài đặt -> Danh mục công việc) ───
+                  Chọn TÊN dự án thì MÃ tự hiện ở ô bên cạnh: state chỉ giữ mã,
+                  tên tra ngược lúc lưu nên hai giá trị không thể lệch nhau. */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="space-y-1 sm:col-span-2">
+                  <label className="text-slate-500">Tên dự án</label>
+                  <select
+                    value={newProjectCode}
+                    onChange={(e) => setNewProjectCode(e.target.value)}
+                    className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 bg-white font-medium text-slate-800 cursor-pointer"
+                  >
+                    <option value="">— Không thuộc dự án nào —</option>
+                    {projects.map((p) => (
+                      <option key={p.id} value={p.code}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-slate-500">Mã dự án</label>
+                  <input
+                    type="text"
+                    readOnly
+                    value={newProjectCode}
+                    placeholder="Tự điền"
+                    className="w-full border border-slate-200 rounded-xl p-2.5 outline-none font-mono font-bold text-slate-600 bg-slate-50 placeholder:font-sans placeholder:font-medium placeholder:text-slate-300 cursor-not-allowed"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-slate-500">Nhóm công việc</label>
+                  <select
+                    value={newWorkGroup}
+                    onChange={(e) => setNewWorkGroup(e.target.value)}
+                    className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 bg-white font-medium text-slate-800 cursor-pointer"
+                  >
+                    <option value="">— Chưa phân nhóm —</option>
+                    {workGroups.map((g) => (
+                      <option key={g.id} value={g.name}>{g.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-slate-500">Nguồn công việc</label>
+                  <select
+                    value={newWorkSource}
+                    onChange={(e) => setNewWorkSource(e.target.value)}
+                    className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 bg-white font-medium text-slate-800 cursor-pointer"
+                  >
+                    <option value="">— Chưa xác định —</option>
+                    {workSources.map((s) => (
+                      <option key={s.id} value={s.name}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
               {/* Start Date & Deadline */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
@@ -1568,6 +1670,78 @@ export default function TaskManagementPage() {
                     <option value="pending_approval">Chờ duyệt</option>
                     <option value="need_revision">Cần sửa</option>
                     <option value="completed">Đã xong</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* ─── DỰ ÁN + PHÂN LOẠI — giống hệt modal tạo mới ───
+                  Task cũ (tạo trước migration 037) mở lên sẽ thấy 3 ô trống,
+                  điền bổ sung rồi Lưu là xong, không cần chuyển đổi dữ liệu. */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="space-y-1 sm:col-span-2">
+                  <label className="text-slate-500">Tên dự án</label>
+                  <select
+                    value={editProjectCode}
+                    onChange={(e) => setEditProjectCode(e.target.value)}
+                    className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 bg-white font-medium text-slate-800 cursor-pointer"
+                  >
+                    <option value="">— Không thuộc dự án nào —</option>
+                    {projects.map((p) => (
+                      <option key={p.id} value={p.code}>{p.name}</option>
+                    ))}
+                    {/* Dự án đã bị xoá/tắt trong danh mục nhưng task vẫn đang gắn:
+                        chèn lại một dòng để ô không nhảy về rỗng rồi âm thầm xoá
+                        mất dự án của task khi người dùng bấm Lưu. */}
+                    {editProjectCode && !projects.some(p => p.code === editProjectCode) && (
+                      <option value={editProjectCode}>
+                        {editingTask.project_name || editProjectCode} (không còn trong danh mục)
+                      </option>
+                    )}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-slate-500">Mã dự án</label>
+                  <input
+                    type="text"
+                    readOnly
+                    value={editProjectCode}
+                    placeholder="Tự điền"
+                    className="w-full border border-slate-200 rounded-xl p-2.5 outline-none font-mono font-bold text-slate-600 bg-slate-50 placeholder:font-sans placeholder:font-medium placeholder:text-slate-300 cursor-not-allowed"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-slate-500">Nhóm công việc</label>
+                  <select
+                    value={editWorkGroup}
+                    onChange={(e) => setEditWorkGroup(e.target.value)}
+                    className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 bg-white font-medium text-slate-800 cursor-pointer"
+                  >
+                    <option value="">— Chưa phân nhóm —</option>
+                    {workGroups.map((g) => (
+                      <option key={g.id} value={g.name}>{g.name}</option>
+                    ))}
+                    {editWorkGroup && !workGroups.some(g => g.name === editWorkGroup) && (
+                      <option value={editWorkGroup}>{editWorkGroup} (không còn trong danh mục)</option>
+                    )}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-slate-500">Nguồn công việc</label>
+                  <select
+                    value={editWorkSource}
+                    onChange={(e) => setEditWorkSource(e.target.value)}
+                    className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 bg-white font-medium text-slate-800 cursor-pointer"
+                  >
+                    <option value="">— Chưa xác định —</option>
+                    {workSources.map((s) => (
+                      <option key={s.id} value={s.name}>{s.name}</option>
+                    ))}
+                    {editWorkSource && !workSources.some(s => s.name === editWorkSource) && (
+                      <option value={editWorkSource}>{editWorkSource} (không còn trong danh mục)</option>
+                    )}
                   </select>
                 </div>
               </div>
