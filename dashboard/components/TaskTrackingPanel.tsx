@@ -281,17 +281,54 @@ export default function TaskTrackingPanel({
   // tránh chiếm chỗ trống vô ích khi chưa có việc nào cần theo dõi.
   if (tasks.length === 0) return null;
 
-  const todayK = (() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  })();
+  const fmtKey = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const now = new Date();
+  const todayK = fmtKey(now);
+  // Dựng qua Date rồi format lại, không cộng thẳng vào chuỗi ngày — cộng thẳng
+  // là sai ở cuối tháng (31 -> 32) và cuối năm.
+  const tomorrowK = fmtKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1));
 
-  const dueCls = (d?: string | null) => {
+  type DueLevel = "overdue" | "today" | "tomorrow" | "none";
+
+  // `done` = việc theo dõi đã chốt xong thì THÔI cảnh báo. Để nguyên màu đỏ trên
+  // một dòng đã hoàn thành chỉ làm nhiễu, người xem tưởng còn phải xử lý.
+  const dueLevel = (d?: string | null, done?: boolean): DueLevel => {
+    if (done) return "none";
     const k = dayKey(d);
-    if (!k) return "text-slate-400";
-    if (k < todayK) return "text-rose-600 font-extrabold";   // quá hạn
-    if (k === todayK) return "text-rose-600 font-extrabold";  // hôm nay
-    return "text-slate-600";
+    if (!k) return "none";
+    if (k < todayK) return "overdue";
+    if (k === todayK) return "today";
+    if (k === tomorrowK) return "tomorrow";
+    return "none";
+  };
+
+  const dueCls = (d?: string | null, done?: boolean) => {
+    const lv = dueLevel(d, done);
+    if (lv === "overdue" || lv === "today") return "text-rose-600 font-extrabold";
+    if (lv === "tomorrow") return "text-amber-600 font-extrabold";
+    return dayKey(d) ? "text-slate-600" : "text-slate-400";
+  };
+
+  // Tô CẢ DÒNG chứ không chỉ ô ngày — nhìn lướt bảng là thấy ngay dòng nào gấp.
+  // Dùng chung bảng màu với thẻ Kanban: đỏ = đến hạn/quá hạn, vàng = còn 1 ngày.
+  const rowTint = (lv: DueLevel) =>
+    lv === "overdue" || lv === "today" ? "bg-rose-500/10"
+    : lv === "tomorrow" ? "bg-amber-500/10"
+    : "";
+
+  // Vạch màu bên trái đặt trên <td> ĐẦU TIÊN, không đặt trên <tr>: bảng chạy ở
+  // chế độ border-collapse nên viền khai trên hàng hay bị trình duyệt nuốt.
+  const rowAccent = (lv: DueLevel) =>
+    lv === "overdue" || lv === "today" ? "border-l-4 border-l-rose-500"
+    : lv === "tomorrow" ? "border-l-4 border-l-amber-500"
+    : "";
+
+  const dueBadge = (lv: DueLevel) => {
+    if (lv === "overdue") return { text: "Quá hạn", cls: "bg-rose-600" };
+    if (lv === "today") return { text: "Hôm nay", cls: "bg-rose-600" };
+    if (lv === "tomorrow") return { text: "Ngày mai", cls: "bg-amber-600" };
+    return null;
   };
 
   return (
@@ -342,6 +379,10 @@ export default function TaskTrackingPanel({
               const latest = latestOf(t.id);
               const open = expandedId === t.id;
               const isDone = t.tracking_status === "done";
+              // Cảnh báo tính theo HẠN KẾ TIẾP của dòng cập nhật mới nhất —
+              // đó mới là mốc đang phải chạy, không phải deadline của task gốc.
+              const lv = dueLevel(latest?.next_due_date, isDone);
+              const badge = dueBadge(lv);
               return (
                 // key phải nằm trên Fragment — nó mới là phần tử của mảng.
                 // Đặt key trên <tr> bên trong là React vẫn cảnh báo thiếu key.
@@ -350,9 +391,9 @@ export default function TaskTrackingPanel({
                     onClick={() => setExpandedId(open ? null : t.id)}
                     className={`border-t border-slate-100 hover:bg-slate-50/60 cursor-pointer transition-colors ${
                       isDone ? "opacity-55" : ""
-                    }`}
+                    } ${rowTint(lv)}`}
                   >
-                    <td className="px-3 py-2.5 text-slate-400">
+                    <td className={`px-3 py-2.5 text-slate-400 ${rowAccent(lv)}`}>
                       {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                     </td>
                     <td className="px-3 py-2.5">
@@ -383,8 +424,13 @@ export default function TaskTrackingPanel({
                         </span>
                       ) : <span className="text-slate-300">—</span>}
                     </td>
-                    <td className={`px-3 py-2.5 font-semibold ${dueCls(latest?.next_due_date)}`}>
+                    <td className={`px-3 py-2.5 font-semibold whitespace-nowrap ${dueCls(latest?.next_due_date, isDone)}`}>
                       {fmtDate(latest?.next_due_date)}
+                      {badge && (
+                        <span className={`ml-1.5 ${badge.cls} text-white px-1.5 py-0.5 rounded-full text-[8px] uppercase tracking-wide font-extrabold`}>
+                          {badge.text}
+                        </span>
+                      )}
                     </td>
                     <td className="px-3 py-2.5 text-center font-bold text-slate-500">{list.length}</td>
 
