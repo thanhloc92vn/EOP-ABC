@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import { Loader2, ShieldAlert, Lock } from "lucide-react";
 import { SidebarProvider } from "./SidebarContext";
+import ActivityTracker from "./ActivityTracker";
 import { usePathname } from "next/navigation";
 import { useTenantConfig } from "@/lib/tenantConfig";
 import { normalizePlan, getMinPlanForPath, PLAN_LABELS } from "@/lib/planShared";
@@ -309,5 +310,12 @@ export default function AuthWrapper({ children }: { children: React.ReactNode })
   }
 
   // 5. Logged in & Is Admin & đúng gói -> Render dashboard
-  return <SidebarProvider>{children}</SidebarProvider>;
+  // ActivityTracker chỉ gắn ở nhánh này (đã qua đăng nhập + đúng gói) nên chỉ
+  // đếm lượt mở module THẬT, không đếm màn hình đăng nhập/từ chối/nâng gói.
+  return (
+    <SidebarProvider>
+      <ActivityTracker />
+      {children}
+    </SidebarProvider>
+  );
 }
