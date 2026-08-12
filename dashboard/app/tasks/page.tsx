@@ -10,6 +10,7 @@ import { isHrDept, isDirectorRole } from "@/lib/access";
 import { normalizeName } from "@/lib/approvers";
 import { useDepartments } from "@/lib/departments";
 import { useProjectCatalog } from "@/lib/projectCatalog";
+import TaskTrackingPanel from "@/components/TaskTrackingPanel";
 import {
   Calendar,
   Paperclip,
@@ -25,7 +26,8 @@ import {
   ChevronRight,
   Users,
   Filter,
-  CheckCircle2
+  CheckCircle2,
+  Building2
 } from "lucide-react";
 
 // Một dòng trong "Danh sách nhân viên" — gốc để suy ra task thuộc phòng nào.
@@ -59,6 +61,9 @@ interface Task {
   project_name?: string | null;
   work_group?: string | null;
   work_source?: string | null;
+  // Trạng thái THEO DÕI (migration 039), tách khỏi `status`: status quyết định
+  // task nằm ở cột nào, cột này chỉ nói việc theo dõi còn chạy hay đã xong.
+  tracking_status?: string | null;
 }
 
 // Trưởng phòng / Phó phòng / Tổ trưởng — quản lý cấp phòng: thấy cả phòng mình,
@@ -104,6 +109,10 @@ const COLUMNS = [
   { id: "pending_approval", title: "Chờ phê duyệt", color: "border-t-purple-500" },
   { id: "need_revision", title: "Cần chỉnh sửa", color: "border-t-rose-500" },
   { id: "completed", title: "Đã hoàn thành", color: "border-t-emerald-500" },
+  // Cột 6: nhân viên xong phần việc nhưng DỰ ÁN còn theo tiếp (chờ nghiệm thu,
+  // CĐT yêu cầu bổ sung...). Task kéo sang đây thì RỜI khỏi "Đã hoàn thành" —
+  // "hoàn thành" nghĩa là đóng sổ hẳn, còn đây là đang theo dõi.
+  { id: "tracking", title: "Update thông tin", color: "border-t-amber-500" },
 ];
 
 const getCardStyles = (status: string) => {
@@ -137,6 +146,12 @@ const getCardStyles = (status: string) => {
         bg: "bg-gradient-to-br from-emerald-50/60 to-teal-50/20 border-emerald-200/45 border-l-4 border-l-emerald-500",
         title: "text-emerald-950",
         shadow: "shadow-sm shadow-emerald-500/5 hover:shadow-md hover:shadow-emerald-500/10",
+      };
+    case "tracking":
+      return {
+        bg: "bg-gradient-to-br from-amber-50/60 to-orange-50/20 border-amber-200/45 border-l-4 border-l-amber-500",
+        title: "text-amber-950",
+        shadow: "shadow-sm shadow-amber-500/5 hover:shadow-md hover:shadow-amber-500/10",
       };
     default:
       return {
@@ -249,7 +264,15 @@ export default function TaskManagementPage() {
   const [justCompletedId, setJustCompletedId] = useState<string | null>(null);
 
   // Grouped columns: collapse tasks that share the same assignee (name or department)
-  const GROUPED_COLUMNS = new Set(["planning", "completed"]);
+  // Gom theo người nhận ở TẤT CẢ các cột. Trước chỉ gom ở "planning"/"completed",
+  // nên 4 cột còn lại trải thẻ ra rất dài — cột "Đang thực hiện" 23 việc phải
+  // cuộn mãi mới hết. Nhóm 1 việc vẫn hiện thẻ bình thường, từ 2 việc trở lên
+  // mới cụp thành một dòng tên bấm để mở.
+  // Vẫn giữ dạng Set thay vì bỏ hẳn điều kiện: thêm cột mới sau này mà muốn
+  // KHÔNG gom thì chỉ việc không khai vào đây.
+  const GROUPED_COLUMNS = new Set([
+    "planning", "in_progress", "pending_approval", "need_revision", "completed", "tracking",
+  ]);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const toggleGroup = (key: string) => {
     setExpandedGroups(prev => {
@@ -314,7 +337,16 @@ export default function TaskManagementPage() {
           description: t.description || "",
           start_date: t.start_date || "",
           link: t.link || "",
-          notes: t.notes || ""
+          notes: t.notes || "",
+          // Hàm này ánh xạ TAY từng cột, nên thêm cột vào bảng `tasks` mà quên
+          // khai ở đây là dữ liệu lưu xuống DB đúng nhưng đọc lên luôn rỗng —
+          // đúng lỗi đã dính với 4 trường dự án/phân loại. Thêm cột mới cho
+          // `tasks` thì nhớ khai thêm một dòng ở đây.
+          project_code: t.project_code || "",
+          project_name: t.project_name || "",
+          work_group: t.work_group || "",
+          work_source: t.work_source || "",
+          tracking_status: t.tracking_status || "active"
         }));
         setTasks(mappedTasks);
       }
@@ -404,13 +436,18 @@ export default function TaskManagementPage() {
     if (!taskId) return;
 
     const isCompleting = columnId === "completed";
+    // Đưa việc vào diện theo dõi sau hoàn thành cũng là quyết định của cấp quản
+    // lý, y như kết luận "đã xong" — gate chung một chỗ.
+    const isTracking = columnId === "tracking";
 
     // Chỉ Trưởng phòng / Phó phòng / Tổ trưởng / Admin được kết luận công việc
     // đã xong — nhân viên tự kéo vào "Đã hoàn thành" sẽ bị chặn.
-    if (isCompleting && !canManageTasks) {
+    if ((isCompleting || isTracking) && !canManageTasks) {
       alert(
-        'Chỉ Trưởng phòng, Phó phòng, Tổ trưởng hoặc Admin mới được chuyển công việc sang "Đã hoàn thành".\n\n' +
-        "Bạn hãy cập nhật tiến độ và chuyển sang \"Chờ phê duyệt\" để cấp quản lý xác nhận."
+        isTracking
+          ? 'Chỉ cấp quản lý mới được chuyển công việc sang "Update thông tin" để theo dõi tiếp.'
+          : 'Chỉ Trưởng phòng, Phó phòng, Tổ trưởng hoặc Admin mới được chuyển công việc sang "Đã hoàn thành".\n\n' +
+            "Bạn hãy cập nhật tiến độ và chuyển sang \"Chờ phê duyệt\" để cấp quản lý xác nhận."
       );
       setDraggedTaskId(null);
       return;
@@ -1085,8 +1122,11 @@ export default function TaskManagementPage() {
               <p className="text-xs font-semibold">Đang tải công việc từ Supabase...</p>
             </div>
           ) : (
-            /* Kanban Board Container */
-            <div className="flex overflow-x-auto pb-4 gap-4 items-start md:grid md:grid-cols-2 lg:grid-cols-5 md:overflow-x-visible">
+            /* Kanban Board Container —
+               xl:grid-cols-6 (trước là lg:grid-cols-5) cho cột "Update thông tin".
+               Thêm mốc xl để màn hình vừa không bị bóp 6 cột quá hẹp: từ 1280px
+               trở xuống chia 3 cột/2 hàng, rộng hơn mới trải hết 6 cột một hàng. */
+            <div className="flex overflow-x-auto pb-4 gap-4 items-start md:grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 md:overflow-x-visible">
               {COLUMNS.map((col) => {
                 const colTasks = filteredTasks.filter(t => t.status === col.id);
 
@@ -1237,15 +1277,28 @@ export default function TaskManagementPage() {
                                 </div>
 
                                 {/* Footer Info */}
-                                <div className="flex items-center justify-between text-[9px] text-slate-500 font-bold">
-                                  <span className={`flex items-center gap-0.5 ${isDueToday ? "text-rose-600 font-extrabold" : isDueTomorrow ? "text-amber-600 font-extrabold" : ""}`}>
+                                <div className="flex items-center justify-between gap-2 text-[9px] text-slate-500 font-bold">
+                                  <span className={`flex items-center gap-0.5 shrink-0 ${isDueToday ? "text-rose-600 font-extrabold" : isDueTomorrow ? "text-amber-600 font-extrabold" : ""}`}>
                                     <Calendar size={10} className="opacity-75" /> {task.due_date ? new Date(task.due_date).toLocaleDateString("vi-VN", { day: '2-digit', month: '2-digit' }) : "Không hạn"}
                                     {isDueToday && <span className="ml-1 bg-rose-600 text-white px-1.5 py-0.5 rounded-full text-[8px] uppercase tracking-wide">Hôm nay</span>}
                                     {isDueTomorrow && <span className="ml-1 bg-amber-600 text-white px-1.5 py-0.5 rounded-full text-[8px] uppercase tracking-wide">Ngày mai</span>}
                                   </span>
-                                  <div className="flex items-center gap-1.5">
-                                    {task.attachments > 0 && <span className="flex items-center gap-0.5"><Paperclip size={10} /> {task.attachments}</span>}
-                                    {task.comments > 0 && <span className="flex items-center gap-0.5"><MessageSquare size={10} /> {task.comments}</span>}
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    {/* Tên dự án — chỉ hiện khi task có chọn dự án. Thẻ cao cố
+                                        định h-40 nên BẮT BUỘC truncate: tên dài như "Dự án ĐMT
+                                        Trà Vinh 2" mà xuống dòng là vỡ cả thẻ. Tên đầy đủ kèm
+                                        mã dự án nằm ở tooltip khi rê chuột. */}
+                                    {(task.project_name || task.project_code) && (
+                                      <span
+                                        title={[task.project_code, task.project_name].filter(Boolean).join(" — ")}
+                                        className="flex items-center gap-0.5 min-w-0 text-blue-600"
+                                      >
+                                        <Building2 size={10} className="opacity-75 shrink-0" />
+                                        <span className="truncate font-extrabold">{task.project_name || task.project_code}</span>
+                                      </span>
+                                    )}
+                                    {task.attachments > 0 && <span className="flex items-center gap-0.5 shrink-0"><Paperclip size={10} /> {task.attachments}</span>}
+                                    {task.comments > 0 && <span className="flex items-center gap-0.5 shrink-0"><MessageSquare size={10} /> {task.comments}</span>}
                                   </div>
                                 </div>
                               </div>
@@ -1304,13 +1357,34 @@ export default function TaskManagementPage() {
               })}
             </div>
           )}
+
+          {/* ─── DANH SÁCH VIỆC THEO DÕI ───
+              Nằm dưới Kanban, TỰ ẨN khi cột "Update thông tin" chưa có việc nào
+              (panel tự return null). Dùng `filteredTasks` chứ không phải `tasks`
+              để bảng này ăn theo đúng bộ lọc phòng ban / BĐH / tháng đang chọn
+              phía trên — nhìn xuống dưới không bị lệch ngữ cảnh với board. */}
+          {!loading && (
+            <TaskTrackingPanel
+              tasks={filteredTasks.filter(t => t.status === "tracking")}
+              employees={assignableEmployees}
+              canManage={canManageTasks}
+              currentUserName={currentUser?.name || ""}
+              readSmtpConfig={readSmtpConfig}
+              onChanged={fetchTasks}
+            />
+          )}
         </main>
       </div>
 
       {/* Add Task Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-lg p-6 shadow-2xl border border-slate-100 space-y-4 animate-in fade-in-50 zoom-in-95 duration-150">
+          {/* max-w-3xl thay cho max-w-lg: form đã lên 12 trường, để 512px thì các
+              lưới 2-3 cột bị bóp thành một cột dài lê thê phải cuộn nhiều.
+              max-h + overflow-y-auto là phần QUAN TRỌNG cho màn hình nhỏ: trước
+              đây modal không giới hạn chiều cao, laptop 13" hoặc cửa sổ thấp là
+              nút "Tạo Task" nằm ngoài màn hình và KHÔNG cuộn tới được. */}
+          <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto p-6 shadow-2xl border border-slate-100 space-y-4 animate-in fade-in-50 zoom-in-95 duration-150">
             {/* Header */}
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="font-heading font-extrabold text-sm text-slate-800">Tạo công việc mới</h3>
@@ -1437,6 +1511,7 @@ export default function TaskManagementPage() {
                     <option value="pending_approval">Chờ duyệt</option>
                     <option value="need_revision">Cần sửa</option>
                     <option value="completed">Đã xong</option>
+                    <option value="tracking">Update thông tin</option>
                   </select>
                 </div>
               </div>
@@ -1444,8 +1519,11 @@ export default function TaskManagementPage() {
               {/* ─── DỰ ÁN + PHÂN LOẠI (danh mục ở Cài đặt -> Danh mục công việc) ───
                   Chọn TÊN dự án thì MÃ tự hiện ở ô bên cạnh: state chỉ giữ mã,
                   tên tra ngược lúc lưu nên hai giá trị không thể lệch nhau. */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="space-y-1 sm:col-span-2">
+              {/* Chia ĐÔI như mọi hàng khác trong form. Trước đây hàng này để
+                  lưới 3 cột (tên 2 phần, mã 1 phần) nên đường chia rơi vào ~66%
+                  còn các hàng trên dưới chia ở 50% — nhìn so le hẳn ra. */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1">
                   <label className="text-slate-500">Tên dự án</label>
                   <select
                     value={newProjectCode}
@@ -1595,7 +1673,12 @@ export default function TaskManagementPage() {
       {/* Edit Task Modal */}
       {isEditModalOpen && editingTask && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-lg p-6 shadow-2xl border border-slate-100 space-y-4 animate-in fade-in-50 zoom-in-95 duration-150">
+          {/* max-w-3xl thay cho max-w-lg: form đã lên 12 trường, để 512px thì các
+              lưới 2-3 cột bị bóp thành một cột dài lê thê phải cuộn nhiều.
+              max-h + overflow-y-auto là phần QUAN TRỌNG cho màn hình nhỏ: trước
+              đây modal không giới hạn chiều cao, laptop 13" hoặc cửa sổ thấp là
+              nút "Tạo Task" nằm ngoài màn hình và KHÔNG cuộn tới được. */}
+          <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto p-6 shadow-2xl border border-slate-100 space-y-4 animate-in fade-in-50 zoom-in-95 duration-150">
             {/* Header */}
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="font-heading font-extrabold text-sm text-slate-800">Chỉnh sửa công việc</h3>
@@ -1670,6 +1753,7 @@ export default function TaskManagementPage() {
                     <option value="pending_approval">Chờ duyệt</option>
                     <option value="need_revision">Cần sửa</option>
                     <option value="completed">Đã xong</option>
+                    <option value="tracking">Update thông tin</option>
                   </select>
                 </div>
               </div>
@@ -1677,8 +1761,11 @@ export default function TaskManagementPage() {
               {/* ─── DỰ ÁN + PHÂN LOẠI — giống hệt modal tạo mới ───
                   Task cũ (tạo trước migration 037) mở lên sẽ thấy 3 ô trống,
                   điền bổ sung rồi Lưu là xong, không cần chuyển đổi dữ liệu. */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="space-y-1 sm:col-span-2">
+              {/* Chia ĐÔI như mọi hàng khác trong form. Trước đây hàng này để
+                  lưới 3 cột (tên 2 phần, mã 1 phần) nên đường chia rơi vào ~66%
+                  còn các hàng trên dưới chia ở 50% — nhìn so le hẳn ra. */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1">
                   <label className="text-slate-500">Tên dự án</label>
                   <select
                     value={editProjectCode}
