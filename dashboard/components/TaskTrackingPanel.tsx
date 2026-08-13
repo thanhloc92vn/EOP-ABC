@@ -20,7 +20,7 @@ import { supabase } from "@/lib/supabase";
 import { apiFetch } from "@/lib/apiClient";
 import {
   ListChecks, ChevronDown, ChevronRight, Loader2, Send, UserCheck, CalendarClock,
-  Search, X,
+  Search, X, Pencil, Check,
 } from "lucide-react";
 
 export type TrackingTask = {
@@ -37,6 +37,7 @@ export type TaskUpdate = {
   id: string;
   task_id: string;
   content: string;
+  /** MỘT HOẶC NHIỀU tên, ngăn nhau bằng dấu phẩy — xem splitNames bên dưới. */
   tagged_name: string | null;
   next_due_date: string | null;
   created_by: string | null;
@@ -56,6 +57,14 @@ type Props = {
   /** Gọi sau khi đổi trạng thái theo dõi, để trang cha nạp lại danh sách task. */
   onChanged: () => void;
 };
+
+// tagged_name lưu nhiều người dưới dạng "Tên A, Tên B" — cùng lối text với
+// tasks.assignee, không đẻ thêm cột mảng. Quan trọng: hàm caller_owns_task()
+// (migration 010) so tên kiểu "chứa 2 chiều", nên tên của từng người vẫn nằm
+// TRONG chuỗi ghép -> policy task_updates_insert của 038 chạy đúng như cũ,
+// KHÔNG cần migration mới.
+const splitNames = (v?: string | null) =>
+  (v || "").split(",").map(s => s.trim()).filter(Boolean);
 
 const dayKey = (v?: string | null) => (v ? String(v).slice(0, 10) : "");
 
@@ -100,13 +109,24 @@ export default function TaskTrackingPanel({
   // Nháp của ô cập nhật nhanh, tách theo từng task để mở dòng khác không mất
   // những gì đang gõ dở ở dòng trước.
   const [draftContent, setDraftContent] = useState<Record<string, string>>({});
-  const [draftTag, setDraftTag] = useState<Record<string, string>>({});
+  /** NHIỀU người cho một lần cập nhật — một bước theo dõi thường cần cả người
+   *  làm hồ sơ lẫn người ngoài công trường, trước đây phải gửi 2 lần. */
+  const [draftTag, setDraftTag] = useState<Record<string, string[]>>({});
   const [draftDue, setDraftDue] = useState<Record<string, string>>({});
+
+  // ─── Sửa nhanh tên việc ngay trên dòng ───
+  // Chỉ để CHỮA LỖI CHÍNH TẢ tên việc, nên sửa tại chỗ chứ không mở modal
+  // "Chỉnh sửa công việc": gõ lại một chữ mà phải mở cửa sổ 12 trường rồi bấm
+  // Lưu thì nặng nề, lại dễ đụng nhầm trường khác.
+  const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
+  const [titleDraft, setTitleDraft] = useState("");
+  const [savingTitle, setSavingTitle] = useState(false);
 
   // ─── Ô chọn người phụ trách tiếp ───
   // Bê nguyên mẫu ô "Người nhận" ở form giao việc: thẻ tên có nút X, ô tìm kiếm,
   // dropdown kèm avatar + phòng ban. <select> thuần không dùng được với danh sách
-  // hơn trăm người — phải cuộn tay tìm tên.
+  // hơn trăm người — phải cuộn tay tìm tên. Khác một điểm: ô này chọn được NHIỀU
+  // người nên ô tìm kiếm KHÔNG biến mất sau lần chọn đầu.
   // CHỈ MỘT bộ state, không tách theo task: mỗi lúc chỉ có đúng một dòng được mở
   // (expandedId) nên trong DOM cũng chỉ có đúng một ô chọn.
   const [tagSearch, setTagSearch] = useState("");
@@ -137,12 +157,16 @@ export default function TaskTrackingPanel({
     return [...tasks].sort((a, b) => rank(a) - rank(b));
   }, [tasks]);
 
+  // Bỏ khỏi dropdown những người ĐÃ chọn ở dòng đang mở — tránh chọn trùng hai
+  // lần rồi gửi cho họ hai lá thư y hệt.
   const filteredEmployees = useMemo(() => {
     const q = tagSearch.trim().toLowerCase();
+    const picked = (expandedId ? draftTag[expandedId] : undefined) || [];
     return employees
+      .filter(e => !picked.includes(e.name))
       .filter(e => !q || e.name.toLowerCase().includes(q) || (e.department || "").toLowerCase().includes(q))
       .slice(0, 30);
-  }, [employees, tagSearch]);
+  }, [employees, tagSearch, expandedId, draftTag]);
 
   // Khoá phụ thuộc là chuỗi id đã sắp xếp: mảng `tasks` được tạo mới mỗi lần
   // component cha render, để nguyên nó vào deps là tải lại vô tận.
@@ -181,47 +205,58 @@ export default function TaskTrackingPanel({
   // Được viết khi là cấp quản lý, hoặc từng được tag ở bất kỳ dòng nào của việc
   // này — khớp đúng policy task_updates_insert của migration 038.
   const canPostOn = (taskId: string) =>
-    canManage || updatesOf(taskId).some(u => nameMatches(u.tagged_name, currentUserName));
+    canManage ||
+    updatesOf(taskId).some(u => splitNames(u.tagged_name).some(n => nameMatches(n, currentUserName)));
 
   // Báo thư cho người vừa được giao theo dõi. Gọi SAU khi đã lưu thành công và
   // KHÔNG ném lỗi ra ngoài: dòng cập nhật đã nằm trong CSDL rồi, hỏng thư không
   // được phép làm hỏng thao tác vừa xong.
-  const notifyTagged = async (task: TrackingTask, content: string, tagged: string, due: string) => {
-    // Tự tag chính mình thì thôi — không ai cần thư báo việc mình vừa tự nhận.
-    if (nameMatches(tagged, currentUserName)) return;
+  // GỬI LẦN LƯỢT TỪNG NGƯỜI, không gộp một thư nhiều người nhận: thư mở đầu bằng
+  // "Kính gửi Anh/Chị <tên>" nên gộp là sai xưng hô, và người này thấy hết địa chỉ
+  // của người kia. Mọi lỗi gom lại thành MỘT dòng cảnh báo vàng ở cuối, để 5 người
+  // hỏng email không đẻ ra 5 lần ghi đè lẫn nhau vào ô cảnh báo.
+  const notifyTagged = async (task: TrackingTask, content: string, tagged: string[], due: string) => {
+    const problems: string[] = [];
 
-    const emp = employees.find(e => nameMatches(e.name, tagged));
-    if (!emp?.email) {
-      setWarn(
-        `Đã lưu cập nhật, nhưng KHÔNG gửi được email báo ${tagged}: nhân sự này chưa có email trong Danh sách nhân viên. ` +
-        `Bổ sung email công ty cho họ để lần sau hệ thống gửi được.`
-      );
-      return;
+    for (const name of tagged) {
+      // Tự tag chính mình thì thôi — không ai cần thư báo việc mình vừa tự nhận.
+      if (nameMatches(name, currentUserName)) continue;
+
+      const emp = employees.find(e => nameMatches(e.name, name));
+      if (!emp?.email) {
+        problems.push(`${name} (chưa có email trong Danh sách nhân viên)`);
+        continue;
+      }
+
+      try {
+        const res = await apiFetch("/api/send-tracking-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            smtpConfig: readSmtpConfig(),
+            taskTitle: task.title,
+            projectCode: task.project_code || "",
+            projectName: task.project_name || "",
+            updateContent: content,
+            nextDueDate: due || "",
+            taggedEmails: emp.email,
+            taggedName: emp.name,
+            updatedByName: currentUserName,
+            siteUrl: typeof window !== "undefined" ? window.location.origin : "",
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (data?.error) problems.push(`${name} (${data.error})`);
+      } catch (e: any) {
+        problems.push(`${name} (${e?.message || String(e)})`);
+      }
     }
 
-    try {
-      const res = await apiFetch("/api/send-tracking-email", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          smtpConfig: readSmtpConfig(),
-          taskTitle: task.title,
-          projectCode: task.project_code || "",
-          projectName: task.project_name || "",
-          updateContent: content,
-          nextDueDate: due || "",
-          taggedEmails: emp.email,
-          taggedName: emp.name,
-          updatedByName: currentUserName,
-          siteUrl: typeof window !== "undefined" ? window.location.origin : "",
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (data?.error) {
-        setWarn(`Đã lưu cập nhật, nhưng KHÔNG gửi được email báo ${tagged}: ${data.error}`);
-      }
-    } catch (e: any) {
-      setWarn(`Đã lưu cập nhật, nhưng KHÔNG gửi được email báo ${tagged}: ${e?.message || String(e)}`);
+    if (problems.length > 0) {
+      setWarn(
+        `Đã lưu cập nhật, nhưng KHÔNG gửi được email báo: ${problems.join("; ")}. ` +
+        `Bổ sung email công ty cho họ để lần sau hệ thống gửi được.`
+      );
     }
   };
 
@@ -244,10 +279,31 @@ export default function TaskTrackingPanel({
     }
   };
 
+  // Lưu tên việc vừa sửa. CHỈ đụng cột `title` — không gửi kèm trường nào khác
+  // để không vô tình ghi đè thứ người khác vừa đổi trên Kanban.
+  const saveTitle = async (taskId: string) => {
+    const next = titleDraft.trim();
+    const cur = tasks.find(t => t.id === taskId)?.title || "";
+    if (!next) { setErr("Tên việc không được để trống."); return; }
+    if (next === cur) { setEditingTitleId(null); return; }
+    try {
+      setSavingTitle(true);
+      setErr("");
+      const { error } = await supabase.from("tasks").update({ title: next }).eq("id", taskId);
+      if (error) throw error;
+      setEditingTitleId(null);
+      onChanged();
+    } catch (e: any) {
+      setErr(`Không sửa được tên việc: ${e?.message || String(e)}`);
+    } finally {
+      setSavingTitle(false);
+    }
+  };
+
   const postUpdate = async (taskId: string) => {
     const content = (draftContent[taskId] || "").trim();
     if (!content) { setErr("Nhập nội dung cập nhật trước khi gửi."); return; }
-    const tagged = draftTag[taskId] || "";
+    const tagged = draftTag[taskId] || [];
     const due = draftDue[taskId] || "";
     try {
       setPosting(true);
@@ -256,17 +312,17 @@ export default function TaskTrackingPanel({
       const { error } = await supabase.from("task_updates").insert([{
         task_id: taskId,
         content,
-        tagged_name: tagged || null,
+        tagged_name: tagged.length > 0 ? tagged.join(", ") : null,
         next_due_date: due || null,
         created_by: currentUserName || null,
       }]);
       if (error) throw error;
       setDraftContent(p => ({ ...p, [taskId]: "" }));
-      setDraftTag(p => ({ ...p, [taskId]: "" }));
+      setDraftTag(p => ({ ...p, [taskId]: [] }));
       setDraftDue(p => ({ ...p, [taskId]: "" }));
       await fetchUpdates();
 
-      if (tagged) {
+      if (tagged.length > 0) {
         const task = tasks.find(t => t.id === taskId);
         if (task) await notifyTagged(task, content, tagged, due);
       }
@@ -406,8 +462,66 @@ export default function TaskTrackingPanel({
                         <div className="text-[10px] text-slate-400 font-semibold mt-0.5 truncate max-w-[160px]">{t.project_name}</div>
                       )}
                     </td>
-                    <td className="px-3 py-2.5 font-bold text-slate-700 max-w-[240px]">
-                      <div className="truncate">{t.title}</div>
+                    {/* Sửa tên việc TẠI CHỖ — chỉ cấp quản lý (canManage) thấy bút chì.
+                        stopPropagation ở cả ô: đang gõ mà bấm vào ô nhập thì không
+                        được đóng/mở dòng theo. */}
+                    <td
+                      className="px-3 py-2.5 font-bold text-slate-700 max-w-[240px]"
+                      onClick={editingTitleId === t.id ? (e) => e.stopPropagation() : undefined}
+                    >
+                      {editingTitleId === t.id ? (
+                        <div className="flex items-center gap-1">
+                          <input
+                            autoFocus
+                            value={titleDraft}
+                            disabled={savingTitle}
+                            onChange={(e) => setTitleDraft(e.target.value)}
+                            // Enter = lưu, Esc = huỷ — sửa một chữ thì không phải rời tay
+                            // khỏi bàn phím đi tìm nút.
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") { e.preventDefault(); saveTitle(t.id); }
+                              if (e.key === "Escape") { e.preventDefault(); setEditingTitleId(null); }
+                            }}
+                            className="flex-1 min-w-0 border border-blue-300 rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-blue-500/20 text-xs font-bold text-slate-800 bg-white disabled:opacity-60"
+                          />
+                          <button
+                            type="button"
+                            title="Lưu tên mới"
+                            disabled={savingTitle}
+                            onClick={() => saveTitle(t.id)}
+                            className="shrink-0 text-emerald-600 hover:text-emerald-700 disabled:opacity-50 transition-colors cursor-pointer p-0.5"
+                          >
+                            {savingTitle ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                          </button>
+                          <button
+                            type="button"
+                            title="Huỷ"
+                            disabled={savingTitle}
+                            onClick={() => setEditingTitleId(null)}
+                            className="shrink-0 text-slate-400 hover:text-rose-500 disabled:opacity-50 transition-colors cursor-pointer p-0.5"
+                          >
+                            <X size={13} />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-start gap-1.5">
+                          <div className="truncate flex-1 min-w-0">{t.title}</div>
+                          {canManage && (
+                            <button
+                              type="button"
+                              title="Sửa tên việc"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setEditingTitleId(t.id);
+                                setTitleDraft(t.title);
+                              }}
+                              className="shrink-0 text-slate-300 hover:text-blue-600 transition-colors cursor-pointer p-0.5"
+                            >
+                              <Pencil size={12} />
+                            </button>
+                          )}
+                        </div>
+                      )}
                       <div className="text-[10px] text-slate-400 font-semibold">{t.assignee}</div>
                     </td>
                     <td className="px-3 py-2.5 text-slate-500 font-medium max-w-[280px]">
@@ -417,11 +531,17 @@ export default function TaskTrackingPanel({
                         <span className="text-slate-300 italic">Chưa có cập nhật nào</span>
                       )}
                     </td>
+                    {/* Mỗi người một thẻ riêng, xuống dòng khi chật — đọc lướt
+                        biết ngay việc đang nằm trong tay mấy người. */}
                     <td className="px-3 py-2.5">
-                      {latest?.tagged_name ? (
-                        <span className="inline-flex items-center gap-1 font-bold text-indigo-700">
-                          <UserCheck size={12} /> {latest.tagged_name}
-                        </span>
+                      {splitNames(latest?.tagged_name).length > 0 ? (
+                        <div className="flex flex-wrap items-center gap-1">
+                          {splitNames(latest?.tagged_name).map((n) => (
+                            <span key={n} className="inline-flex items-center gap-1 font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-full px-1.5 py-0.5 text-[10px]">
+                              <UserCheck size={10} /> {n}
+                            </span>
+                          ))}
+                        </div>
                       ) : <span className="text-slate-300">—</span>}
                     </td>
                     <td className={`px-3 py-2.5 font-semibold whitespace-nowrap ${dueCls(latest?.next_due_date, isDone)}`}>
@@ -489,11 +609,11 @@ export default function TaskTrackingPanel({
                                 <p className="text-slate-700 font-medium leading-relaxed whitespace-pre-wrap">{u.content}</p>
                                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-[10px] font-bold">
                                   <span className="text-slate-400">{u.created_by || "—"} · {fmtDateTime(u.created_at)}</span>
-                                  {u.tagged_name && (
-                                    <span className="inline-flex items-center gap-1 text-indigo-600">
-                                      <UserCheck size={11} /> {u.tagged_name}
+                                  {splitNames(u.tagged_name).map((n) => (
+                                    <span key={n} className="inline-flex items-center gap-1 text-indigo-600">
+                                      <UserCheck size={11} /> {n}
                                     </span>
-                                  )}
+                                  ))}
                                   {u.next_due_date && (
                                     <span className={`inline-flex items-center gap-1 ${dueCls(u.next_due_date)}`}>
                                       <CalendarClock size={11} /> {fmtDate(u.next_due_date)}
@@ -517,37 +637,39 @@ export default function TaskTrackingPanel({
                             />
                             <div className="flex flex-wrap items-center gap-2">
                               <div className="relative min-w-[260px] flex-1 max-w-sm" ref={tagPickerRef}>
+                                {/* Thẻ tên và ô tìm kiếm NẰM CÙNG một khung: chọn xong
+                                    người thứ nhất, con trỏ vẫn ở đó để gõ tiếp người
+                                    thứ hai — không phải bấm lại vào ô. */}
                                 <div className="w-full min-h-[34px] px-2.5 py-1 border border-slate-200 rounded-lg flex flex-wrap items-center gap-1.5 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500/40 bg-white">
-                                  {draftTag[t.id] ? (
-                                    <span className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full px-2.5 py-1 text-[10px] font-bold">
-                                      {draftTag[t.id]}
+                                  {(draftTag[t.id] || []).map((name) => (
+                                    <span key={name} className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full px-2.5 py-1 text-[10px] font-bold">
+                                      {name}
                                       <button
                                         type="button"
-                                        onClick={() => { setDraftTag(p => ({ ...p, [t.id]: "" })); setTagSearch(""); setShowTagDropdown(true); }}
+                                        onClick={() => setDraftTag(p => ({ ...p, [t.id]: (p[t.id] || []).filter(n => n !== name) }))}
                                         className="hover:text-rose-500 transition-colors cursor-pointer"
                                       >
                                         <X size={10} />
                                       </button>
                                     </span>
-                                  ) : (
-                                    <div className="flex items-center gap-1.5 flex-1 min-w-[160px]">
-                                      <Search size={12} className="text-slate-400 shrink-0" />
-                                      <input
-                                        type="text"
-                                        value={tagSearch}
-                                        onChange={(e) => { setTagSearch(e.target.value); setShowTagDropdown(true); }}
-                                        onFocus={() => setShowTagDropdown(true)}
-                                        placeholder="Giao theo dõi tiếp cho ai?"
-                                        className="flex-1 min-w-0 py-1 outline-none text-xs font-semibold placeholder:font-normal bg-transparent"
-                                      />
-                                    </div>
-                                  )}
+                                  ))}
+                                  <div className="flex items-center gap-1.5 flex-1 min-w-[140px]">
+                                    <Search size={12} className="text-slate-400 shrink-0" />
+                                    <input
+                                      type="text"
+                                      value={tagSearch}
+                                      onChange={(e) => { setTagSearch(e.target.value); setShowTagDropdown(true); }}
+                                      onFocus={() => setShowTagDropdown(true)}
+                                      placeholder={(draftTag[t.id] || []).length > 0 ? "Thêm người nữa..." : "Giao theo dõi tiếp cho ai?"}
+                                      className="flex-1 min-w-0 py-1 outline-none text-xs font-semibold placeholder:font-normal bg-transparent"
+                                    />
+                                  </div>
                                 </div>
 
                                 {/* Mở LÊN TRÊN (bottom-full) chứ không xuống dưới: bảng nằm
                                     trong khung overflow-x-auto, mà CSS ép overflow-y thành
                                     auto theo — thả xuống dưới là danh sách bị cắt cụt. */}
-                                {showTagDropdown && !draftTag[t.id] && (
+                                {showTagDropdown && (
                                   <div className="absolute left-0 right-0 bottom-full mb-1 bg-white border border-slate-200 rounded-xl shadow-premium z-30 max-h-48 overflow-y-auto animate-in fade-in duration-150">
                                     {filteredEmployees.length === 0 ? (
                                       <p className="text-center text-slate-400 text-[11px] italic py-4">Không tìm thấy nhân viên phù hợp.</p>
@@ -556,7 +678,15 @@ export default function TaskTrackingPanel({
                                         <button
                                           key={emp.id}
                                           type="button"
-                                          onClick={() => { setDraftTag(p => ({ ...p, [t.id]: emp.name })); setTagSearch(""); setShowTagDropdown(false); }}
+                                          // Chọn xong KHÔNG đóng dropdown — còn chọn tiếp
+                                          // người thứ hai, thứ ba. Bấm ra ngoài mới đóng.
+                                          onClick={() => {
+                                            setDraftTag(p => {
+                                              const cur = p[t.id] || [];
+                                              return cur.includes(emp.name) ? p : { ...p, [t.id]: [...cur, emp.name] };
+                                            });
+                                            setTagSearch("");
+                                          }}
                                           className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 transition-colors text-left cursor-pointer"
                                         >
                                           <span className="w-6 h-6 rounded-full bg-gradient-to-br from-indigo-500 to-blue-400 text-white text-[9px] font-bold flex items-center justify-center shrink-0">
