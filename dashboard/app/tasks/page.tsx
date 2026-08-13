@@ -29,6 +29,11 @@ import {
   CheckCircle2,
   Building2
 } from "lucide-react";
+import TaskAttachmentField from "@/components/TaskAttachmentField";
+import {
+  TaskFile, parseTaskFiles, uploadTaskFile, resolveTaskFileUrl, removeTaskFile,
+  isAllowedTaskFile, humanSize, TASK_FILE_MAX_BYTES,
+} from "@/lib/taskFiles";
 
 // Một dòng trong "Danh sách nhân viên" — gốc để suy ra task thuộc phòng nào.
 interface EmployeeRef {
@@ -46,7 +51,10 @@ interface Task {
   assignee: string;
   due_date: string;
   progress: number;
+  /** SỐ ĐẾM để hiện cái kẹp giấy trên thẻ — không phải danh sách tệp. */
   attachments: number;
+  /** Tệp thật đính kèm (migration 043). */
+  attachment_files: TaskFile[];
   comments: number;
   status: string;
   description?: string;
@@ -175,7 +183,12 @@ export default function TaskManagementPage() {
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("");
-  const [newAssignee, setNewAssignee] = useState("");
+  // NHIỀU người nhận: điền form một lần, hệ thống tạo mỗi người MỘT việc riêng
+  // (xem handleCreateTask). Không nhét nhiều tên vào chung một ô `assignee`:
+  // phòng ban của việc được tra ngược từ tên người nhận (findEmployeeByName ở
+  // luật lọc bên dưới), chuỗi ghép nhiều tên tra không ra ai và việc sẽ biến
+  // mất khỏi bảng của Trưởng phòng.
+  const [newAssignees, setNewAssignees] = useState<string[]>([]);
   const [newPriority, setNewPriority] = useState("Trung bình");
   const [newDueDate, setNewDueDate] = useState("");
   const [newProgress, setNewProgress] = useState(0);
@@ -190,6 +203,13 @@ export default function TaskManagementPage() {
   });
   const [newLink, setNewLink] = useState("");
   const [newNotes, setNewNotes] = useState("");
+  // Tệp đính kèm (migration 043). Tải lên NGAY lúc chọn chứ không đợi bấm "Tạo
+  // Task": có vậy mới báo được ngay tệp quá nặng / sai định dạng, thay vì để
+  // người dùng điền hết form rồi mới đổ lỗi ở bước cuối.
+  const [newFiles, setNewFiles] = useState<TaskFile[]>([]);
+  const [editFiles, setEditFiles] = useState<TaskFile[]>([]);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [fileErr, setFileErr] = useState("");
   // 4 trường dự án/phân loại. Ô dự án lưu theo MÃ (khoá chọn), tên suy ra từ mã
   // lúc lưu — không giữ 2 state dễ lệch nhau.
   const [newProjectCode, setNewProjectCode] = useState("");
@@ -332,6 +352,7 @@ export default function TaskManagementPage() {
           due_date: t.due_date || "",
           progress: t.progress || 0,
           attachments: t.attachments || 0,
+          attachment_files: parseTaskFiles(t.attachment_files),
           comments: t.comments || 0,
           status: t.status || "planning",
           description: t.description || "",
@@ -481,36 +502,107 @@ export default function TaskManagementPage() {
     }
   };
 
+  // ─── Tệp đính kèm ───
+  // Dùng chung cho form Tạo và form Sửa: `setList` quyết định đổ vào ô nào.
+  // Chặn dung lượng / định dạng NGAY TRƯỚC khi gọi mạng — bucket cũng chặn
+  // (migration 043) nhưng để tệp 50MB bò lên mạng rồi mới bị trả về thì người
+  // dùng ngồi đợi vô ích.
+  const handlePickFiles = async (
+    files: FileList | null,
+    setList: React.Dispatch<React.SetStateAction<TaskFile[]>>
+  ) => {
+    if (!files || files.length === 0) return;
+    setFileErr("");
+    setUploadingFile(true);
+    const problems: string[] = [];
+    try {
+      for (const file of Array.from(files)) {
+        if (!isAllowedTaskFile(file)) {
+          problems.push(`"${file.name}" không phải ảnh hoặc PDF`);
+          continue;
+        }
+        if (file.size > TASK_FILE_MAX_BYTES) {
+          problems.push(`"${file.name}" nặng ${humanSize(file.size)} (tối đa 2MB)`);
+          continue;
+        }
+        try {
+          const uploaded = await uploadTaskFile(file);
+          setList(prev => [...prev, uploaded]);
+        } catch (err: any) {
+          problems.push(err?.message || String(err));
+        }
+      }
+    } finally {
+      setUploadingFile(false);
+    }
+    if (problems.length > 0) setFileErr(problems.join(" · "));
+  };
+
+  // Gỡ tệp khỏi danh sách.
+  // `purge` = có xoá luôn tệp trong kho hay không:
+  //   form TẠO  -> true, tệp vừa tải lên, chưa việc nào dùng, xoá cho sạch kho.
+  //   form SỬA  -> FALSE. Giao một việc cho 3 người là 3 dòng task cùng trỏ vào
+  //               MỘT tệp; xoá tệp khi gỡ khỏi một dòng sẽ làm hỏng 2 dòng kia.
+  //               Tệp mồ côi nằm lại trong kho không ảnh hưởng ai.
+  const handleRemoveFile = (
+    file: TaskFile,
+    setList: React.Dispatch<React.SetStateAction<TaskFile[]>>,
+    purge: boolean
+  ) => {
+    setList(prev => prev.filter(f => f.path !== file.path));
+    if (purge) removeTaskFile(file.path);
+  };
+
+  // Bỏ dở form Tạo: DỌN LUÔN tệp đã lỡ tải lên. Không dọn thì tệp vừa nằm mồ
+  // côi trong kho, vừa còn nguyên trong danh sách khi mở lại form -> đính nhầm
+  // vào công việc kế tiếp.
+  const closeCreateModal = () => {
+    newFiles.forEach(f => removeTaskFile(f.path));
+    setNewFiles([]);
+    setFileErr("");
+    setIsModalOpen(false);
+  };
+
+  // Mở tệp: bucket riêng tư nên phải ký link theo phiên đăng nhập, không có
+  // đường dẫn tĩnh nào mở thẳng được.
+  const handleOpenFile = async (file: TaskFile) => {
+    const url = await resolveTaskFileUrl(file.path);
+    if (!url) {
+      alert(`Không mở được "${file.name}".\nTệp có thể đã bị xoá, hoặc tài khoản của bạn không có quyền đọc kho tệp công việc.`);
+      return;
+    }
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
   // Gửi email báo "bạn được giao việc mới". Im lặng bỏ qua khi không đủ điều kiện —
   // việc đã tạo xong rồi, lỗi email không được làm hỏng thao tác của người dùng.
+  //
+  // TRẢ VỀ chuỗi mô tả sự cố (hoặc "" khi êm) thay vì tự bật alert: giao một
+  // lượt cho 5 người mà hỏng cả 5 thì 5 hộp thoại bật liên tiếp, người dùng
+  // phải bấm OK năm lần. Nơi gọi gom lại thành MỘT hộp.
   const notifyAssignee = async (task: {
     title: string; assignee: string; priority: string;
     due_date?: string; start_date?: string; description?: string; link?: string;
-  }) => {
+  }): Promise<string> => {
     try {
-      if (!currentUser) return;
+      if (!currentUser) return "";
 
       const amIManagerOrLeader =
         currentUser.isAdmin ||
         currentUser.isDirector ||
         isDirectorRole(currentUser.department) ||
         isDeptManagerRole(currentUser.role);
-      if (!amIManagerOrLeader) return; // nhân viên thường tự tạo việc -> không gửi
+      if (!amIManagerOrLeader) return ""; // nhân viên thường tự tạo việc -> không gửi
 
       // Giao cho chính mình -> không gửi
       const meKey = normalizeName(currentUser.name);
       const targetKey = normalizeName(task.assignee);
-      if (!targetKey || targetKey === meKey) return;
+      if (!targetKey || targetKey === meKey) return "";
 
       const emp = employeesList.find(e => normalizeName(e.name) === targetKey);
       if (!emp?.email) {
         // Báo rõ thay vì im lặng — nếu không, người giao việc tưởng tính năng hỏng.
-        alert(
-          `Đã tạo công việc, nhưng KHÔNG gửi được email báo ${task.assignee}:\n` +
-          `nhân sự này chưa có email trong Danh sách nhân viên.\n\n` +
-          `Vào Danh sách nhân viên bổ sung email công ty cho họ để lần sau hệ thống gửi được.`
-        );
-        return;
+        return `${task.assignee}: chưa có email trong Danh sách nhân viên`;
       }
 
       const res = await apiFetch("/api/send-task-email", {
@@ -527,11 +619,10 @@ export default function TaskManagementPage() {
         }),
       });
       const data = await res.json().catch(() => ({}));
-      if (data?.error) {
-        alert(`Đã tạo công việc, nhưng KHÔNG gửi được email báo ${task.assignee}:\n${data.error}`);
-      }
+      if (data?.error) return `${task.assignee}: ${data.error}`;
+      return "";
     } catch (err: any) {
-      alert(`Đã tạo công việc, nhưng KHÔNG gửi được email báo ${task.assignee}:\n${err?.message || err}`);
+      return `${task.assignee}: ${err?.message || err}`;
     }
   };
 
@@ -542,39 +633,43 @@ export default function TaskManagementPage() {
       alert("Vui lòng điền Tên công việc!");
       return;
     }
-    if (!newAssignee) {
+    if (newAssignees.length === 0) {
       alert("Vui lòng chọn Người nhận!");
       return;
     }
-    // Ô Người nhận giờ là ô GÕ TỰ DO (có gợi ý datalist) nên phải chốt lại tên
-    // đúng người trong danh sách — tránh giao việc cho một cái tên gõ sai, task
-    // sẽ không hiện với ai và không gửi được email báo.
-    if (!assignableEmployees.some(emp => emp.name === newAssignee.trim())) {
-      alert("Người nhận không hợp lệ!\nHãy gõ và CHỌN tên từ danh sách gợi ý.");
+    // Chốt lại từng tên phải có thật trong danh sách — tên gõ sai thì task không
+    // hiện với ai và không gửi được email báo.
+    const invalid = newAssignees.filter(n => !assignableEmployees.some(emp => emp.name === n));
+    if (invalid.length > 0) {
+      alert(`Người nhận không hợp lệ: ${invalid.join(", ")}\nHãy chọn tên từ danh sách gợi ý.`);
       return;
     }
 
-    const assigneeName = newAssignee.trim();
-
     try {
-      const { error } = await supabase
-        .from("tasks")
-        .insert([{
-          title: newTitle,
-          assignee: assigneeName,
-          priority: newPriority,
-          due_date: newDueDate || null,
-          progress: Number(newProgress),
-          status: newStatus,
-          description: newDescription,
-          start_date: newStartDate || null,
-          link: newLink,
-          notes: newNotes,
-          project_code: newProjectCode || null,
-          project_name: projectNameOf(newProjectCode) || null,
-          work_group: newWorkGroup || null,
-          work_source: newWorkSource || null
-        }]);
+      // MỖI NGƯỜI MỘT DÒNG task, nội dung y hệt nhau. Mỗi người có tiến độ riêng,
+      // tự kéo thẻ của mình, và mọi luật lọc quyền xem (tra phòng ban từ tên
+      // người nhận) chạy nguyên như cũ.
+      const rows = newAssignees.map(assigneeName => ({
+        title: newTitle,
+        assignee: assigneeName,
+        priority: newPriority,
+        due_date: newDueDate || null,
+        progress: Number(newProgress),
+        status: newStatus,
+        description: newDescription,
+        start_date: newStartDate || null,
+        link: newLink,
+        notes: newNotes,
+        project_code: newProjectCode || null,
+        project_name: projectNameOf(newProjectCode) || null,
+        work_group: newWorkGroup || null,
+        work_source: newWorkSource || null,
+        // Cùng trỏ vào MỘT tệp trong kho — không nhân bản tệp cho từng người.
+        attachment_files: newFiles,
+        attachments: newFiles.length,
+      }));
+
+      const { error } = await supabase.from("tasks").insert(rows);
 
       if (error) throw error;
 
@@ -583,19 +678,33 @@ export default function TaskManagementPage() {
       // Trưởng/Phó phòng, Tổ trưởng, Ban lãnh đạo hoặc Admin, VÀ giao cho người khác.
       // Người gửi luôn là email hệ thống cấu hình ở Cài đặt hệ thống; người nhận lấy
       // email trong Danh sách nhân viên (ưu tiên email công ty).
-      notifyAssignee({
-        title: newTitle,
-        assignee: assigneeName,
-        priority: newPriority,
-        due_date: newDueDate,
-        start_date: newStartDate,
-        description: newDescription,
-        link: newLink,
-      });
+      // Mỗi người MỘT lá thư riêng (thư xưng hô đích danh); lỗi gom về một hộp thoại.
+      const mailProblems: string[] = [];
+      for (const assigneeName of newAssignees) {
+        const problem = await notifyAssignee({
+          title: newTitle,
+          assignee: assigneeName,
+          priority: newPriority,
+          due_date: newDueDate,
+          start_date: newStartDate,
+          description: newDescription,
+          link: newLink,
+        });
+        if (problem) mailProblems.push(problem);
+      }
+      if (mailProblems.length > 0) {
+        alert(
+          `Đã tạo công việc, nhưng KHÔNG gửi được email báo:\n\n` +
+          mailProblems.map(p => `• ${p}`).join("\n") +
+          `\n\nVào Danh sách nhân viên bổ sung email công ty cho họ để lần sau hệ thống gửi được.`
+        );
+      }
 
       // Reset Form & Close Modal
       setNewTitle("");
-      setNewAssignee("");
+      setNewAssignees([]);
+      setNewFiles([]);
+      setFileErr("");
       setAssigneeSearch("");
       setShowAssigneeDropdown(false);
       setNewPriority("Trung bình");
@@ -653,6 +762,8 @@ export default function TaskManagementPage() {
     setEditProjectCode(task.project_code || "");
     setEditWorkGroup(task.work_group || "");
     setEditWorkSource(task.work_source || "");
+    setEditFiles(task.attachment_files || []);
+    setFileErr("");
     setIsEditModalOpen(true);
   };
 
@@ -710,6 +821,8 @@ export default function TaskManagementPage() {
             : null,
           work_group: editWorkGroup || null,
           work_source: editWorkSource || null,
+          attachment_files: editFiles,
+          attachments: editFiles.length,
           ...overrides
         })
         .eq("id", editingTask.id);
@@ -802,12 +915,15 @@ export default function TaskManagementPage() {
 
   // Lọc gợi ý cho ô "Người nhận": khớp cả TÊN lẫn PHÒNG BAN, cắt còn 30 dòng để
   // danh sách 112 người không làm dropdown ì. Giống hệt ô "Nhân viên tham dự".
+  // Người ĐÃ chọn thì bỏ khỏi danh sách gợi ý — tránh chọn trùng rồi tạo hai
+  // việc y hệt nhau cho cùng một người.
   const filteredAssignees = useMemo(() => {
     const q = assigneeSearch.trim().toLowerCase();
     return assignableEmployees
+      .filter(e => !newAssignees.includes(e.name))
       .filter(e => !q || e.name.toLowerCase().includes(q) || (e.department || "").toLowerCase().includes(q))
       .slice(0, 30);
-  }, [assignableEmployees, assigneeSearch]);
+  }, [assignableEmployees, assigneeSearch, newAssignees]);
 
   const filteredTasks = tasks.filter(t => {
     const matchesSearch = t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -1104,7 +1220,7 @@ export default function TaskManagementPage() {
             <button
               onClick={() => {
                 if (currentUser) {
-                  setNewAssignee(currentUser.name);
+                  setNewAssignees([currentUser.name]);
                 }
                 setNewStatus("planning");
                 setIsModalOpen(true);
@@ -1170,10 +1286,10 @@ export default function TaskManagementPage() {
                         <span className="font-heading font-bold text-xs text-slate-700">{col.title}</span>
                         <span className="text-[10px] font-extrabold text-slate-400 bg-slate-200/80 px-2 py-0.5 rounded-full">{colTasks.length}</span>
                       </div>
-                      <button 
+                      <button
                         onClick={() => {
                           if (currentUser) {
-                            setNewAssignee(currentUser.name);
+                            setNewAssignees([currentUser.name]);
                           }
                           setNewStatus(col.id);
                           setIsModalOpen(true);
@@ -1379,16 +1495,17 @@ export default function TaskManagementPage() {
       {/* Add Task Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          {/* max-w-3xl thay cho max-w-lg: form đã lên 12 trường, để 512px thì các
-              lưới 2-3 cột bị bóp thành một cột dài lê thê phải cuộn nhiều.
+          {/* max-w-5xl: form đã lên 14 trường, khung hẹp thì mỗi hàng 2 cột bị bóp
+              lại, ô "Người nhận" chọn 3-4 người là thẻ tên tràn xuống mấy dòng.
+              Vẫn để w-full + p-4 ở lớp ngoài nên màn hình nhỏ tự co lại vừa khít.
               max-h + overflow-y-auto là phần QUAN TRỌNG cho màn hình nhỏ: trước
               đây modal không giới hạn chiều cao, laptop 13" hoặc cửa sổ thấp là
               nút "Tạo Task" nằm ngoài màn hình và KHÔNG cuộn tới được. */}
-          <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto p-6 shadow-2xl border border-slate-100 space-y-4 animate-in fade-in-50 zoom-in-95 duration-150">
+          <div className="bg-white rounded-2xl w-full max-w-5xl max-h-[90vh] overflow-y-auto p-6 shadow-2xl border border-slate-100 space-y-4 animate-in fade-in-50 zoom-in-95 duration-150">
             {/* Header */}
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="font-heading font-extrabold text-sm text-slate-800">Tạo công việc mới</h3>
-              <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600 transition-colors">
+              <button onClick={closeCreateModal} className="text-slate-400 hover:text-slate-600 transition-colors">
                 <X size={16} />
               </button>
             </div>
@@ -1444,36 +1561,45 @@ export default function TaskManagementPage() {
                   </label>
                   {/* Picker có ô tìm kiếm — dựng theo đúng ô "Nhân viên tham dự" ở
                       trang Đăng ký phòng họp/xe: chọn xong hiện thẻ tên có avatar,
-                      bấm X để đổi người. Danh sách 112 người nên bỏ <select> cuộn tay. */}
+                      bấm X để bỏ người. Danh sách 112 người nên bỏ <select> cuộn tay.
+                      CHỌN ĐƯỢC NHIỀU NGƯỜI: ô tìm kiếm không biến mất sau lần chọn
+                      đầu, dropdown cũng không tự đóng — chọn liền tay 3-4 người. */}
                   <div className="relative" ref={assigneePickerRef}>
                     <div className="w-full min-h-[42px] px-3 py-2 border border-slate-200 rounded-xl flex flex-wrap items-center gap-1.5 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500/40 bg-white">
-                      {newAssignee ? (
-                        <span className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 border border-blue-200 rounded-full px-2.5 py-1 text-[10px] font-bold">
-                          {newAssignee}
+                      {newAssignees.map((name) => (
+                        <span key={name} className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 border border-blue-200 rounded-full px-2.5 py-1 text-[10px] font-bold">
+                          {name}
                           <button
                             type="button"
-                            onClick={() => { setNewAssignee(""); setAssigneeSearch(""); setShowAssigneeDropdown(true); }}
+                            onClick={() => setNewAssignees(prev => prev.filter(n => n !== name))}
                             className="hover:text-rose-500 transition-colors cursor-pointer"
                           >
                             <X size={10} />
                           </button>
                         </span>
-                      ) : (
-                        <div className="flex items-center gap-1.5 flex-1 min-w-[160px]">
-                          <Search size={12} className="text-slate-400 shrink-0" />
-                          <input
-                            type="text"
-                            value={assigneeSearch}
-                            onChange={(e) => { setAssigneeSearch(e.target.value); setShowAssigneeDropdown(true); }}
-                            onFocus={() => setShowAssigneeDropdown(true)}
-                            placeholder="Tìm tên nhân viên hoặc bấm để chọn nhanh..."
-                            className="flex-1 min-w-0 py-1 outline-none text-xs font-semibold placeholder:font-normal"
-                          />
-                        </div>
-                      )}
+                      ))}
+                      <div className="flex items-center gap-1.5 flex-1 min-w-[160px]">
+                        <Search size={12} className="text-slate-400 shrink-0" />
+                        <input
+                          type="text"
+                          value={assigneeSearch}
+                          onChange={(e) => { setAssigneeSearch(e.target.value); setShowAssigneeDropdown(true); }}
+                          onFocus={() => setShowAssigneeDropdown(true)}
+                          placeholder={newAssignees.length > 0 ? "Thêm người nữa..." : "Tìm tên nhân viên hoặc bấm để chọn nhanh..."}
+                          className="flex-1 min-w-0 py-1 outline-none text-xs font-semibold placeholder:font-normal"
+                        />
+                      </div>
                     </div>
 
-                    {showAssigneeDropdown && !newAssignee && (
+                    {/* Giao cho từ 2 người trở lên thì nói TRƯỚC chuyện sẽ ra mấy thẻ,
+                        để không ai bấm Tạo xong mới ngạc nhiên vì bảng có 3 thẻ. */}
+                    {newAssignees.length > 1 && (
+                      <p className="mt-1 text-[11px] font-semibold text-blue-600">
+                        Sẽ tạo {newAssignees.length} việc giống nhau — mỗi người một việc riêng, tiến độ riêng.
+                      </p>
+                    )}
+
+                    {showAssigneeDropdown && (
                       <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-premium z-20 max-h-56 overflow-y-auto animate-in fade-in duration-150">
                         {filteredAssignees.length === 0 ? (
                           <p className="text-center text-slate-400 text-[11px] italic py-4">Không tìm thấy nhân viên phù hợp.</p>
@@ -1482,7 +1608,12 @@ export default function TaskManagementPage() {
                             <button
                               key={emp.id}
                               type="button"
-                              onClick={() => { setNewAssignee(emp.name); setAssigneeSearch(""); setShowAssigneeDropdown(false); }}
+                              // KHÔNG đóng dropdown sau khi chọn — còn chọn tiếp người
+                              // thứ hai, thứ ba. Bấm ra ngoài mới đóng.
+                              onClick={() => {
+                                setNewAssignees(prev => prev.includes(emp.name) ? prev : [...prev, emp.name]);
+                                setAssigneeSearch("");
+                              }}
                               className="w-full flex items-center gap-2.5 px-4 py-2 hover:bg-slate-50 transition-colors text-left cursor-pointer"
                             >
                               <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-cyan-400 text-white text-[9px] font-bold flex items-center justify-center shrink-0">
@@ -1650,20 +1781,34 @@ export default function TaskManagementPage() {
                 </div>
               </div>
 
+              {/* Tệp đính kèm — ngay dưới ô dán link. Giao cho nhiều người thì
+                  cả mấy việc cùng trỏ vào một tệp, không nhân bản trong kho. */}
+              <TaskAttachmentField
+                files={newFiles}
+                uploading={uploadingFile}
+                error={fileErr}
+                onPick={(fl) => handlePickFiles(fl, setNewFiles)}
+                onRemove={(f) => handleRemoveFile(f, setNewFiles, true)}
+                onOpen={handleOpenFile}
+              />
+
               {/* Form Buttons */}
               <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => setIsModalOpen(false)}
+                  onClick={closeCreateModal}
                   className="flex-1 py-2.5 border border-slate-200 text-slate-600 font-bold rounded-xl hover:bg-slate-50 transition-colors cursor-pointer"
                 >
                   Hủy
                 </button>
+                {/* Khoá khi tệp đang lên: bấm Tạo giữa chừng thì việc được lưu
+                    với danh sách tệp còn thiếu. */}
                 <button
                   type="submit"
-                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-colors cursor-pointer shadow-md shadow-blue-500/10"
+                  disabled={uploadingFile}
+                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl transition-colors cursor-pointer shadow-md shadow-blue-500/10"
                 >
-                  Tạo Task
+                  {uploadingFile ? "Đang tải tệp..." : "Tạo Task"}
                 </button>
               </div>
             </form>
@@ -1937,6 +2082,18 @@ export default function TaskManagementPage() {
                   />
                 </div>
               </div>
+
+              {/* Tệp đính kèm. purge=false khi gỡ: tệp có thể đang được các việc
+                  cùng đợt (giao cho người khác) dùng chung — chỉ bỏ khỏi việc
+                  này, không xoá khỏi kho. */}
+              <TaskAttachmentField
+                files={editFiles}
+                uploading={uploadingFile}
+                error={fileErr}
+                onPick={(fl) => handlePickFiles(fl, setEditFiles)}
+                onRemove={(f) => handleRemoveFile(f, setEditFiles, false)}
+                onOpen={handleOpenFile}
+              />
 
               {/* Form Buttons */}
               <div className="flex justify-between items-center gap-3 pt-3 border-t border-slate-100">
