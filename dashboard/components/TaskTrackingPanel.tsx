@@ -362,7 +362,7 @@ export default function TaskTrackingPanel({
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
-            <tr className="bg-slate-50/70 text-slate-500 font-bold text-[10px] uppercase tracking-wide">
+            <tr className="bg-emerald-50/70 text-slate-500 font-bold text-[10px] uppercase tracking-wide">
               <th className="px-3 py-2.5 text-left w-8"></th>
               <th className="px-3 py-2.5 text-left">Dự án</th>
               <th className="px-3 py-2.5 text-left">Tên việc</th>
@@ -482,7 +482,10 @@ export default function TaskTrackingPanel({
                         ) : (
                           <div className="space-y-2.5 mb-4">
                             {list.map((u) => (
-                              <div key={u.id} className="bg-white rounded-xl border border-slate-200/70 p-3">
+                              // Nền xanh nhạt + viền xanh thay cho trắng phẳng: khối
+                              // nổi hẳn khỏi nền dòng mở rộng, đọc lướt thấy ngay ranh
+                              // giới từng lần cập nhật.
+                              <div key={u.id} className="bg-blue-50/70 rounded-xl border border-blue-200/80 shadow-sm p-3">
                                 <p className="text-slate-700 font-medium leading-relaxed whitespace-pre-wrap">{u.content}</p>
                                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-[10px] font-bold">
                                   <span className="text-slate-400">{u.created_by || "—"} · {fmtDateTime(u.created_at)}</span>
@@ -504,7 +507,7 @@ export default function TaskTrackingPanel({
 
                         {/* ─── Ô CẬP NHẬT NHANH ─── */}
                         {canPostOn(t.id) ? (
-                          <div className="bg-white rounded-xl border border-slate-200 p-3 space-y-2.5">
+                          <div className="bg-blue-50/70 rounded-xl border border-blue-200/80 shadow-sm p-3 space-y-2.5">
                             <textarea
                               rows={2}
                               value={draftContent[t.id] || ""}
