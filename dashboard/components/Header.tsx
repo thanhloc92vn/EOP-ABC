@@ -385,6 +385,39 @@ export default function Header({ title, subtitle }: Props) {
         console.warn("Could not fetch VPP requests for header:", err);
       }
 
+      // 6. GHI CHÚ LỊCH ĐẾN NGÀY — nhắc chính chủ, đúng ngày đã ghi trên lịch.
+      // KHÁC HẲN 5 mục trên: đây không phải việc chờ duyệt, nên phải tính TRƯỚC
+      // hàng rào hasApprovalPrivileges bên dưới và đi kèm ở cả hai nhánh — nếu
+      // để lẫn vào sau, nhân viên thường sẽ bị `return` sớm và không bao giờ
+      // thấy ghi chú của chính mình.
+      // Ngày lấy theo giờ Việt Nam ("en-CA" cho ra sẵn dạng YYYY-MM-DD): máy
+      // người dùng đặt lệch múi giờ thì nhắc sai ngày.
+      let mappedNotes: any[] = [];
+      try {
+        const todayKey = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
+        // RLS của calendar_notes vốn đã chỉ trả dòng của chính mình; lọc thêm
+        // owner_email chỉ để truy vấn nhẹ đi, không phải để chặn.
+        const { data, error } = await supabase
+          .from("calendar_notes")
+          .select("id, note_date, content")
+          .eq("owner_email", (userObj.email || "").toLowerCase())
+          .eq("note_date", todayKey);
+        if (!error && data) {
+          mappedNotes = data.map((n: any) => ({
+            id: `note-${n.id}`,
+            type: "note",
+            typeText: "Ghi chú hôm nay",
+            message: n.content,
+            time: new Date(n.note_date).toLocaleDateString("vi-VN"),
+            // Mốc 00:00 của chính ngày đó: ghi chú hôm nay luôn nổi lên trên
+            // những phiếu chờ duyệt tồn từ hôm trước.
+            timestamp: new Date(`${n.note_date}T00:00:00`).getTime(),
+          }));
+        }
+      } catch (err) {
+        console.warn("Could not fetch calendar notes for header:", err);
+      }
+
       // Danh bạ tên -> phòng ban. Cần để biết đơn nghỉ phép/công tác này thuộc
       // phòng nào: `tasks` chỉ lưu TÊN người làm đơn. Từ 07/08/2026 cấp quản lý
       // chỉ duyệt được đơn CÙNG ĐƠN VỊ, nên thiếu bảng tra này thì chuông báo sẽ
@@ -422,7 +455,9 @@ export default function Header({ title, subtitle }: Props) {
       // nhưng người chỉ có mỗi một trong hai cờ đó vẫn phải nhận được thông báo.
       const hasApprovalPrivileges = isUserAdmin || isUserManager || isUserHR || hasAnyApprovalPermission(perms) || perms.canApproveBenefit || perms.canManageVpp || isMarketingTeamLeader(userObj.name);
       if (!hasApprovalPrivileges) {
-        setNotifications([]);
+        // Không có quyền duyệt gì cả thì chuông vẫn phải kêu cho ghi chú của
+        // chính họ — đó là toàn bộ nội dung chuông của một nhân viên thường.
+        setNotifications(mappedNotes);
         return;
       }
 
@@ -607,7 +642,7 @@ export default function Header({ title, subtitle }: Props) {
         : [];
 
       // Combine and sort by timestamp descending
-      const allNotifications = [...mappedTasks, ...mappedJustifications, ...mappedBookings, ...mappedBenefitClaims, ...mappedVppRequests].sort((a, b) => b.timestamp - a.timestamp);
+      const allNotifications = [...mappedTasks, ...mappedJustifications, ...mappedBookings, ...mappedBenefitClaims, ...mappedVppRequests, ...mappedNotes].sort((a, b) => b.timestamp - a.timestamp);
       setNotifications(allNotifications);
     } catch (err) {
       console.error("Error fetching notifications for header:", err);
@@ -674,6 +709,15 @@ export default function Header({ title, subtitle }: Props) {
         .on(
           "postgres_changes",
           { event: "*", schema: "public", table: "benefit_claims" },
+          () => {
+            fetchNotifications(currentUser);
+          }
+        )
+        // Ghi chú lịch: để vừa lưu ghi chú cho hôm nay là chuông kêu ngay,
+        // không phải tải lại trang.
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "calendar_notes" },
           () => {
             fetchNotifications(currentUser);
           }
@@ -765,7 +809,10 @@ export default function Header({ title, subtitle }: Props) {
                     <a
                       key={notif.id}
                       href={
-                        notif.type === "justification"
+                        notif.type === "note"
+                          // Ghi chú cá nhân: mở thẳng trang Lịch công việc
+                          ? "/calendar"
+                          : notif.type === "justification"
                           ? "/settings?tab=approvals&subtab=explanation"
                           : notif.type === "vpp"
                           // Mở thẳng tab VPP, đúng mục phòng ban hay dự án của phiếu
@@ -797,6 +844,9 @@ export default function Header({ title, subtitle }: Props) {
                             ? "bg-rose-50 text-rose-700"
                             : notif.type === "vpp"
                             ? "bg-violet-50 text-violet-700"
+                            : notif.type === "note"
+                            // Vàng hổ phách, trùng màu thẻ ghi chú trên lịch
+                            ? "bg-amber-100 text-amber-800"
                             : "bg-amber-50 text-amber-700"
                         }`}>
                           {notif.typeText}
