@@ -366,6 +366,18 @@ const cleanName = (name: string) => {
     .replace(/\s+/g, " ");
 };
 
+// Gộp mọi giá trị cột Loại HĐLĐ (bảng "Hợp đồng nhân sự") về đúng 3 nhãn hiển
+// thị ở ô "Loại hợp đồng" đầu hồ sơ nhân viên. "Xác định thời hạn", "1 năm",
+// "2 năm", "3 năm"… đều là hợp đồng CÓ THỜI HẠN. Chỉ đổi cách hiển thị — dữ
+// liệu gốc trong bảng theo dõi giữ nguyên, không đụng tới.
+const simplifyContractType = (raw?: string | null) => {
+  const t = cleanName(raw || "");
+  if (!t) return "";
+  if (t.includes("thu viec")) return "Thử việc";
+  if (t.includes("khong xac dinh")) return "Không xác định thời hạn";
+  return "Có thời hạn";
+};
+
 const matchEmployee = (rawName: string | undefined | null, rawCode: string | number | undefined | null, employeesList: Employee[]) => {
   if (!rawName && !rawCode) return null;
   
@@ -610,6 +622,13 @@ export default function CBPage() {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [hasFullAccess, setHasFullAccess] = useState(false);
 
+  // Loại HĐLĐ của CHÍNH người đang đăng nhập, lấy qua RPC `my_contract_type`
+  // (migration 040). Người không có cờ "Xem lương & HĐLĐ" bị RLS chặn đọc bảng
+  // `contracts` (migration 018) nên `contracts` rỗng — không có đường nào khác
+  // để ô "Loại hợp đồng" ở đầu hồ sơ hiện đúng. Hàm chỉ trả về đúng một chuỗi
+  // loại hợp đồng của bản thân, không kèm lương và không chạm hồ sơ người khác.
+  const [ownContractType, setOwnContractType] = useState<string | null>(null);
+
   // Chốt chặn: ẩn NÚT tab thôi chưa đủ vì nội dung render theo state. Nếu người
   // không đủ quyền đang đứng ở tab lương/hợp đồng (state cũ, quay lại trang…)
   // thì đẩy về tab an toàn.
@@ -636,6 +655,15 @@ export default function CBPage() {
   const [editingTravelId, setEditingTravelId] = useState<string | null>(null);
   const [canDeleteTravel, setCanDeleteTravel] = useState(false);
   const [canViewTimesheetSummary, setCanViewTimesheetSummary] = useState(false);
+
+  // Cùng lý do với chốt chặn lương ở trên: ẩn NÚT tab "Lấy ngày công máy chấm
+  // công" thôi chưa đủ vì nội dung render theo state — phải đẩy người không đủ
+  // quyền sang tab con an toàn.
+  useEffect(() => {
+    if (canViewTimesheetSummary) return;
+    setActiveSubTab(cur => (cur === "machine" ? "explanation" : cur));
+  }, [canViewTimesheetSummary]);
+
   const [travelFilterFrom, setTravelFilterFrom] = useState("");
   const [travelFilterTo, setTravelFilterTo] = useState("");
 
@@ -2933,7 +2961,7 @@ export default function CBPage() {
   const handleTabChange = (tabId: string) => {
     setActiveTab(tabId);
     if (tabId === "employee_profile") setActiveSubTab("personal");
-    else if (tabId === "attendance") setActiveSubTab("machine");
+    else if (tabId === "attendance") setActiveSubTab(canViewTimesheetSummary ? "machine" : "explanation");
     else if (tabId === "payroll_insurance") setActiveSubTab("calculation");
     else if (tabId === "benefits") setActiveSubTab("policy_rates");
     else if (tabId === "org_chart") setActiveSubTab("chart");
@@ -3075,6 +3103,9 @@ export default function CBPage() {
 
       const loadedEmployees = await loadEmployeesData(email, fullAccess, userInfo.name, empData);
       await fetchContracts(loadedEmployees);
+      // Chỉ hỏi khi người dùng KHÔNG đọc được bảng contracts; nhóm C&B đã có sẵn
+      // dữ liệu đầy đủ nên gọi thêm là thừa.
+      if (!fullAccess) await fetchOwnContractType();
       await fetchLeavesFromSupabase();
       await fetchExplanations();
       await fetchTravels();
@@ -3145,6 +3176,20 @@ export default function CBPage() {
 
   const fetchEmployees = async () => {
     await checkAccessAndLoad();
+  };
+
+  // Loại HĐLĐ của chính mình — dùng cho ô "Loại hợp đồng" khi RLS chặn bảng
+  // contracts. Hàm chưa được tạo trong DB thì im lặng bỏ qua (ô về "Chưa ký HĐ"
+  // như trước), không chặn phần còn lại của trang.
+  const fetchOwnContractType = async () => {
+    try {
+      const { data, error } = await supabase.rpc("my_contract_type");
+      if (error) throw error;
+      setOwnContractType(typeof data === "string" && data.trim() ? data.trim() : null);
+    } catch (err) {
+      console.error("Không lấy được loại hợp đồng của bản thân:", err);
+      setOwnContractType(null);
+    }
   };
 
   const fetchContracts = async (employeesList?: Employee[]) => {
@@ -3920,6 +3965,16 @@ export default function CBPage() {
     return `${years} năm ${months} tháng`;
   };
 
+  // Hồ sơ đang xem có phải chính người đang đăng nhập không (khớp theo id, rồi
+  // tới email đã lưu — một người có thể lưu nhiều email ngăn bởi dấu phẩy).
+  const isSelfEmployee = (emp: Employee) => {
+    if (!currentUser) return false;
+    if (currentUser.empId && emp.id === currentUser.empId) return true;
+    const loginEmail = (currentUser.email || "").toLowerCase();
+    if (!loginEmail) return false;
+    return (emp.email || "").toLowerCase().split(",").map(s => s.trim()).includes(loginEmail);
+  };
+
   const getEmployeeContractType = (emp: Employee) => {
     const empCode = (emp.employee_code || "").toString().trim();
     const matchedContracts = contracts.filter(c =>
@@ -3934,8 +3989,17 @@ export default function CBPage() {
       matchedContracts.find(c => isRealNumber(c.contract_number)) ||
       matchedContracts[0] || null;
 
-    if (!empContract) return "Chưa ký HĐ";
-    return empContract.type || "Chưa xác định";
+    // Không tìm thấy trong `contracts` có 2 khả năng khác hẳn nhau:
+    //   (a) người dùng có quyền đọc bảng nhưng nhân viên này thật sự chưa có HĐ
+    //   (b) người dùng bị RLS chặn nên bảng về rỗng — lúc này danh sách chỉ có
+    //       đúng hồ sơ của chính họ, và loại HĐ lấy từ RPC `my_contract_type`.
+    if (!empContract) {
+      if (!hasFullAccess && isSelfEmployee(emp) && ownContractType) {
+        return simplifyContractType(ownContractType);
+      }
+      return "Chưa ký HĐ";
+    }
+    return simplifyContractType(empContract.type) || "Chưa xác định";
   };
 
   const getKpiTrend = (emp: Employee) => {
@@ -4063,7 +4127,10 @@ export default function CBPage() {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap gap-1.5 text-xs font-bold bg-[#005BAC]/5 p-1.5 rounded-xl shrink-0 border border-blue-100/20">
               {activeTab === "attendance" && [
-                { id: "machine", label: "Lấy ngày công máy chấm công" },
+                // "Lấy ngày công máy chấm công" là nơi tải file máy chấm công lên và
+                // gửi bảng công — chỉ Admin hoặc người có cờ "Xem/nhập bảng chấm công"
+                // mới thấy tab này. Nhân viên thường không thấy nút.
+                ...(canViewTimesheetSummary ? [{ id: "machine", label: "Lấy ngày công máy chấm công" }] : []),
                 { id: "explanation", label: "Thông tin giải trình" },
                 { id: "leave", label: "Nghỉ phép" },
                 { id: "travel", label: "Công tác" },
@@ -4845,7 +4912,7 @@ export default function CBPage() {
           {/* ─── TAB 2: CHẤM CÔNG ─── */}
           {activeTab === "attendance" && (
             <div className="space-y-6">
-              {activeSubTab === "machine" && (
+              {activeSubTab === "machine" && canViewTimesheetSummary && (
                 <div className="space-y-6">
                   {/* CARD 1: ĐỒNG BỘ TRỰC TIẾP TỪ MÁY CHẤM CÔNG */}
                   <div className="glass bg-white rounded-2xl border border-slate-200/50 shadow-premium overflow-hidden">
