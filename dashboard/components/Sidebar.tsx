@@ -59,7 +59,7 @@ function SidebarLinks({ isApprover, pathname, setSidebarOpen }: { isApprover: bo
     { label: "Tuyển dụng", href: "/recruitment", icon: Briefcase },
     { label: "Danh sách nhân viên", href: "/employees", icon: Users },
     { label: "Lương & Phúc lợi (C&B)", href: "/cb", icon: Calculator },
-    { label: "Hành chính & Tài sản", href: "/administration", icon: Building2 },
+    { label: "Hành chính & VVP", href: "/administration", icon: Building2 },
     { label: "Văn Thư", href: "/document-control", icon: FileText },
     { label: "Biên bản họp (Meeting)", href: "/meeting-team", icon: Mic },
     { label: "Góp ý & Kiến nghị", href: "/suggestions", icon: MessageSquare },
