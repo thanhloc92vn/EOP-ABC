@@ -4704,7 +4704,7 @@ export default function AdministrationPage() {
       <Sidebar />
       <div className="ml-60 flex-1 flex flex-col min-w-0">
         <Header 
-          title="Hành chính & VVP"
+          title="Hành chính & VPP"
         />
 
         <main className="flex-1 p-8 overflow-y-auto">

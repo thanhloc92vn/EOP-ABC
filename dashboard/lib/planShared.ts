@@ -31,7 +31,7 @@ export function isPlanAtLeast(current: Plan, min: Plan): boolean {
 
 // ─── PHÂN GÓI THEO ROUTE ───
 // Khớp theo prefix dài nhất; route không liệt kê = basic (luôn mở).
-// Basic:        Dashboard, Công việc, Lịch, Đăng ký xe/phòng họp, Hành chính & VVP,
+// Basic:        Dashboard, Công việc, Lịch, Đăng ký xe/phòng họp, Hành chính & VPP,
 //                 Biên bản họp, Phòng ban, Cài đặt, Vị trí dự án, Lương & Phúc lợi (C&B),
 //                 Tin tức
 // Professional: + Danh sách nhân viên, Góp ý & Kiến nghị, Tuyển dụng,
