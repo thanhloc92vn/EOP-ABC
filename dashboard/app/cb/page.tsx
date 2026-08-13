@@ -167,16 +167,51 @@ const MOCK_LEAVES: any[] = [];
 
 const MOCK_TRAVELS: any[] = [];
 
-const MOCK_REGIMES = [
-  { name: "Nguyễn Thị Hoa", type: "Nghỉ thai sản (6 tháng)", from: "2026-03-01", to: "2026-09-01", insurance_claim: "Hồ sơ đã gửi BHXH", status: "Đang nghỉ" },
-  { name: "Lê Minh Tuấn", type: "Ốm đau hưởng BHXH (3 ngày)", from: "2026-06-01", to: "2026-06-03", insurance_claim: "Chờ duyệt chi trả", status: "Đã đi làm lại" }
+// Các loại nghỉ trong đơn xin nghỉ phép được tính là "nghỉ chế độ".
+// Giá trị ở đây là nhãn sau khi parseTaskToLeave rút gọn tiêu đề task,
+// nên "Nghỉ việc riêng hưởng nguyên lương" ra thành "Việc riêng".
+const REGIME_LEAVE_TYPES = [
+  "Việc riêng",
+  "Nghỉ ốm đau hưởng BHXH",
+  "Nghỉ thai sản hưởng BHXH",
+  "Nghỉ tai nạn lao động hưởng BHXH",
+  "Nghỉ chế độ khác"
 ];
 
-const MOCK_ALLOWANCES = [
-  { name: "Cơm trưa văn phòng", standard: "730.000 đ/tháng", target: "Toàn bộ nhân viên chính thức", activeCount: 145 },
-  { name: "Xăng xe di chuyển", standard: "500.000 đ - 1.500.000 đ/tháng", target: "Kỹ sư công trường và cấp quản lý", activeCount: 54 },
-  { name: "Điện thoại liên lạc", standard: "200.000 đ - 500.000 đ/tháng", target: "Cấp chỉ huy và Nhân viên kinh doanh", activeCount: 32 }
+// Định mức phụ cấp — nguồn thật là bảng `allowance_policies` (migration 041),
+// sửa được ngay trên giao diện vì mức có thể dao động theo tháng.
+//   kind = "per_day"   -> per_day_amount × days_per_month
+//   kind = "threshold" -> đủ threshold_days công thì full_amount, thiếu thì reduced_amount
+type AllowancePolicy = {
+  code: string;
+  name: string;
+  target: string;
+  kind: "per_day" | "threshold";
+  per_day_amount: number | null;
+  days_per_month: number | null;
+  threshold_days: number | null;
+  full_amount: number | null;
+  reduced_amount: number | null;
+  sort_order: number;
+};
+
+// Dự phòng khi chưa chạy migration 041 hoặc mất mạng — khớp đúng mức đang áp
+// dụng nên giao diện không bao giờ trống, chỉ là không sửa được.
+const ALLOWANCE_FALLBACK: AllowancePolicy[] = [
+  { code: "lunch", name: "Cơm trưa văn phòng", target: "Toàn bộ nhân viên chính thức", kind: "per_day", per_day_amount: 35000, days_per_month: 23, threshold_days: null, full_amount: null, reduced_amount: null, sort_order: 1 },
+  { code: "fuel", name: "Xăng xe di chuyển", target: "Toàn bộ tài khoản", kind: "threshold", per_day_amount: null, days_per_month: null, threshold_days: 15, full_amount: 100000, reduced_amount: 50000, sort_order: 2 },
+  { code: "phone", name: "Điện thoại liên lạc", target: "Toàn bộ tài khoản", kind: "threshold", per_day_amount: null, days_per_month: null, threshold_days: 15, full_amount: 100000, reduced_amount: 50000, sort_order: 3 }
 ];
+
+const formatVnd = (n: number | null) =>
+  n === null || n === undefined ? "—" : `${n.toLocaleString("vi-VN")} đ`;
+
+// Mức tháng in đậm trên thẻ: cơm trưa nhân theo ngày công, hai loại còn lại
+// lấy mức của người đủ ngày công.
+const allowanceMonthly = (p: AllowancePolicy) =>
+  p.kind === "per_day"
+    ? (p.per_day_amount || 0) * (p.days_per_month || 0)
+    : (p.full_amount || 0);
 
 const MOCK_BHXH_LOGS = [
   { name: "Nguyễn Văn An", code: "0123456789", base: 18000000, SI: 1440000, HI: 270000, UI: 180000, company_total: 3870000, booklet: "Công ty giữ" },
@@ -654,6 +689,14 @@ export default function CBPage() {
   const [travels, setTravels] = useState<any[]>(MOCK_TRAVELS);
   const [editingTravelId, setEditingTravelId] = useState<string | null>(null);
   const [canDeleteTravel, setCanDeleteTravel] = useState(false);
+  const [canDeleteRegime, setCanDeleteRegime] = useState(false);
+
+  // Định mức phụ cấp (allowance_policies) + trạng thái sửa tại chỗ
+  const [allowancePolicies, setAllowancePolicies] = useState<AllowancePolicy[]>(ALLOWANCE_FALLBACK);
+  const [canEditAllowance, setCanEditAllowance] = useState(false);
+  const [editingAllowanceCode, setEditingAllowanceCode] = useState<string | null>(null);
+  const [allowanceDraft, setAllowanceDraft] = useState<AllowancePolicy | null>(null);
+  const [savingAllowance, setSavingAllowance] = useState(false);
   const [canViewTimesheetSummary, setCanViewTimesheetSummary] = useState(false);
 
   // Cùng lý do với chốt chặn lương ở trên: ẩn NÚT tab "Lấy ngày công máy chấm
@@ -3041,6 +3084,49 @@ export default function CBPage() {
     }
   };
 
+  const fetchAllowancePolicies = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("allowance_policies")
+        .select("*")
+        .order("sort_order", { ascending: true });
+      if (error) throw error;
+      if (data && data.length > 0) setAllowancePolicies(data as AllowancePolicy[]);
+    } catch (e) {
+      // Chưa chạy migration 041 -> giữ ALLOWANCE_FALLBACK, tab vẫn xem được
+      console.error("Error fetching allowance policies:", e);
+    }
+  };
+
+  const handleSaveAllowance = async () => {
+    if (!allowanceDraft || !canEditAllowance) return;
+    setSavingAllowance(true);
+    try {
+      const { error } = await supabase
+        .from("allowance_policies")
+        .update({
+          target: allowanceDraft.target,
+          per_day_amount: allowanceDraft.per_day_amount,
+          days_per_month: allowanceDraft.days_per_month,
+          threshold_days: allowanceDraft.threshold_days,
+          full_amount: allowanceDraft.full_amount,
+          reduced_amount: allowanceDraft.reduced_amount,
+          updated_at: new Date().toISOString(),
+          updated_by: currentUser?.name || currentUser?.email || null,
+        })
+        .eq("code", allowanceDraft.code);
+      if (error) throw error;
+      setAllowancePolicies(prev => prev.map(p => (p.code === allowanceDraft.code ? { ...allowanceDraft } : p)));
+      setEditingAllowanceCode(null);
+      setAllowanceDraft(null);
+    } catch (err: any) {
+      console.error("Error saving allowance policy:", err);
+      alert("Lỗi khi lưu định mức phụ cấp: " + err.message);
+    } finally {
+      setSavingAllowance(false);
+    }
+  };
+
   const checkAccessAndLoad = async () => {
     try {
       setLoadingAuth(true);
@@ -3086,6 +3172,8 @@ export default function CBPage() {
       // Admin hoặc cờ can_view_attendance_imports
       const hrLeadAccess = !!(isAdmin || perms.canViewAttendanceImports);
       setCanDeleteTravel(hrLeadAccess);
+      setCanDeleteRegime(hrLeadAccess);
+      setCanEditAllowance(hrLeadAccess);
       setCanViewTimesheetSummary(hrLeadAccess);
 
       // Duyệt chi phúc lợi (hiếu hỷ + thưởng lễ): Admin hoặc cờ can_approve_benefit
@@ -3109,6 +3197,7 @@ export default function CBPage() {
       await fetchLeavesFromSupabase();
       await fetchExplanations();
       await fetchTravels();
+      await fetchAllowancePolicies();
     } catch (err) {
       console.error("Error checking user access:", err);
     } finally {
@@ -3812,11 +3901,41 @@ export default function CBPage() {
   }, [travels, hasFullAccess, currentUser, travelFilterFrom, travelFilterTo]);
 
   const filteredRegimes = useMemo(() => {
-    return MOCK_REGIMES
+    return leaves
+      .filter(r => REGIME_LEAVE_TYPES.includes(r.type))
       .filter(r => hasFullAccess || r.name === currentUser?.name)
       .filter(r => !regimeFilterFrom || new Date(r.from) >= new Date(regimeFilterFrom))
       .filter(r => !regimeFilterTo || new Date(r.to) <= new Date(regimeFilterTo));
-  }, [hasFullAccess, currentUser, regimeFilterFrom, regimeFilterTo]);
+  }, [leaves, hasFullAccess, currentUser, regimeFilterFrom, regimeFilterTo]);
+
+  // Đang nghỉ hay đã đi làm lại suy ra từ mốc ngày của đơn, không lưu riêng trong DB
+  const getRegimeState = (from: string, to: string) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const start = new Date(from);
+    const end = new Date(to);
+    if (today < start) return "Sắp nghỉ";
+    if (today > end) return "Đã đi làm lại";
+    return "Đang nghỉ";
+  };
+
+  // Đơn nghỉ chế độ chính là task nghỉ phép, nên xóa là xóa hẳn bản ghi dưới
+  // Supabase — không chỉ ẩn ở phía trình duyệt như nút xóa bên tab Nghỉ phép.
+  const handleDeleteRegime = async (leaveId: string) => {
+    if (!canDeleteRegime) return;
+    if (!window.confirm("Bạn có chắc chắn muốn xóa đơn nghỉ chế độ này không?")) return;
+    try {
+      const { error } = await supabase
+        .from("tasks")
+        .delete()
+        .eq("id", leaveId);
+      if (error) throw error;
+      setLeaves(prev => prev.filter(l => l.id !== leaveId));
+    } catch (err: any) {
+      console.error("Error deleting regime leave:", err);
+      alert("Lỗi khi xóa đơn nghỉ chế độ: " + err.message);
+    }
+  };
 
   const filteredSalaryInfo = useMemo(() => {
     return MOCK_SALARY_INFO.filter(s => hasFullAccess || s.name === currentUser?.name);
@@ -6124,7 +6243,6 @@ export default function CBPage() {
                       <span className="w-10 h-10 rounded-2xl bg-white/20 backdrop-blur flex items-center justify-center shrink-0"><Heart size={18} /></span>
                       <div>
                         <h3 className="font-heading font-black text-base leading-tight">Nghỉ chế độ phúc lợi BHXH</h3>
-                        <p className="text-white/80 text-xs font-medium mt-0.5">Quản lý nhân viên nghỉ chế độ (ốm đau, thai sản) &amp; tiến độ hồ sơ BHXH</p>
                       </div>
                     </div>
                   </div>
@@ -6136,25 +6254,46 @@ export default function CBPage() {
                           <th className="py-3 px-3">Chế độ thụ hưởng</th>
                           <th className="py-3 px-3">Ngày bắt đầu</th>
                           <th className="py-3 px-3">Ngày kết thúc</th>
-                          <th className="py-3 px-3">Tình trạng hồ sơ BHXH</th>
+                          <th className="py-3 px-3">Trạng thái đơn</th>
                           <th className="py-3 px-3 w-32 text-center">Trạng thái nghỉ</th>
+                          {canDeleteRegime && <th className="py-3 px-3 w-16 text-center">Thao tác</th>}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
-                        {filteredRegimes.map((r, idx) => (
-                          <tr key={idx} className="hover:bg-slate-50/50">
+                        {filteredRegimes.map((r, idx) => {
+                          const regimeState = getRegimeState(r.from, r.to);
+                          return (
+                          <tr key={r.id || idx} className="hover:bg-slate-50/50">
                             <td className="py-3.5 px-3 text-slate-800 font-bold">{r.name}</td>
                             <td className="py-3.5 px-3 text-indigo-600 font-bold">{r.type}</td>
                             <td className="py-3.5 px-3">{new Date(r.from).toLocaleDateString("vi-VN")}</td>
                             <td className="py-3.5 px-3">{new Date(r.to).toLocaleDateString("vi-VN")}</td>
-                            <td className="py-3.5 px-3 text-slate-500 font-bold flex items-center gap-1.5"><Info size={12} className="text-slate-400" /> {r.insurance_claim}</td>
+                            <td className="py-3.5 px-3 text-slate-500 font-bold flex items-center gap-1.5"><Info size={12} className="text-slate-400" /> {r.status}</td>
                             <td className="py-3.5 px-3 text-center">
                               <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
-                                r.status === "Đang nghỉ" ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-600"
-                              }`}>{r.status}</span>
+                                regimeState === "Đang nghỉ" ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-600"
+                              }`}>{regimeState}</span>
                             </td>
+                            {canDeleteRegime && (
+                              <td className="py-3.5 px-3 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteRegime(r.id)}
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg border border-slate-200/60 hover:border-rose-200 transition-all cursor-pointer inline-flex items-center justify-center shadow-sm active:scale-90"
+                                  title="Xóa đơn nghỉ chế độ"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </td>
+                            )}
                           </tr>
-                        ))}
+                          );
+                        })}
+                        {filteredRegimes.length === 0 && (
+                          <tr>
+                            <td colSpan={canDeleteRegime ? 7 : 6} className="py-8 text-center text-slate-400 font-bold italic">Không có đơn nghỉ chế độ nào</td>
+                          </tr>
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -6175,19 +6314,135 @@ export default function CBPage() {
                   </div>
                   {/* Allowance Standards Cards */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                    {MOCK_ALLOWANCES.map((a, idx) => (
-                      <div key={idx} className="glass bg-white rounded-2xl p-5 border border-slate-200/50 shadow-sm hover-elevate space-y-3">
+                    {allowancePolicies.map(a => {
+                      const isEditing = editingAllowanceCode === a.code;
+                      const draft = isEditing && allowanceDraft ? allowanceDraft : a;
+                      return (
+                      <div key={a.code} className="glass bg-white rounded-2xl p-5 border border-slate-200/50 shadow-sm hover-elevate space-y-3">
                         <div className="flex items-center justify-between">
                           <span className="p-2 bg-blue-50 text-[#005BAC] rounded-xl"><Briefcase size={16} /></span>
-                          <span className="text-[10px] text-emerald-600 font-bold">Đang áp dụng cho {a.activeCount} nhân sự</span>
+                          {canEditAllowance && !isEditing && (
+                            <button
+                              type="button"
+                              onClick={() => { setEditingAllowanceCode(a.code); setAllowanceDraft({ ...a }); }}
+                              className="p-1.5 text-slate-400 hover:text-[#005BAC] hover:bg-blue-50 rounded-lg border border-slate-200/60 hover:border-blue-200 transition-all cursor-pointer inline-flex items-center justify-center shadow-sm active:scale-90"
+                              title="Sửa định mức phụ cấp"
+                            >
+                              <Edit2 size={13} />
+                            </button>
+                          )}
+                          {isEditing && (
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={handleSaveAllowance}
+                                disabled={savingAllowance}
+                                className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg border border-emerald-200/60 transition-all cursor-pointer inline-flex items-center justify-center shadow-sm active:scale-90 disabled:opacity-50"
+                                title="Lưu định mức"
+                              >
+                                {savingAllowance ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => { setEditingAllowanceCode(null); setAllowanceDraft(null); }}
+                                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg border border-slate-200/60 transition-all cursor-pointer inline-flex items-center justify-center shadow-sm active:scale-90"
+                                title="Hủy"
+                              >
+                                <X size={13} />
+                              </button>
+                            </div>
+                          )}
                         </div>
                         <div>
                           <h4 className="font-heading font-extrabold text-slate-800 text-xs">{a.name}</h4>
-                          <p className="font-heading font-black text-[#005BAC] text-sm mt-1">{a.standard}</p>
-                          <p className="text-slate-400 text-[10px] font-semibold mt-2">Đối tượng: {a.target}</p>
+
+                          {!isEditing ? (
+                            <>
+                              <p className="font-heading font-black text-[#005BAC] text-sm mt-1">
+                                {formatVnd(allowanceMonthly(a))}/tháng
+                              </p>
+                              {a.kind === "per_day" ? (
+                                <p className="text-slate-500 text-[10px] font-semibold mt-1">
+                                  {formatVnd(a.per_day_amount)}/ngày × {a.days_per_month} ngày công (thứ 2 → thứ 6)
+                                </p>
+                              ) : (
+                                <p className="text-slate-500 text-[10px] font-semibold mt-1">
+                                  Từ {a.threshold_days} ngày công trở lên; dưới {a.threshold_days} ngày còn {formatVnd(a.reduced_amount)}/tháng
+                                </p>
+                              )}
+                              <p className="text-slate-400 text-[10px] font-semibold mt-2">Đối tượng: {a.target}</p>
+                            </>
+                          ) : (
+                            <div className="mt-2 space-y-2">
+                              {a.kind === "per_day" ? (
+                                <div className="grid grid-cols-2 gap-2">
+                                  <label className="space-y-1">
+                                    <span className="block text-slate-400 text-[10px] font-bold">Mức/ngày (đ)</span>
+                                    <input
+                                      type="number"
+                                      value={draft.per_day_amount ?? ""}
+                                      onChange={e => setAllowanceDraft({ ...draft, per_day_amount: e.target.value === "" ? null : Number(e.target.value) })}
+                                      className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500/20"
+                                    />
+                                  </label>
+                                  <label className="space-y-1">
+                                    <span className="block text-slate-400 text-[10px] font-bold">Ngày công/tháng</span>
+                                    <input
+                                      type="number"
+                                      value={draft.days_per_month ?? ""}
+                                      onChange={e => setAllowanceDraft({ ...draft, days_per_month: e.target.value === "" ? null : Number(e.target.value) })}
+                                      className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500/20"
+                                    />
+                                  </label>
+                                </div>
+                              ) : (
+                                <div className="space-y-2">
+                                  <label className="space-y-1 block">
+                                    <span className="block text-slate-400 text-[10px] font-bold">Ngày công tối thiểu</span>
+                                    <input
+                                      type="number"
+                                      value={draft.threshold_days ?? ""}
+                                      onChange={e => setAllowanceDraft({ ...draft, threshold_days: e.target.value === "" ? null : Number(e.target.value) })}
+                                      className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500/20"
+                                    />
+                                  </label>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <label className="space-y-1">
+                                      <span className="block text-slate-400 text-[10px] font-bold">Mức đủ ngày (đ)</span>
+                                      <input
+                                        type="number"
+                                        value={draft.full_amount ?? ""}
+                                        onChange={e => setAllowanceDraft({ ...draft, full_amount: e.target.value === "" ? null : Number(e.target.value) })}
+                                        className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500/20"
+                                      />
+                                    </label>
+                                    <label className="space-y-1">
+                                      <span className="block text-slate-400 text-[10px] font-bold">Mức thiếu ngày (đ)</span>
+                                      <input
+                                        type="number"
+                                        value={draft.reduced_amount ?? ""}
+                                        onChange={e => setAllowanceDraft({ ...draft, reduced_amount: e.target.value === "" ? null : Number(e.target.value) })}
+                                        className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500/20"
+                                      />
+                                    </label>
+                                  </div>
+                                </div>
+                              )}
+                              <label className="space-y-1 block">
+                                <span className="block text-slate-400 text-[10px] font-bold">Đối tượng áp dụng</span>
+                                <input
+                                  type="text"
+                                  value={draft.target}
+                                  onChange={e => setAllowanceDraft({ ...draft, target: e.target.value })}
+                                  className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500/20"
+                                />
+                              </label>
+                            </div>
+                          )}
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
