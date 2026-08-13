@@ -44,6 +44,12 @@ export function parseTaskFiles(value: unknown): TaskFile[] {
     .map(f => ({ path: f.path, name: f.name || f.path.replace(/^\d{10,}_/, "") }));
 }
 
+/** Đoán theo ĐUÔI TÊN vì cột lưu trong CSDL không giữ mime type — đủ dùng để
+ *  quyết định hiện ảnh hay nhúng khung PDF khi xem. */
+export function isImageName(name: string): boolean {
+  return /\.(jpe?g|png|webp|gif|heic)$/i.test(name);
+}
+
 /** Ảnh và PDF — khớp allowed_mime_types của bucket. */
 export function isAllowedTaskFile(file: File): boolean {
   return file.type === "application/pdf" || file.type.startsWith("image/");

@@ -11,8 +11,8 @@
 // form dùng chung một bộ hàm và trang cha mới biết tệp thuộc form nào.
 // ============================================================
 
-import { Paperclip, Upload, FileText, ImageIcon, ExternalLink, X, Loader2 } from "lucide-react";
-import { TaskFile } from "@/lib/taskFiles";
+import { Paperclip, Upload, FileText, ImageIcon, Eye, X, Loader2 } from "lucide-react";
+import { TaskFile, isImageName } from "@/lib/taskFiles";
 
 type Props = {
   files: TaskFile[];
@@ -23,8 +23,6 @@ type Props = {
   onRemove: (file: TaskFile) => void;
   onOpen: (file: TaskFile) => void;
 };
-
-const isImage = (name: string) => /\.(jpe?g|png|webp|gif|heic)$/i.test(name);
 
 export default function TaskAttachmentField({
   files, uploading, error, onPick, onRemove, onOpen,
@@ -74,17 +72,18 @@ export default function TaskAttachmentField({
               key={f.path}
               className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5"
             >
-              {isImage(f.name)
+              {isImageName(f.name)
                 ? <ImageIcon size={13} className="text-blue-500 shrink-0" />
                 : <FileText size={13} className="text-rose-500 shrink-0" />}
               <span className="flex-1 min-w-0 truncate text-[11px] font-bold text-slate-700">{f.name}</span>
+              {/* Con mắt = xem ngay giữa màn hình, không nhảy sang tab khác. */}
               <button
                 type="button"
-                title="Mở tệp"
+                title="Xem tệp"
                 onClick={() => onOpen(f)}
                 className="shrink-0 text-slate-400 hover:text-blue-600 transition-colors cursor-pointer"
               >
-                <ExternalLink size={13} />
+                <Eye size={14} />
               </button>
               <button
                 type="button"

@@ -32,7 +32,7 @@ import {
 import TaskAttachmentField from "@/components/TaskAttachmentField";
 import {
   TaskFile, parseTaskFiles, uploadTaskFile, resolveTaskFileUrl, removeTaskFile,
-  isAllowedTaskFile, humanSize, TASK_FILE_MAX_BYTES,
+  isAllowedTaskFile, isImageName, humanSize, TASK_FILE_MAX_BYTES,
 } from "@/lib/taskFiles";
 
 // Một dòng trong "Danh sách nhân viên" — gốc để suy ra task thuộc phòng nào.
@@ -210,6 +210,10 @@ export default function TaskManagementPage() {
   const [editFiles, setEditFiles] = useState<TaskFile[]>([]);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [fileErr, setFileErr] = useState("");
+  // Khung xem tệp giữa màn hình. Giữ luôn URL đã ký để không phải ký lại mỗi
+  // lần React vẽ lại.
+  const [preview, setPreview] = useState<{ file: TaskFile; url: string } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   // 4 trường dự án/phân loại. Ô dự án lưu theo MÃ (khoá chọn), tên suy ra từ mã
   // lúc lưu — không giữ 2 state dễ lệch nhau.
   const [newProjectCode, setNewProjectCode] = useState("");
@@ -553,6 +557,15 @@ export default function TaskManagementPage() {
     if (purge) removeTaskFile(file.path);
   };
 
+  // Esc đóng khung xem tệp. Chỉ gắn khi khung đang mở, và đóng ĐÚNG khung xem
+  // chứ không đụng tới modal Tạo/Sửa nằm dưới.
+  useEffect(() => {
+    if (!preview) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setPreview(null); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [preview]);
+
   // Bỏ dở form Tạo: DỌN LUÔN tệp đã lỡ tải lên. Không dọn thì tệp vừa nằm mồ
   // côi trong kho, vừa còn nguyên trong danh sách khi mở lại form -> đính nhầm
   // vào công việc kế tiếp.
@@ -563,15 +576,22 @@ export default function TaskManagementPage() {
     setIsModalOpen(false);
   };
 
-  // Mở tệp: bucket riêng tư nên phải ký link theo phiên đăng nhập, không có
-  // đường dẫn tĩnh nào mở thẳng được.
+  // Xem tệp NGAY GIỮA MÀN HÌNH thay vì mở tab mới: đang điền dở form mà nhảy
+  // sang tab khác thì mất mạch, quay lại còn phải tìm đúng cửa sổ.
+  // Bucket riêng tư nên phải ký link theo phiên đăng nhập — ký trước rồi mới mở
+  // khung xem, để lỗi hết quyền / tệp đã xoá báo ngay chứ không hiện khung trắng.
   const handleOpenFile = async (file: TaskFile) => {
-    const url = await resolveTaskFileUrl(file.path);
-    if (!url) {
-      alert(`Không mở được "${file.name}".\nTệp có thể đã bị xoá, hoặc tài khoản của bạn không có quyền đọc kho tệp công việc.`);
-      return;
+    setPreviewLoading(true);
+    try {
+      const url = await resolveTaskFileUrl(file.path);
+      if (!url) {
+        alert(`Không mở được "${file.name}".\nTệp có thể đã bị xoá, hoặc tài khoản của bạn không có quyền đọc kho tệp công việc.`);
+        return;
+      }
+      setPreview({ file, url });
+    } finally {
+      setPreviewLoading(false);
     }
-    window.open(url, "_blank", "noopener,noreferrer");
   };
 
   // Gửi email báo "bạn được giao việc mới". Im lặng bỏ qua khi không đủ điều kiện —
@@ -2140,6 +2160,72 @@ export default function TaskManagementPage() {
                 </div>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ─── KHUNG XEM TỆP ĐÍNH KÈM ───
+          z-[60] để nằm TRÊN hai modal Tạo/Sửa (z-50) — xem tệp là thao tác mở
+          từ trong form, không được để form đè lên. Bấm nền tối hoặc phím Esc là
+          đóng; bấm vào chính khung thì không (stopPropagation). */}
+      {previewLoading && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/30">
+          <Loader2 size={28} className="animate-spin text-white" />
+        </div>
+      )}
+
+      {preview && (
+        <div
+          className="fixed inset-0 z-[60] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150"
+          onClick={() => setPreview(null)}
+        >
+          <div
+            className="bg-white rounded-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden shadow-2xl animate-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2 px-5 py-3 border-b border-slate-100 shrink-0">
+              <Paperclip size={14} className="text-slate-400 shrink-0" />
+              <h3 className="font-heading font-extrabold text-xs text-slate-800 truncate flex-1 min-w-0">
+                {preview.file.name}
+              </h3>
+              {/* Vẫn giữ đường mở tab mới: ảnh bản vẽ khổ lớn xem trong khung này
+                  vẫn bé, có người cần phóng to hết cỡ hoặc tải về. */}
+              <a
+                href={preview.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="shrink-0 text-[11px] font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1"
+              >
+                Mở tab mới
+              </a>
+              <button
+                type="button"
+                onClick={() => setPreview(null)}
+                className="shrink-0 text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="flex-1 min-h-0 overflow-auto bg-slate-50 flex items-center justify-center p-3">
+              {isImageName(preview.file.name) ? (
+                // Thẻ <img> thường, KHÔNG dùng next/image: đây là link ký có hạn
+                // trỏ sang miền Supabase, đưa qua bộ tối ưu ảnh của Next chỉ tổ
+                // hỏng link và tốn thêm một chặng mạng.
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={preview.url}
+                  alt={preview.file.name}
+                  className="max-w-full max-h-[78vh] object-contain rounded-lg"
+                />
+              ) : (
+                <iframe
+                  src={preview.url}
+                  title={preview.file.name}
+                  className="w-full h-[78vh] rounded-lg bg-white"
+                />
+              )}
+            </div>
           </div>
         </div>
       )}
