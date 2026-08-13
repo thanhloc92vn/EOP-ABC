@@ -24,7 +24,8 @@ import {
   MapPin,
   Newspaper,
   Palmtree,
-  Plane
+  Plane,
+  TrendingUp
 } from "lucide-react";
 import { useSidebar } from "./SidebarContext";
 import ThemeToggle from "./ThemeToggle";
@@ -60,6 +61,7 @@ function SidebarLinks({ isApprover, pathname, setSidebarOpen }: { isApprover: bo
     { label: "Danh sách nhân viên", href: "/employees", icon: Users },
     { label: "Lương & Phúc lợi (C&B)", href: "/cb", icon: Calculator },
     { label: "Hành chính & VVP", href: "/administration", icon: Building2 },
+    { label: "Báo cáo", href: "/bao-cao", icon: TrendingUp },
     { label: "Văn Thư", href: "/document-control", icon: FileText },
     { label: "Biên bản họp (Meeting)", href: "/meeting-team", icon: Mic },
     { label: "Góp ý & Kiến nghị", href: "/suggestions", icon: MessageSquare },

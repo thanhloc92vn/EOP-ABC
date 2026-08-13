@@ -39,6 +39,10 @@ export type ApprovalPermissions = {
   canManageNews: boolean; // Đăng/sửa/xoá tin nội bộ (/tin-tuc) + ghi bucket news-media
                           // (RLS migration 023). XEM tin thì ai đăng nhập cũng được,
                           // cờ này chỉ mở quyền ĐĂNG BÀI.
+  canViewReports: boolean; // Xem module Báo cáo (/bao-cao — Kế hoạch thu chi, Sản lượng,
+                           // Doanh thu). Module thuộc gói Enterprise; cờ này cấp riêng cho
+                           // một người mà không phải nâng gói cả phòng (migration 042).
+                           // Không vượt được trần license: tenant phải ở gói Enterprise.
   // Quan hệ giám sát: tên hiển thị (khớp cột `assignee` dạng text) của người mà chủ
   // dòng này được thấy task, ngoài task của chính họ. VD: Như Quỳnh -> "Thanh Hằng".
   supervisesName: string | null;
@@ -63,6 +67,7 @@ export const NO_APPROVAL_PERMISSIONS: ApprovalPermissions = {
   canManageVpp: false,
   canManageProjectLocations: false,
   canManageNews: false,
+  canViewReports: false,
   supervisesName: null,
 };
 
@@ -388,6 +393,7 @@ export async function fetchApprovalPermissions(email?: string | null): Promise<A
       canManageVpp: !!row.can_manage_vpp,
       canManageProjectLocations: !!row.can_manage_project_locations,
       canManageNews: !!row.can_manage_news,
+      canViewReports: !!row.can_view_reports,
       supervisesName: row.supervises_name || null,
     };
   } catch {

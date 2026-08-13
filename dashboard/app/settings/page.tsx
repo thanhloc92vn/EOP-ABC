@@ -1043,7 +1043,7 @@ function SettingsContent() {
                   {([
                     { key: "basic" as Plan, desc: "Dashboard, Công việc, Lịch, Đăng ký xe/phòng họp, Duyệt yêu cầu, Hành chính & VVP, Biên bản họp, Vị trí dự án, Lương & Phúc lợi (C&B), Phòng ban, Cài đặt", accent: "border-slate-300", badge: "bg-slate-100 text-slate-600" },
                     { key: "professional" as Plan, desc: "+ Danh sách nhân viên, Góp ý & Kiến nghị, Tuyển dụng, Văn thư, Tổng hợp", accent: "border-blue-300", badge: "bg-blue-50 text-blue-600" },
-                    { key: "enterprise" as Plan, desc: "+ Tìm kiếm AI thông minh", accent: "border-indigo-300", badge: "bg-indigo-50 text-indigo-600" },
+                    { key: "enterprise" as Plan, desc: "+ Tìm kiếm AI thông minh, Báo cáo (Kế hoạch thu chi, Sản lượng, Doanh thu)", accent: "border-indigo-300", badge: "bg-indigo-50 text-indigo-600" },
                   ]).map(p => {
                     const isActive = activePlan === p.key;
                     return (

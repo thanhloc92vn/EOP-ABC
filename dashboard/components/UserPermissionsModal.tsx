@@ -67,6 +67,7 @@ const FLAG_GROUPS: { title: string; flags: { key: string; label: string; desc: s
       { key: "can_manage_vpp", label: "Phụ trách VPP", desc: "Thấy mọi phiếu VPP của tất cả phòng ban" },
       { key: "can_manage_project_locations", label: "Quản lý vị trí dự án", desc: "Thêm/sửa/xoá toạ độ dự án trên bản đồ Vị trí dự án" },
       { key: "can_manage_news", label: "Tin tức — Đăng bài", desc: "Đăng, sửa, xoá tin nội bộ (thông báo, giới thiệu, sự kiện)" },
+      { key: "can_view_reports", label: "Báo cáo quản trị", desc: "Kế hoạch thu chi, Sản lượng, Doanh thu — chỉ có tác dụng khi công ty ở gói Enterprise" },
     ],
   },
 ];

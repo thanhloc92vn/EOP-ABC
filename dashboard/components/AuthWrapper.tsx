@@ -8,7 +8,7 @@ import ActivityTracker from "./ActivityTracker";
 import { usePathname } from "next/navigation";
 import { useTenantConfig } from "@/lib/tenantConfig";
 import { normalizePlan, getMinPlanForPath, PLAN_LABELS } from "@/lib/planShared";
-import { canAccessPath, resolveEffectivePlan } from "@/lib/access";
+import { canAccessPath, resolveEffectivePlan, accessDenialReason } from "@/lib/access";
 import { fetchApprovalPermissions, NO_APPROVAL_PERMISSIONS, type ApprovalPermissions } from "@/lib/approvers";
 
 export default function AuthWrapper({ children }: { children: React.ReactNode }) {
@@ -280,6 +280,9 @@ export default function AuthWrapper({ children }: { children: React.ReactNode })
   const accessUser = { isAdmin: strictAdmin, tenantPlan: activePlan, effectivePlan, perms: userPerms };
   if (!canAccessPath(accessUser, pathname)) {
     const minPlan = getMinPlanForPath(pathname);
+    // Bị chặn vì THIẾU CỜ (gói đã đủ) thì phải nói đúng vậy — nếu dùng chung câu
+    // "cần nâng gói" thì người ở phòng Enterprise sẽ đọc được một câu vô nghĩa.
+    const deniedByFlag = accessDenialReason(accessUser, pathname) === "flag";
     return (
       <SidebarProvider>
         <div className="flex flex-col items-center justify-center min-h-screen bg-[#F7F9FC] px-4">
@@ -289,12 +292,22 @@ export default function AuthWrapper({ children }: { children: React.ReactNode })
             </div>
             <div className="space-y-2">
               <h2 className="font-heading font-extrabold text-slate-800 text-base">
-                Tính năng thuộc gói {PLAN_LABELS[minPlan]}
+                {deniedByFlag ? "Bạn chưa được cấp quyền vào module này" : `Tính năng thuộc gói ${PLAN_LABELS[minPlan]}`}
               </h2>
               <p className="text-slate-500 text-xs leading-relaxed font-medium">
-                Phòng của bạn đang ở gói <strong>{PLAN_LABELS[effectivePlan]}</strong>.
-                Module này chỉ khả dụng từ gói <strong>{PLAN_LABELS[minPlan]}</strong> trở lên —
-                vui lòng liên hệ Quản trị viên để được cấp quyền.
+                {deniedByFlag ? (
+                  <>
+                    Module này chỉ mở cho những tài khoản được Quản trị viên chỉ định
+                    riêng — gói dịch vụ của phòng không tự mở. Vui lòng liên hệ Quản trị
+                    viên nếu bạn cần truy cập.
+                  </>
+                ) : (
+                  <>
+                    Phòng của bạn đang ở gói <strong>{PLAN_LABELS[effectivePlan]}</strong>.
+                    Module này chỉ khả dụng từ gói <strong>{PLAN_LABELS[minPlan]}</strong> trở lên —
+                    vui lòng liên hệ Quản trị viên để được cấp quyền.
+                  </>
+                )}
               </p>
             </div>
             <a

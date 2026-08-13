@@ -67,12 +67,19 @@ export type ModuleKey =
   | "recruitment"
   | "documents"
   | "tong_hop"
+  | "reports"
   | "ai_search";
 
 export type ModuleDef = {
   minPlan: Plan;
   grantFlag?: keyof ApprovalPermissions;
   route?: string;
+  // requireFlag = true -> gói CHỈ mở "cửa", vẫn BẮT BUỘC phải có grantFlag mới
+  // vào được (điều kiện VÀ, không phải HOẶC như mặc định). Dùng cho module có
+  // dữ liệu nhạy cảm mà nâng gói cả phòng không đồng nghĩa với được xem —
+  // VD Báo cáo doanh thu: phòng ở gói Enterprise vẫn phải cấp cờ từng người.
+  // Bỏ trống = hành vi cũ của mọi module còn lại (gói phủ là vào được).
+  requireFlag?: boolean;
 };
 
 export const MODULE_REGISTRY: Record<ModuleKey, ModuleDef> = {
@@ -98,6 +105,10 @@ export const MODULE_REGISTRY: Record<ModuleKey, ModuleDef> = {
   documents:      { minPlan: "professional", route: "/document-control", grantFlag: "canViewDocuments" },
   tong_hop:       { minPlan: "professional", route: "/tong-hop" },
   // ── Enterprise ──
+  // Báo cáo quản trị (Kế hoạch thu chi, Sản lượng, Doanh thu). Số liệu tài chính
+  // toàn công ty -> để ở gói cao nhất; grantFlag cho phép cấp riêng từng người
+  // (VD Trưởng phòng KHĐT) mà không phải nâng gói cả phòng.
+  reports:        { minPlan: "enterprise", route: "/bao-cao", grantFlag: "canViewReports", requireFlag: true },
   ai_search:      { minPlan: "enterprise" }, // tính năng, không có route riêng
 };
 
@@ -113,10 +124,15 @@ export type AccessUser = {
 export function canAccess(user: AccessUser, moduleKey: ModuleKey): boolean {
   if (user.isAdmin) return true;
   const m = MODULE_REGISTRY[moduleKey];
+  const hasFlag = !!(m.grantFlag && user.perms[m.grantFlag] === true);
+  // 0. Module bắt buộc cờ: gói KHÔNG tự mở, phải có cờ VÀ tenant đủ license.
+  if (m.requireFlag) {
+    return hasFlag && isPlanAtLeast(user.tenantPlan, m.minPlan);
+  }
   // 1. Gói của phòng đã phủ module
   if (isPlanAtLeast(user.effectivePlan, m.minPlan)) return true;
   // 2. Cấp phép riêng (ngoại lệ) — nhưng không vượt quá trần license của tenant
-  if (m.grantFlag && user.perms[m.grantFlag] === true && isPlanAtLeast(user.tenantPlan, m.minPlan)) {
+  if (hasFlag && isPlanAtLeast(user.tenantPlan, m.minPlan)) {
     return true;
   }
   return false;
@@ -141,15 +157,35 @@ export function moduleForPath(pathname: string): ModuleKey | null {
 export function canAccessPath(user: AccessUser, pathname: string): boolean {
   if (user.isAdmin) return true;
   const minPlan = getMinPlanForPath(pathname);
-  if (isPlanAtLeast(user.effectivePlan, minPlan)) return true;
   const key = moduleForPath(pathname);
-  if (key) {
-    const m = MODULE_REGISTRY[key];
-    if (m.grantFlag && user.perms[m.grantFlag] === true && isPlanAtLeast(user.tenantPlan, minPlan)) {
-      return true;
-    }
+  const m = key ? MODULE_REGISTRY[key] : null;
+  const hasFlag = !!(m?.grantFlag && user.perms[m.grantFlag] === true);
+  // Module bắt buộc cờ phải xét TRƯỚC nhánh gói bên dưới — nếu không, phòng đã
+  // ở đúng gói sẽ vào được mà chẳng cần cờ, đúng cái mà requireFlag muốn chặn.
+  if (m?.requireFlag) {
+    return hasFlag && isPlanAtLeast(user.tenantPlan, minPlan);
   }
+  if (isPlanAtLeast(user.effectivePlan, minPlan)) return true;
+  if (hasFlag && isPlanAtLeast(user.tenantPlan, minPlan)) return true;
   return false;
+}
+
+// ─── Vì sao bị chặn? — để màn hình từ chối nói đúng lý do ───
+// null  = không bị chặn.
+// "plan" = gói chưa tới (màn hình "nâng gói").
+// "flag" = gói đã đủ nhưng module đòi cấp phép riêng mà user chưa được cấp.
+// Không có nhánh "flag" thì người ở phòng Enterprise mở /bao-cao sẽ đọc được câu
+// tự mâu thuẫn: "Phòng của bạn đang ở gói Enterprise — cần gói Enterprise".
+export function accessDenialReason(
+  user: AccessUser,
+  pathname: string
+): "plan" | "flag" | null {
+  if (canAccessPath(user, pathname)) return null;
+  const key = moduleForPath(pathname);
+  const m = key ? MODULE_REGISTRY[key] : null;
+  const minPlan = getMinPlanForPath(pathname);
+  if (m?.requireFlag && isPlanAtLeast(user.effectivePlan, minPlan)) return "flag";
+  return "plan";
 }
 
 // ─── Gói hiệu lực của user theo phòng ban ───

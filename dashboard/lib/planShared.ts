@@ -35,8 +35,8 @@ export function isPlanAtLeast(current: Plan, min: Plan): boolean {
 //                 Biên bản họp, Phòng ban, Cài đặt, Vị trí dự án, Lương & Phúc lợi (C&B),
 //                 Tin tức
 // Professional: + Danh sách nhân viên, Góp ý & Kiến nghị, Tuyển dụng,
-//                 Văn thư, Tổng hợp (= tất cả, trừ Tìm kiếm AI)
-// Enterprise:   + Tìm kiếm AI thông minh
+//                 Văn thư, Tổng hợp
+// Enterprise:   + Tìm kiếm AI thông minh, Báo cáo (Kế hoạch thu chi, Sản lượng, Doanh thu)
 //
 // LƯU Ý C&B: module mở từ gói Basic, nhưng dữ liệu nhạy cảm BÊN TRONG (bảng lương,
 // BHXH, hợp đồng lao động) vẫn khoá riêng theo cờ can_view_salary — gói KHÔNG mở khoá
@@ -54,6 +54,7 @@ export const ROUTE_MIN_PLAN: { prefix: string; min: Plan }[] = [
   { prefix: "/document-control", min: "professional" },
   { prefix: "/van-thu", min: "professional" },
   { prefix: "/tong-hop", min: "professional" },
+  { prefix: "/bao-cao", min: "enterprise" },
 ];
 
 // ─── PHÂN GÓI THEO TÍNH NĂNG (không gắn với route riêng) ───
