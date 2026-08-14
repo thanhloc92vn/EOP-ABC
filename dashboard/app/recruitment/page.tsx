@@ -7,6 +7,7 @@ import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
 import { isManagerRole, normalizeName } from "@/lib/approvers";
 import { useCurrentUser } from "@/lib/useCurrentUser";
+import { useDepartments } from "@/lib/departments";
 import { isHrDept } from "@/lib/access";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import {
@@ -79,26 +80,9 @@ type FileItem = { file: File; id: string };
 
 const NGUON_OPTIONS = ["TopCV", "LinkedIn", "Email", "Referral", "Nội bộ", "Khác"];
 
-const DEPT_OPTIONS = [
-  "Ban Lãnh Đạo",
-  "Phòng Hành Chính Nhân Sự",
-  "P. TÀI CHÍNH KẾ TOÁN",
-  "P. VẬT TƯ THIẾT BỊ",
-  "P. THỊ TRƯỜNG",
-  "P. KẾ HOẠCH",
-  "P. ĐẤU THẦU",
-  "P. KỸ THUẬT",
-  "P. QUẢN LÍ DỰ ÁN",
-  "P. ATLĐ",
-  "DA. RẠCH XUYÊN TÂM - HCM",
-  "DA.ĐIỆN MẶT TRỜI TV GĐ 2",
-  "DA.TỈNH LỘ 8 - CỦ CHI",
-  "DA.THƯỜNG PHƯỚC",
-  "DA.CẦU MÃ ĐÀ - ĐỒNG NAI",
-  "DA.CỐNG VÀM LẼO - BẠC LIÊU",
-  "DA.CHỐNG HẠN - NINH THUẬN",
-  "DA.XỬ LÝ NƯỚC THẢI TÂY NINH"
-];
+// Danh sách phòng ban / ban điều hành cho cột "Phòng Ban" của 4 tab bảng lấy từ
+// bảng `departments` qua useDepartments() — KHÔNG hardcode ở đây nữa. Tên và thứ tự
+// (khối văn phòng trước, ban điều hành sau) do sort_order trong DB quyết định.
 
 // ─── SCORE COLOR HELPERS ─────────────────────────────────────────────────────
 function scoreColor(score: number) {
@@ -465,6 +449,92 @@ function ResultCard({
 }
 
 // ─── HELPERS FOR TABLE VIEW ──────────────────────────────────────────────────
+
+// Số cột đầu được GHIM khi kéo ngang: STT, Ngày (vòng 1/vòng 2/ngày tạo), Tên ứng
+// viên, Email, SĐT. Bảng rộng ~2500px nên màn hình nhỏ kéo sang phải là mất hết mốc
+// nhận dạng dòng — ghim 5 cột này thì luôn biết đang xem ai, ngày nào.
+const FROZEN_COL_COUNT = 5;
+
+// Toạ độ `left` cộng dồn theo width khai báo trong getColumnsForTab — KHÔNG hardcode
+// 640px, đổi width của cột nào thì vị trí ghim tự khớp theo.
+//
+// Chỉ đúng khi bảng đang ở đúng bề rộng khai báo, nhưng đó cũng là lúc duy nhất
+// việc ghim có tác dụng: màn hình đủ rộng để không tràn ngang thì không có gì để
+// cuộn, sticky không hiện hình.
+function getFrozenOffsets(cols: { width: string }[]): number[] {
+  const offsets: number[] = [];
+  let acc = 0;
+  for (let i = 0; i < Math.min(FROZEN_COL_COUNT, cols.length); i++) {
+    offsets.push(acc);
+    acc += parseInt(cols[i].width, 10) || 0;
+  }
+  return offsets;
+}
+
+
+// Đưa mọi kiểu ngày đang lưu (chuỗi YYYY-MM-DD hoặc timestamp created_at) về
+// YYYY-MM-DD cho ô nhập. Trả "" nếu không đọc được, để chỗ gọi rơi xuống nguồn kế tiếp.
+function toDateInputValue(raw: any): string {
+  if (!raw) return "";
+  const s = String(raw);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return "";
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// Ngày hiển thị cho 2 cột mốc vòng tuyển. Ô trống thì lần lượt lấy mốc gần nhất
+// còn dữ liệu thay vì để trắng:
+//   - Ngày Vòng 1: created_at (hành vi đã có từ trước, giữ nguyên).
+//   - Ngày Vòng 2: ngày PV vòng 1 -> ngày vào vòng 1 -> created_at. Cần chuỗi này vì
+//     hồ sơ cũ đã qua vòng 2 từ trước khi hệ thống biết tự ghi v2_date.
+function resolveStageDate(colKey: string, candidate: any): string {
+  if (colKey === "v1_date") {
+    return toDateInputValue(candidate.v1_date) || toDateInputValue(candidate.created_at);
+  }
+  if (colKey === "v2_date") {
+    return (
+      toDateInputValue(candidate.v2_date) ||
+      toDateInputValue(candidate.v1_interview_date) ||
+      toDateInputValue(candidate.v1_date) ||
+      toDateInputValue(candidate.created_at)
+    );
+  }
+  return "";
+}
+
+// ─── BỘ LỌC BẢNG ─────────────────────────────────────────────────────────────
+// Mỗi tab hiển thị một cột ngày và một cột kết quả khác nhau, nên 2 bộ lọc này
+// phải bám theo đúng cột đang hiện chứ không dùng chung một trường cố định.
+
+// Ngày dùng để lọc = đúng ngày đang hiện trong cột của tab đó (kể cả ngày lấy tạm
+// khi ô trống), để lọc ra đúng những dòng người dùng nhìn thấy.
+function getRowFilterDate(subTab: string, c: any): string {
+  if (subTab === "tong_hop") return toDateInputValue(c.created_at);
+  if (subTab === "vong_1") return resolveStageDate("v1_date", c);
+  return resolveStageDate("v2_date", c);
+}
+
+// Kết quả dùng để lọc = đúng nhãn đang hiện trong ô select của cột, kể cả giá trị
+// mặc định khi DB còn trống ("Chờ đánh giá" / "Chờ nhận việc").
+function getRowFilterResult(subTab: string, c: any): string {
+  if (subTab === "tong_hop") {
+    return c.status === "rejected" ? "FAIL" : c.status === "new" ? "LƯU CV" : "PASS CV";
+  }
+  if (subTab === "vong_1") return c.v1_result || "Chờ đánh giá";
+  if (subTab === "vong_2") return c.v2_result || "Chờ đánh giá";
+  return c.probation_result || "Chờ nhận việc";
+}
+
+const RESULT_FILTER_CONFIG: Record<string, { label: string; dateLabel: string; options: string[] }> = {
+  tong_hop: { label: "Trạng thái", dateLabel: "Ngày tạo", options: ["PASS CV", "LƯU CV", "FAIL"] },
+  vong_1:   { label: "Kết quả V1", dateLabel: "Ngày Vòng 1", options: ["Chờ đánh giá", "ĐẠT", "LOẠI", "TC PV"] },
+  vong_2:   { label: "Kết quả V2", dateLabel: "Ngày Vòng 2", options: ["Chờ đánh giá", "ĐẠT", "LOẠI", "TC PV"] },
+  thu_viec: { label: "Kết quả nhận việc", dateLabel: "Ngày Vòng 2", options: ["Chờ nhận việc", "NHẬN", "TC"] },
+};
+
+const NO_DEPT_LABEL = "Chưa xếp phòng";
+
 function formatDateForDisplay(dateStr: string): string {
   if (!dateStr) return "";
   const parts = dateStr.split('-');
@@ -653,18 +723,24 @@ const normalizeDepartment = (dept: string): string => {
   return trim.charAt(0).toUpperCase() + trim.slice(1);
 };
 
-const isProjectBlock = (deptName: string): boolean => {
+const isProjectBlock = (deptName: string, bdhList: string[] = []): boolean => {
   const name = (deptName || "").trim().toUpperCase();
-  
+
+  // Nguồn chính xác nhất: tên nằm trong nhóm type='bdh' của bảng departments.
+  // Đặt trước các phép đoán theo từ khoá bên dưới để BĐH mới thêm trong DB
+  // (VD "BĐH KCN Cà Ná", "BĐH Hương Lộ 11") không bị xếp nhầm vào khối văn phòng.
+  if (bdhList.some(b => b.trim().toUpperCase() === name)) return true;
+
   // Direct project indicators (DA., DA , DỰ ÁN, DA)
   if (
-    name.startsWith("DA.") || 
-    name.startsWith("DA ") || 
-    name.startsWith("DỰ ÁN") || 
+    name.startsWith("DA.") ||
+    name.startsWith("DA ") ||
+    name.startsWith("DỰ ÁN") ||
     name.startsWith("DA") ||
     name.includes("DỰ ÁN") ||
     name.includes("CÔNG TRƯỜNG") ||
     name.includes("BAN ĐIỀU HÀNH") ||
+    name.includes("BĐH") ||
     name.includes("BDH")
   ) {
     return true;
@@ -773,6 +849,16 @@ export default function RecruitmentPage() {
   const [candidates, setCandidates] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+
+  // 3 bộ lọc của bảng: khoảng ngày, kết quả (đổi theo tab), phòng ban.
+  const [filterDateFrom, setFilterDateFrom] = useState("");
+  const [filterDateTo, setFilterDateTo] = useState("");
+  const [filterResult, setFilterResult] = useState("");
+  const [filterDept, setFilterDept] = useState("");
+
+  // Mỗi tab có bộ giá trị kết quả riêng ("ĐẠT" không tồn tại ở tab Thử Việc), nên
+  // đổi tab là bỏ chọn — nếu giữ lại thì bảng sẽ trống trơn mà không rõ vì sao.
+  useEffect(() => { setFilterResult(""); }, [tableSubTab]);
 
   // Manual recruitment needs state — lưu THEO THÁNG (id dạng office_manual_needs_YYYY-MM).
   // Tháng hiện tại đồng thời ghi về bản ghi cũ (office_manual_needs) để Dashboard trang chủ
@@ -903,6 +989,10 @@ export default function RecruitmentPage() {
   const currentUser = user.authenticated ? user : null;
   const approvalPerms = user.perms;
 
+  // Phòng ban / Ban điều hành — bảng `departments` là nguồn duy nhất.
+  // Render ngay bằng DEFAULTS rồi tự cập nhật khi DB trả về (hook lo sẵn).
+  const departments = useDepartments();
+
   // Tầng (b) — kiểm soát mịn: chỉ Admin hoặc người được cấp cờ can_view_candidates
   // mới XEM nội dung Tuyển dụng (khớp RLS candidates + recruitment_needs). GIỮ nguyên,
   // KHÔNG nới theo gói.
@@ -975,6 +1065,13 @@ export default function RecruitmentPage() {
       const updates: any = { v1_result: value };
       if (value === "ĐẠT") {
         updates.status = "interview";
+        // Vòng 1 ĐẠT = ứng viên chuyển sang Vòng 2 ngay lúc này -> chốt luôn
+        // "Ngày Vòng 2" là hôm nay, để tab Vòng 2 / Thử Việc không bị trống ngày.
+        // Chỉ ghi khi ô còn trống, tránh đè ngày người dùng đã tự nhập trước đó.
+        const current = candidates.find(c => c.id === candidateId);
+        if (!current?.v2_date) {
+          updates.v2_date = new Date().toLocaleDateString("sv-SE");
+        }
       } else if (value === "LOẠI" || value === "TC PV") {
         updates.status = "rejected";
       }
@@ -998,6 +1095,17 @@ export default function RecruitmentPage() {
     }
   };
 
+  // Danh sách phòng ban cho ô lọc: danh mục chuẩn + những giá trị cũ đang thực sự
+  // có trong dữ liệu (nếu bỏ thì không lọc được các hồ sơ mang tên phòng kiểu cũ).
+  const deptFilterOptions = useMemo(() => {
+    const known = [...departments.phongBan, ...departments.bdh];
+    const inData = Array.from(
+      new Set(candidates.map(c => (c.department || "").trim()).filter(Boolean))
+    );
+    const legacy = inData.filter(d => !known.includes(d) && d !== NO_DEPT_LABEL).sort();
+    return { known, legacy };
+  }, [departments, candidates]);
+
   // Filter and sort candidates for the spreadsheet view
   const getFilteredTableCandidates = (subTab: string) => {
     const sorted = [...candidates]
@@ -1011,6 +1119,25 @@ export default function RecruitmentPage() {
           (c.role || "").toLowerCase().includes(q) ||
           (c.department || "").toLowerCase().includes(q)
         );
+      })
+      .filter(c => {
+        // Lọc khoảng ngày — chuỗi YYYY-MM-DD so sánh trực tiếp được.
+        if (!filterDateFrom && !filterDateTo) return true;
+        const d = getRowFilterDate(subTab, c);
+        if (!d) return false;
+        if (filterDateFrom && d < filterDateFrom) return false;
+        if (filterDateTo && d > filterDateTo) return false;
+        return true;
+      })
+      .filter(c => {
+        // Bộ lọc kết quả chỉ có nghĩa với tab đang mở (mỗi tab một bộ giá trị khác
+        // nhau), nên không áp cho số đếm hiển thị trên chip của các tab còn lại.
+        if (!filterResult || subTab !== tableSubTab) return true;
+        return getRowFilterResult(subTab, c) === filterResult;
+      })
+      .filter(c => {
+        if (!filterDept) return true;
+        return ((c.department || "").trim() || NO_DEPT_LABEL) === filterDept;
       })
       .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
 
@@ -1425,7 +1552,8 @@ export default function RecruitmentPage() {
     let initialV2Result = null;
     let initialOnboardDate = null;
     let initialV1Date = null;
-    
+    let initialV2Date = null;
+
     if (tableSubTab === "vong_1") {
       initialStatus = "screening";
       initialV1Date = new Date().toLocaleDateString('sv-SE');
@@ -1433,11 +1561,13 @@ export default function RecruitmentPage() {
       initialStatus = "interview";
       initialV1Result = "ĐẠT";
       initialV1Date = new Date().toLocaleDateString('sv-SE');
+      initialV2Date = new Date().toLocaleDateString('sv-SE');
     } else if (tableSubTab === "thu_viec") {
       initialStatus = "hired";
       initialV1Result = "ĐẠT";
       initialV2Result = "ĐẠT";
       initialV1Date = new Date().toLocaleDateString('sv-SE');
+      initialV2Date = new Date().toLocaleDateString('sv-SE');
       initialOnboardDate = new Date().toLocaleDateString('sv-SE');
     }
     
@@ -1454,6 +1584,7 @@ export default function RecruitmentPage() {
           onboard_date: initialOnboardDate,
           created_at: new Date().toISOString(),
           v1_date: initialV1Date,
+          v2_date: initialV2Date,
           ai_score: 0,
           reviewer: "Tự tạo"
         }]);
@@ -1843,8 +1974,8 @@ export default function RecruitmentPage() {
               if (c.status === "rejected") byDept[dept].rejected++;
             });
             const deptEntries = Object.entries(byDept).sort((a, b) => b[1].total - a[1].total);
-            const officeEntries = deptEntries.filter(([dept]) => !isProjectBlock(dept));
-            const projectEntries = deptEntries.filter(([dept]) => isProjectBlock(dept));
+            const officeEntries = deptEntries.filter(([dept]) => !isProjectBlock(dept, departments.bdh));
+            const projectEntries = deptEntries.filter(([dept]) => isProjectBlock(dept, departments.bdh));
             
             const officeChartData = officeEntries.filter(([, v]) => v.hired > 0).map(([name, v]) => ({ name, value: v.hired }));
             const officeTotalHired = officeEntries.reduce((sum, [, v]) => sum + v.hired, 0);
@@ -2510,6 +2641,81 @@ export default function RecruitmentPage() {
                   })}
                 </div>
 
+                {/* 3 bộ lọc: khoảng ngày / kết quả theo tab / phòng ban */}
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* 1. Khoảng ngày — dùng input type="date" để có lịch chọn trực quan */}
+                  <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 shadow-sm">
+                    <Calendar size={13} className="text-slate-400 shrink-0" />
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider shrink-0">
+                      {RESULT_FILTER_CONFIG[tableSubTab].dateLabel}
+                    </span>
+                    <input
+                      type="date"
+                      value={filterDateFrom}
+                      max={filterDateTo || undefined}
+                      onChange={(e) => setFilterDateFrom(e.target.value)}
+                      title="Từ ngày"
+                      className="text-xs font-semibold text-slate-700 bg-transparent outline-none cursor-pointer w-[112px]"
+                    />
+                    <span className="text-slate-300 text-xs shrink-0">→</span>
+                    <input
+                      type="date"
+                      value={filterDateTo}
+                      min={filterDateFrom || undefined}
+                      onChange={(e) => setFilterDateTo(e.target.value)}
+                      title="Đến ngày"
+                      className="text-xs font-semibold text-slate-700 bg-transparent outline-none cursor-pointer w-[112px]"
+                    />
+                  </div>
+
+                  {/* 2. Kết quả — danh sách đổi theo tab đang mở */}
+                  <select
+                    value={filterResult}
+                    onChange={(e) => setFilterResult(e.target.value)}
+                    className={`text-xs font-semibold px-3 py-2 bg-white border rounded-xl shadow-sm outline-none cursor-pointer transition-all ${
+                      filterResult ? "border-blue-400 text-[#005BAC]" : "border-slate-200 text-slate-600"
+                    }`}
+                  >
+                    <option value="">{RESULT_FILTER_CONFIG[tableSubTab].label}: tất cả</option>
+                    {RESULT_FILTER_CONFIG[tableSubTab].options.map(o => (
+                      <option key={o} value={o}>{o}</option>
+                    ))}
+                  </select>
+
+                  {/* 3. Phòng ban — danh mục từ bảng departments */}
+                  <select
+                    value={filterDept}
+                    onChange={(e) => setFilterDept(e.target.value)}
+                    className={`text-xs font-semibold px-3 py-2 bg-white border rounded-xl shadow-sm outline-none cursor-pointer transition-all max-w-[190px] truncate ${
+                      filterDept ? "border-blue-400 text-[#005BAC]" : "border-slate-200 text-slate-600"
+                    }`}
+                  >
+                    <option value="">Phòng ban: tất cả</option>
+                    <option value={NO_DEPT_LABEL}>{NO_DEPT_LABEL}</option>
+                    <optgroup label="Khối văn phòng">
+                      {departments.phongBan.map(d => <option key={d} value={d}>{d}</option>)}
+                    </optgroup>
+                    <optgroup label="Ban điều hành">
+                      {departments.bdh.map(d => <option key={d} value={d}>{d}</option>)}
+                    </optgroup>
+                    {deptFilterOptions.legacy.length > 0 && (
+                      <optgroup label="Giá trị cũ">
+                        {deptFilterOptions.legacy.map(d => <option key={d} value={d}>{d}</option>)}
+                      </optgroup>
+                    )}
+                  </select>
+
+                  {(filterDateFrom || filterDateTo || filterResult || filterDept) && (
+                    <button
+                      onClick={() => { setFilterDateFrom(""); setFilterDateTo(""); setFilterResult(""); setFilterDept(""); }}
+                      className="flex items-center gap-1 text-[11px] font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 px-2.5 py-2 rounded-xl transition-colors"
+                      title="Bỏ toàn bộ bộ lọc"
+                    >
+                      <X size={12} /> Xoá lọc
+                    </button>
+                  )}
+                </div>
+
                 {/* Search & Refresh */}
                 <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
                   <div className="relative w-full sm:w-64">
@@ -2553,15 +2759,28 @@ export default function RecruitmentPage() {
                   <table className="w-full text-xs text-left border-collapse table-fixed min-w-[1500px]">
                     <thead className="bg-[#005088] text-white sticky top-0 z-10 font-heading text-[11px] uppercase tracking-wider">
                       <tr>
-                        {getColumnsForTab(tableSubTab).map(col => (
-                          <th
-                            key={col.key}
-                            style={{ width: col.width }}
-                            className="px-3 py-3 border border-slate-200/80 font-semibold text-center whitespace-nowrap"
-                          >
-                            {col.label}
-                          </th>
-                        ))}
+                        {(() => {
+                          const headCols = getColumnsForTab(tableSubTab);
+                          const headOffsets = getFrozenOffsets(headCols);
+                          return headCols.map((col, colIdx) => {
+                            const isFrozen = colIdx < FROZEN_COL_COUNT;
+                            return (
+                              <th
+                                key={col.key}
+                                style={{ width: col.width, ...(isFrozen ? { left: headOffsets[colIdx] } : {}) }}
+                                className={`px-3 py-3 border border-slate-200/80 font-semibold text-center whitespace-nowrap ${
+                                  // z-20: ô góc phải nằm trên cả header thường (thead z-10)
+                                  // lẫn ô thân bảng đang ghim (z-[5]).
+                                  isFrozen ? "sticky z-20 bg-[#005088]" : ""
+                                } ${
+                                  colIdx === FROZEN_COL_COUNT - 1 ? "shadow-[3px_0_6px_-2px_rgba(15,23,42,0.45)]" : ""
+                                }`}
+                              >
+                                {col.label}
+                              </th>
+                            );
+                          });
+                        })()}
                       </tr>
                     </thead>
                     <tbody>
@@ -2583,6 +2802,21 @@ export default function RecruitmentPage() {
                       ) : (
                         getFilteredTableCandidates(tableSubTab).map((candidate, i) => {
                           const cols = getColumnsForTab(tableSubTab);
+                          const frozenOffsets = getFrozenOffsets(cols);
+                          // Ô ghim phải có nền ĐỤC, nếu không nội dung cột sau sẽ hiện
+                          // xuyên qua khi cuộn. Dùng class Tailwind (không phải mã màu
+                          // inline) để dark mode trong globals.css remap được.
+                          const frozenBg = i % 2 === 0 ? "bg-white" : "bg-slate-50";
+                          const frozenCellClass = (colIdx: number) =>
+                            colIdx < FROZEN_COL_COUNT
+                              ? ` sticky z-[5] ${frozenBg}${
+                                  colIdx === FROZEN_COL_COUNT - 1
+                                    ? " shadow-[3px_0_6px_-2px_rgba(15,23,42,0.25)]"
+                                    : ""
+                                }`
+                              : "";
+                          const frozenCellStyle = (colIdx: number) =>
+                            colIdx < FROZEN_COL_COUNT ? { left: frozenOffsets[colIdx] } : undefined;
                           return (
                             <tr
                               key={candidate.id}
@@ -2590,15 +2824,22 @@ export default function RecruitmentPage() {
                                 i % 2 === 0 ? "bg-white/40" : "bg-blue-50/10"
                               } hover:bg-blue-100/10`}
                             >
-                              {cols.map(col => {
+                              {cols.map((col, colIdx) => {
                                 const val = candidate[col.key];
 
                                 // STT: luôn đánh số lại từ 1 theo thứ tự hiển thị trong tab hiện tại, rê chuột hiện nút xóa
+                                // Lưu ý: ô này vốn có class `relative`; khi được ghim thì phải bỏ,
+                                // vì hai class position cùng chuỗi thì thứ tự trong file CSS quyết
+                                // định chứ không phải thứ tự viết ở đây. `sticky` cũng là containing
+                                // block cho con absolute nên bỏ `relative` không mất gì.
                                 if (col.key === "stt") {
                                   return (
-                                    <td 
-                                      key={col.key} 
-                                      className="group px-3 py-2 border border-slate-100 text-center text-slate-500 font-medium text-xs relative cursor-pointer min-w-[50px] align-middle"
+                                    <td
+                                      key={col.key}
+                                      style={frozenCellStyle(colIdx)}
+                                      className={`group px-3 py-2 border border-slate-100 text-center text-slate-500 font-medium text-xs ${
+                                        colIdx < FROZEN_COL_COUNT ? "" : "relative"
+                                      } cursor-pointer min-w-[50px] align-middle${frozenCellClass(colIdx)}`}
                                     >
                                       <span className="group-hover:hidden block">{i + 1}</span>
                                       <button 
@@ -2622,7 +2863,11 @@ export default function RecruitmentPage() {
                                     displayVal = new Date(val).toLocaleDateString('vi-VN');
                                   }
                                   return (
-                                    <td key={col.key} className="px-3 py-2 border border-slate-100 text-slate-500 whitespace-nowrap overflow-hidden text-ellipsis">
+                                    <td
+                                      key={col.key}
+                                      style={frozenCellStyle(colIdx)}
+                                      className={`px-3 py-2 border border-slate-100 text-slate-500 whitespace-nowrap overflow-hidden text-ellipsis${frozenCellClass(colIdx)}`}
+                                    >
                                       {displayVal}
                                     </td>
                                   );
@@ -2724,10 +2969,15 @@ export default function RecruitmentPage() {
 
                                 if (col.type === "department") {
                                   const displayDept = val || "Chưa xếp phòng";
-                                  const optionsList = [...DEPT_OPTIONS];
-                                  if (val && val !== "Chưa xếp phòng" && !optionsList.includes(val)) {
-                                    optionsList.push(val);
-                                  }
+                                  // Giá trị đang lưu không còn trong danh mục (dữ liệu cũ kiểu
+                                  // "P. KỸ THUẬT", "DA.THƯỜNG PHƯỚC", hoặc phòng đã tắt active)
+                                  // vẫn phải hiện ra, nếu không select sẽ tự nhảy sang tên khác
+                                  // và ghi đè mất dữ liệu khi người dùng chỉnh ô bên cạnh.
+                                  const isLegacyValue =
+                                    !!val &&
+                                    val !== "Chưa xếp phòng" &&
+                                    !departments.phongBan.includes(val) &&
+                                    !departments.bdh.includes(val);
                                   return (
                                     <td key={col.key} className="px-1.5 py-1 border border-slate-100 text-center select-container-dept max-w-[180px]">
                                       <select
@@ -2737,21 +2987,29 @@ export default function RecruitmentPage() {
                                         className={`text-[10px] font-semibold px-2 py-0.5 rounded-lg border border-slate-200 outline-none w-full bg-white text-slate-700 max-h-[30px] line-clamp-1 truncate ${canManage ? "cursor-pointer" : "cursor-default opacity-85"}`}
                                       >
                                         <option value="Chưa xếp phòng">Chưa xếp phòng</option>
-                                        {optionsList.map((d) => (
-                                          <option key={d} value={d}>{d}</option>
-                                        ))}
+                                        <optgroup label="Khối văn phòng">
+                                          {departments.phongBan.map((d) => (
+                                            <option key={d} value={d}>{d}</option>
+                                          ))}
+                                        </optgroup>
+                                        <optgroup label="Ban điều hành">
+                                          {departments.bdh.map((d) => (
+                                            <option key={d} value={d}>{d}</option>
+                                          ))}
+                                        </optgroup>
+                                        {isLegacyValue && (
+                                          <optgroup label="Giá trị cũ">
+                                            <option value={val}>{val}</option>
+                                          </optgroup>
+                                        )}
                                       </select>
                                     </td>
                                   );
                                 }
 
                                 let cellValue = val || "";
-                                if (col.key === "v1_date" && !val && candidate.created_at) {
-                                  const d = new Date(candidate.created_at);
-                                  const year = d.getFullYear();
-                                  const month = String(d.getMonth() + 1).padStart(2, '0');
-                                  const day = String(d.getDate()).padStart(2, '0');
-                                  cellValue = `${year}-${month}-${day}`;
+                                if ((col.key === "v1_date" || col.key === "v2_date") && !val) {
+                                  cellValue = resolveStageDate(col.key, candidate);
                                 }
 
                                 const isInterviewDate = col.key === "v1_interview_date" || col.key === "v2_interview_date";
@@ -2759,10 +3017,10 @@ export default function RecruitmentPage() {
                                 const isDanger = isInterviewDate && isToday(cellValue);
 
                                 return (
-                                  <td key={col.key} className={`p-0 border border-slate-100 ${
-                                    isDanger ? "bg-[#FEE2E2] border-[#FCA5A5]" : 
+                                  <td key={col.key} style={frozenCellStyle(colIdx)} className={`p-0 border border-slate-100 ${
+                                    isDanger ? "bg-[#FEE2E2] border-[#FCA5A5]" :
                                     isWarning ? "bg-[#FFEDD5] border-[#FED7AA]" : ""
-                                  }`}>
+                                  }${frozenCellClass(colIdx)}`}>
                                     <EditableCell
                                       value={cellValue}
                                       onSave={(newVal) => handleUpdateCandidateField(candidate.id, col.key, newVal)}

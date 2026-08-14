@@ -1,4 +1,5 @@
 import { requireApiAuth } from "@/lib/apiAuth";
+import { getDepartmentListsServer } from "@/lib/departmentsServer";
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 
@@ -238,40 +239,55 @@ Trả về duy nhất định dạng JSON sau (không kèm lời dẫn, không b
 
 
 // Classification logic (port from department_classifier.py)
+//
+// TÊN PHÒNG BAN phải TRÙNG KHỚP với bảng `departments` (type='phong_ban') — đó là
+// nguồn duy nhất cho mọi dropdown phòng ban, kể cả cột "Phòng Ban" ở 4 tab bảng
+// trong trang Tuyển dụng. Đặt tên riêng ở đây sẽ khiến ứng viên do AI chấm rơi
+// vào nhóm "Giá trị cũ" và không chọn lại được từ danh mục.
+//
+// Bảng `departments` KHÔNG có "Phòng QLCC" nên nhóm từ khoá chất lượng/kiểm định
+// được gộp vào Phòng Kỹ Thuật. Nếu công ty lập phòng QLCC thật thì thêm dòng vào
+// bảng departments rồi tách lại nhóm từ khoá này ra.
 const DEPT_KEYWORDS: Record<string, string[]> = {
-  "Phòng Kế Hoạch": ["đấu thầu", "dau thau", "dự toán", "du toan", "bóc tách khối lượng", "quyết toán", "quyet toan", "kinh tế xây dựng", "kinh te xay dung", "kế hoạch", "ke hoach"],
-  "Phòng Kỹ Thuật": ["shopdrawing", "shop drawing", "kết cấu cầu", "ket cau cau", "kỹ thuật", "ky thuat", "bản vẽ", "ban ve", "thiết kế", "thiet ke", "cầu đường", "cau duong", "thi công", "thi cong"],
-  "Phòng ATLĐ": ["hse", "an toàn lao động", "an toan lao dong", "atlđ", "atld", "pccc", "môi trường", "moi truong"],
+  "Phòng Kế Hoạch Đấu Thầu": ["đấu thầu", "dau thau", "dự toán", "du toan", "bóc tách khối lượng", "quyết toán", "quyet toan", "kinh tế xây dựng", "kinh te xay dung", "kế hoạch", "ke hoach"],
+  "Phòng Kỹ Thuật": ["shopdrawing", "shop drawing", "kết cấu cầu", "ket cau cau", "kỹ thuật", "ky thuat", "bản vẽ", "ban ve", "thiết kế", "thiet ke", "cầu đường", "cau duong", "thi công", "thi cong", "quản lý chất lượng", "quan ly chat luong", "qlcc", "chất lượng công trình", "chat luong cong trinh", "quality control", "qc", "kiểm định", "kiem dinh"],
+  "Phòng An Toàn Lao Động": ["hse", "an toàn lao động", "an toan lao dong", "atlđ", "atld", "pccc", "môi trường", "moi truong"],
   "Phòng Vật Tư Thiết Bị": ["vật tư", "vat tu", "cung ứng", "cung ung", "mua hàng", "mua hang", "logistics", "kho", "warehouse", "thiết bị", "thiet bi", "procurement"],
   "Phòng Tài Chính Kế Toán": ["kế toán", "ke toan", "tài chính", "tai chinh", "hạch toán", "hach toan", "công nợ", "cong no", "thuế", "thue", "kiểm toán", "kiem toan"],
   "Phòng Hành Chính Nhân Sự": ["hành chính", "hanh chinh", "nhân sự", "nhan su", "tuyển dụng", "tuyen dung", "văn thư", "van thu", "marketing", "hr", "đào tạo", "dao tao"],
   "Phòng Thư Ký, Trợ Lý": ["thư ký", "thu ky", "trợ lý", "tro ly", "trợ lý giám đốc", "tro ly giam doc", "secretary", "assistant", "administrative assistant"],
-  "Phòng Dự Án": ["quản lý dự án", "quan ly du an", "dự án", "du an", "project manager", "project management", "điều phối dự án", "dieu phoi du an"],
-  "Phòng QLCC": ["quản lý chất lượng", "quan ly chat luong", "qlcc", "chất lượng công trình", "chat luong cong trinh", "quality control", "qc", "kiểm định", "kiem dinh"],
+  "Phòng Quản Lý Dự Án": ["quản lý dự án", "quan ly du an", "dự án", "du an", "project manager", "project management", "điều phối dự án", "dieu phoi du an"],
 };
 const REVIEWER_MAP: Record<string, string> = {
   "Phòng Kỹ Thuật": "Phó Giám Đốc",
-  "Phòng Dự Án": "PP Dự Án",
+  "Phòng Quản Lý Dự Án": "PP Dự Án",
   "Phòng Vật Tư Thiết Bị": "TP Vật Tư Thiết Bị",
-  "Phòng Kế Hoạch": "TP Kế Hoạch",
-  "Phòng ATLĐ": "TP ATLĐ",
+  "Phòng Kế Hoạch Đấu Thầu": "TP Kế Hoạch",
+  "Phòng An Toàn Lao Động": "TP ATLĐ",
   "Phòng Hành Chính Nhân Sự": "TP HCNS",
-  "Phòng QLCC": "Ban Lãnh Đạo",
   "Phòng Thư Ký, Trợ Lý": "Ban Lãnh Đạo",
   "Phòng Tài Chính Kế Toán": "Kế Toán Trưởng",
 };
 
-function classifyDept(jdText: string, viTri = ""): { phong_ban: string; nguoi_danh_gia: string } {
+async function classifyDept(jdText: string, viTri = ""): Promise<{ phong_ban: string; nguoi_danh_gia: string }> {
   const combined = (jdText + " " + viTri).toLowerCase();
   const scores: Record<string, number> = {};
   for (const [dept, kws] of Object.entries(DEPT_KEYWORDS)) {
     const count = kws.filter((kw) => combined.includes(kw)).length;
     if (count > 0) scores[dept] = count;
   }
-  const phong_ban = Object.keys(scores).length
-    ? Object.entries(scores).sort((a, b) => b[1] - a[1])[0][0]
-    : "N/A";
-  return { phong_ban, nguoi_danh_gia: REVIEWER_MAP[phong_ban] ?? "N/A" };
+  if (Object.keys(scores).length === 0) return { phong_ban: "N/A", nguoi_danh_gia: "N/A" };
+
+  const best = Object.entries(scores).sort((a, b) => b[1] - a[1])[0][0];
+
+  // Chốt chặn cuối: chỉ ghi ra tên CÓ THẬT trong bảng departments. Khách hàng đổi
+  // tên phòng ban trong danh mục mà quên sửa từ khoá ở trên thì trả "N/A" — để
+  // trống còn hơn ghi một cái tên không tồn tại rồi người dùng không sửa lại được.
+  const lists = await getDepartmentListsServer();
+  const match = lists.phongBan.find(n => n.trim().toLowerCase() === best.trim().toLowerCase());
+  if (!match) return { phong_ban: "N/A", nguoi_danh_gia: "N/A" };
+
+  return { phong_ban: match, nguoi_danh_gia: REVIEWER_MAP[best] ?? "N/A" };
 }
 
 // ── Main handler ──────────────────────────────────────────────────────────────
@@ -326,7 +342,7 @@ export async function POST(req: NextRequest) {
 
         // ── Override phong_ban + nguoi_danh_gia ───────────────────────────────
         const viTri = data.extracted_info?.vi_tri || "";
-        const { phong_ban, nguoi_danh_gia } = classifyDept(jdText, viTri);
+        const { phong_ban, nguoi_danh_gia } = await classifyDept(jdText, viTri);
         if (data.extracted_info) {
           data.extracted_info.phong_ban = phong_ban;
           data.extracted_info.nguoi_danh_gia = nguoi_danh_gia;
@@ -373,7 +389,7 @@ export async function POST(req: NextRequest) {
         const data = JSON.parse(rawJson);
 
         const viTri = data.extracted_info?.vi_tri || "";
-        const { phong_ban, nguoi_danh_gia } = classifyDept(jdText, viTri);
+        const { phong_ban, nguoi_danh_gia } = await classifyDept(jdText, viTri);
         if (data.extracted_info) {
           data.extracted_info.phong_ban = phong_ban;
           data.extracted_info.nguoi_danh_gia = nguoi_danh_gia;
@@ -412,7 +428,7 @@ export async function POST(req: NextRequest) {
         const data = JSON.parse(rawJson);
 
         const viTri = data.extracted_info?.vi_tri || "";
-        const { phong_ban, nguoi_danh_gia } = classifyDept(jdText, viTri);
+        const { phong_ban, nguoi_danh_gia } = await classifyDept(jdText, viTri);
         if (data.extracted_info) {
           data.extracted_info.phong_ban = phong_ban;
           data.extracted_info.nguoi_danh_gia = nguoi_danh_gia;
@@ -451,7 +467,7 @@ export async function POST(req: NextRequest) {
         const data = JSON.parse(rawJson);
 
         const viTri = data.extracted_info?.vi_tri || "";
-        const { phong_ban, nguoi_danh_gia } = classifyDept(jdText, viTri);
+        const { phong_ban, nguoi_danh_gia } = await classifyDept(jdText, viTri);
         if (data.extracted_info) {
           data.extracted_info.phong_ban = phong_ban;
           data.extracted_info.nguoi_danh_gia = nguoi_danh_gia;
