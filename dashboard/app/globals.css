@@ -833,6 +833,20 @@ textarea {
   background: #94A3B8;
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+   Ô GHIM CỦA BẢNG CUỘN NGANG (position: sticky)
+   Nền BẮT BUỘC đục — nền mờ sẽ để nội dung các cột phía sau hiện xuyên qua khi
+   cuộn. Không dùng thẳng bg-white / bg-orange-50 được vì ở dark mode chúng bị
+   remap thành màu MỜ (rgba), đúng thứ phải tránh ở đây.
+   ────────────────────────────────────────────────────────────────────────── */
+.cell-frozen { background-color: #ffffff; }
+/* Dòng nhân viên đã nghỉ việc — giữ sắc cam của dòng nhưng ở dạng đục */
+.cell-frozen-resigned { background-color: #fff7ed; }
+
+html.dark .cell-frozen { background-color: #1e293b; }
+/* = rgba(249,115,22,0.2) trộn sẵn trên nền #1e293b, khớp màu dòng nghỉ việc */
+html.dark .cell-frozen-resigned { background-color: #4a3834; }
+
 /* Badges styling */
 .badge {
   display: inline-flex;

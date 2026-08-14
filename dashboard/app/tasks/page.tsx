@@ -5,6 +5,8 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
+import { fetchTenantConfig } from "@/lib/tenantConfig";
+import { isResignedRow } from "@/lib/resigned";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import { isHrDept, isDirectorRole } from "@/lib/access";
 import { normalizeName } from "@/lib/approvers";
@@ -396,12 +398,18 @@ export default function TaskManagementPage() {
     try {
       // Lấy kèm phòng ban + chức danh: "Danh sách nhân viên" là GỐC để biết task
       // thuộc phòng nào và ai là Trưởng/Phó phòng/Tổ trưởng của phòng đó.
+      //
+      // Đọc cấu hình bằng fetchTenantConfig (không dùng hook) để không phụ thuộc
+      // thứ tự render — hàm này có cache nên không phát sinh truy vấn thừa.
+      const cfg = await fetchTenantConfig();
       const { data, error } = await supabase
         .from("employees_directory")
-        .select("id, name, department, role, email")
+        .select("*")
         .order("name", { ascending: true });
       if (data) {
-        setEmployeesList(data as EmployeeRef[]);
+        // Bật công tắc ở Danh sách nhân viên -> ô "Người nhận" thôi liệt kê người đã nghỉ
+        const rows = cfg.hide_resigned_in_pickers ? data.filter(e => !isResignedRow(e)) : data;
+        setEmployeesList(rows as EmployeeRef[]);
       }
     } catch (err) {
       console.error("Error fetching employees list:", err);

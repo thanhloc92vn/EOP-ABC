@@ -17,6 +17,7 @@ import NewsLikeButton from "@/components/news/NewsLikeButton";
 import RelatedNewsSidebar from "@/components/news/RelatedNewsSidebar";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import { supabase } from "@/lib/supabase";
+import { isResignedRow } from "@/lib/resigned";
 import { apiFetch } from "@/lib/apiClient";
 import {
   categoryMeta,
@@ -576,13 +577,18 @@ function ShareByEmailModal({
   useEffect(() => {
     supabase
       .from("employees_directory")
-      .select("name, email, department, role, status")
+      .select("*")
       .order("name")
       .then(({ data }) => {
         setPeople(
           (data || [])
-            // Bỏ người đã nghỉ việc và người chưa có email gửi tới được
-            .filter((e) => e.name && hasSendableEmail(e.email) && !String(e.status || "").toLowerCase().includes("nghỉ"))
+            // Bỏ người đã nghỉ việc và người chưa có email gửi tới được.
+            // isResignedRow ưu tiên cờ `is_resigned` của view (migration 031) thay
+            // cho phép dò `status` cũ: nhiều hồ sơ chỉ đánh dấu nghỉ việc ở cột Ghi
+            // chú nên cách cũ bỏ sót. CỐ Ý không gắn vào công tắc
+            // hide_resigned_in_pickers — chỗ này vốn đã luôn ẩn, gắn vào sẽ thành
+            // tắt công tắc là lộ lại.
+            .filter((e) => e.name && hasSendableEmail(e.email) && !isResignedRow(e))
             .map((e) => ({
               name: e.name as string,
               email: e.email as string,

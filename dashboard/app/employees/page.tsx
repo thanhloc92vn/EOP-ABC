@@ -2,13 +2,14 @@
 "use client";
 
 import { apiFetch } from "@/lib/apiClient";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Fragment } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
 import { isManagerRole } from "@/lib/approvers";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import { useDepartments } from "@/lib/departments";
+import { useTenantConfig, invalidateTenantConfig } from "@/lib/tenantConfig";
 import {
   Search,
   Plus,
@@ -28,7 +29,10 @@ import {
   UserX,
   ArrowRightLeft,
   ShieldAlert,
-  ChevronDown
+  ChevronDown,
+  ChevronRight,
+  Eye,
+  EyeOff
 } from "lucide-react";
 
 // Danh sách phòng ban / BĐH giờ đọc từ bảng `departments` (Supabase) qua
@@ -560,8 +564,77 @@ export default function EmployeeManagementPage() {
     (e.status || "").toLowerCase().includes("nghỉ việc") ||
     (e.notes || "").toLowerCase().includes("nghỉ việc");
 
+  // ─── Nhân sự đã nghỉ việc: thu gọn trong bảng + ẩn khỏi ô chọn người ───
+  // Hai thứ TÁCH BIỆT, đừng nhầm:
+  //  1. showResigned  — chỉ gấp/mở khối dòng nghỉ việc trong chính bảng này.
+  //  2. hide_resigned_in_pickers — công tắc TOÀN HỆ THỐNG (lưu ở tenant_config),
+  //     khiến các ô chọn người ở module khác thôi liệt kê họ. Bảng này thì LUÔN
+  //     hiện đủ, vì đây là nơi HCNS tra cứu hồ sơ.
+  const [showResigned, setShowResigned] = useState(false);
+  const tenantConfig = useTenantConfig();
+  const [hideResignedInPickers, setHideResignedInPickers] = useState(false);
+  const [savingHideFlag, setSavingHideFlag] = useState(false);
+
+  useEffect(() => {
+    setHideResignedInPickers(!!tenantConfig.hide_resigned_in_pickers);
+  }, [tenantConfig.hide_resigned_in_pickers]);
+
+  const handleToggleHideResigned = async () => {
+    // RLS tenant_config chỉ cho Admin ghi (migration 001) — chặn sớm ở UI để
+    // người dùng thường không bấm rồi nhận lỗi khó hiểu.
+    if (!currentUser?.isAdmin) {
+      alert("Chỉ tài khoản Admin mới đổi được thiết lập này.");
+      return;
+    }
+    const next = !hideResignedInPickers;
+    setSavingHideFlag(true);
+    setHideResignedInPickers(next);
+    try {
+      const { error } = await supabase
+        .from("tenant_config")
+        .upsert(
+          { key: "hide_resigned_in_pickers", value: next, updated_at: new Date().toISOString() },
+          { onConflict: "key" }
+        );
+      if (error) throw error;
+      // Cache tenantConfig nằm ở tầng module -> không xoá thì sang trang khác
+      // vẫn đọc giá trị cũ cho tới khi tải lại cả ứng dụng.
+      invalidateTenantConfig();
+    } catch (err: any) {
+      setHideResignedInPickers(!next); // trả lại trạng thái cũ
+      alert("Không lưu được thiết lập: " + (err?.message || err));
+    } finally {
+      setSavingHideFlag(false);
+    }
+  };
+
+  // Ghim 3 cột đầu (STT / Mã nhân viên / Họ tên) khi kéo ngang bảng.
+  // Bảng dùng `table-auto` nên độ rộng cột do NỘI DUNG quyết định — không thể tính
+  // toạ độ `left` từ số cứng như bảng Tuyển dụng, phải đo bằng offsetWidth thật.
+  // ResizeObserver bắt mọi thứ làm cột đổi bề rộng: đổi dữ liệu, lọc, font tải xong,
+  // thu phóng cửa sổ.
+  const empTableRef = useRef<HTMLTableElement>(null);
+  const [frozenLefts, setFrozenLefts] = useState<number[]>([0, 0, 0]);
+
+  useEffect(() => {
+    const el = empTableRef.current;
+    if (!el) return;
+    const measure = () => {
+      const ths = el.querySelectorAll("thead th");
+      if (ths.length < 3) return;
+      const w0 = (ths[0] as HTMLElement).offsetWidth;
+      const w1 = (ths[1] as HTMLElement).offsetWidth;
+      // Chỉ setState khi số thực sự đổi, tránh vòng lặp vô tận với ResizeObserver
+      setFrozenLefts(prev => (prev[1] === w0 && prev[2] === w0 + w1 ? prev : [0, w0, w0 + w1]));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [loading]);
+
   const filtered = employees.filter(emp => {
-    const matchSearch = emp.name.toLowerCase().includes(search.toLowerCase()) || 
+    const matchSearch = emp.name.toLowerCase().includes(search.toLowerCase()) ||
                         emp.id.toLowerCase().includes(search.toLowerCase()) ||
                         emp.email.toLowerCase().includes(search.toLowerCase());
     const matchDept = filterDept === "all" || emp.department === filterDept;
@@ -588,6 +661,11 @@ export default function EmployeeManagementPage() {
     // Nhân viên đã nghỉ việc luôn nằm cuối danh sách (kể cả khi lọc phòng ban)
     return (isResignedEmployee(a) ? 1 : 0) - (isResignedEmployee(b) ? 1 : 0);
   });
+
+  // Mốc để chèn thanh gấp/mở. -1 = danh sách hiện tại không có ai đã nghỉ ->
+  // không hiện thanh nào cả.
+  const firstResignedIndex = filtered.findIndex(isResignedEmployee);
+  const resignedCount = filtered.length - (firstResignedIndex === -1 ? filtered.length : firstResignedIndex);
 
   const handleUpdateEmployeeField = async (id: string, field: string, value: string) => {
     try {
@@ -842,6 +920,39 @@ export default function EmployeeManagementPage() {
                   ))}
                 </select>
               </div>
+
+              {/* Công tắc: ẩn nhân sự đã nghỉ khỏi các ô chọn người ở module khác.
+                  KHÔNG ảnh hưởng chính bảng này — nói rõ trong tooltip để khỏi hiểu nhầm. */}
+              <button
+                onClick={handleToggleHideResigned}
+                disabled={savingHideFlag}
+                title={
+                  currentUser?.isAdmin
+                    ? "Bật: ô chọn người khi Giao việc, Nhân viên tham dự họp, Lịch công việc và Chia sẻ tin tức sẽ không liệt kê nhân sự đã nghỉ.\nDanh sách nhân viên và C&B vẫn hiện đủ."
+                    : "Chỉ Admin đổi được thiết lập này."
+                }
+                className={`flex items-center gap-2 px-3 py-2 border rounded-xl shadow-sm text-xs font-semibold transition-all disabled:opacity-50 ${
+                  hideResignedInPickers
+                    ? "bg-emerald-50 border-emerald-300 text-emerald-700"
+                    : "bg-white border-slate-200 text-slate-500"
+                } ${currentUser?.isAdmin ? "cursor-pointer" : "cursor-not-allowed"}`}
+              >
+                {hideResignedInPickers ? <EyeOff size={13} /> : <Eye size={13} />}
+                <span className="whitespace-nowrap">
+                  {hideResignedInPickers ? "Đang ẩn NV nghỉ ở ô chọn người" : "Ẩn NV nghỉ ở ô chọn người"}
+                </span>
+                <span
+                  className={`w-8 h-4 rounded-full relative transition-colors shrink-0 ${
+                    hideResignedInPickers ? "bg-emerald-500" : "bg-slate-300"
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${
+                      hideResignedInPickers ? "left-[18px]" : "left-0.5"
+                    }`}
+                  />
+                </span>
+              </button>
             </div>
 
             <div className="flex items-center gap-2 w-full sm:w-auto justify-end sm:justify-start">
@@ -918,13 +1029,21 @@ export default function EmployeeManagementPage() {
           ) : (
             /* Employee Table */
             <div className="glass rounded-2xl overflow-hidden border border-slate-200/50 shadow-premium">
-              <div className="overflow-x-auto custom-scrollbar-table pb-3">
-                <table className="min-w-max w-full text-sm text-left table-auto">
-                  <thead>
-                    <tr className="bg-slate-100/70 border-b border-slate-200/60">
-                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider text-center"><div className="w-10">STT</div></th>
-                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[110px]">Mã nhân viên</div></th>
-                      <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[180px]">Họ tên</div></th>
+              {/* Khung bảng tự cuộn cả 2 chiều. BẮT BUỘC có max-h + overflow-y ở đây:
+                  `sticky top-0` của thead chỉ dính so với KHUNG CUỘN gần nhất, mà
+                  `overflow-x: auto` đã biến div này thành khung cuộn rồi (CSS: một trục
+                  không phải visible thì trục kia tự thành auto). Không giới hạn chiều cao
+                  thì div không bao giờ cuộn dọc -> sticky vô hiệu, trang cuộn còn tiêu đề
+                  vẫn trôi mất. */}
+              <div className="overflow-x-auto overflow-y-auto max-h-[70vh] custom-scrollbar-table pb-3">
+                <table ref={empTableRef} className="min-w-max w-full text-sm text-left table-auto">
+                  {/* z-20 để nằm trên các ô ghim của thân bảng (z-10) */}
+                  <thead className="sticky top-0 z-20">
+                    {/* Nền phải ĐỤC (bỏ /70): dòng dữ liệu chui xuống dưới khi cuộn */}
+                    <tr className="bg-slate-100 border-b border-slate-200/60">
+                      <th style={{ left: frozenLefts[0] }} className="sticky z-10 bg-slate-100 px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider text-center"><div className="w-10">STT</div></th>
+                      <th style={{ left: frozenLefts[1] }} className="sticky z-10 bg-slate-100 px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[110px]">Mã nhân viên</div></th>
+                      <th style={{ left: frozenLefts[2] }} className="sticky z-10 bg-slate-100 px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider shadow-[3px_0_6px_-2px_rgba(15,23,42,0.25)]"><div className="w-[180px]">Họ tên</div></th>
                       <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[200px]">Phòng ban</div></th>
                       <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[140px]">Chức danh</div></th>
                       <th className="px-4 py-4 text-slate-400 font-bold text-[10px] uppercase tracking-wider"><div className="w-[80px]">Giới tính</div></th>
@@ -946,20 +1065,54 @@ export default function EmployeeManagementPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {filtered.map((emp, index) => (
-                      <tr key={emp.id} className={`transition-all ${
-                        isResignedEmployee(emp)
+                    {filtered.map((emp, index) => {
+                      // `filtered` đã được sắp cho nhân sự nghỉ việc xuống cuối, nên chỉ
+                      // cần chèn thanh gấp/mở ngay trước dòng nghỉ việc ĐẦU TIÊN. Vẫn
+                      // duyệt nguyên mảng (thay vì tách 2 danh sách) để số STT chạy liền.
+                      const resigned = isResignedEmployee(emp);
+                      const isFirstResigned = resigned && index === firstResignedIndex;
+                      // Nền thanh gấp/mở chỉ dùng các mức mờ ĐÃ có luật dark trong
+                      // globals.css (orange-50 mới có /40 và /80). Đặt mức lạ như /60
+                      // thì dark mode không remap, ra dải kem xám trên nền tối.
+                      return (
+                      <Fragment key={emp.id}>
+                      {isFirstResigned && (
+                        <tr className="bg-orange-50/40">
+                          <td colSpan={21} className="p-0">
+                            {/* Bọc trong div sticky để thanh này vẫn thấy được khi
+                                bảng đang bị kéo sang phải */}
+                            <div className="sticky left-0 w-max">
+                              <button
+                                onClick={() => setShowResigned(v => !v)}
+                                className="flex items-center gap-2 px-4 py-2.5 text-xs font-bold text-orange-700 hover:text-orange-900 transition-colors"
+                              >
+                                {showResigned ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                <span>Nhân sự đã nghỉ việc</span>
+                                <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-200 text-[10px]">
+                                  {resignedCount}
+                                </span>
+                                <span className="font-medium text-orange-600">
+                                  {showResigned ? "— bấm để thu gọn" : "— bấm để xem"}
+                                </span>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                      {(!resigned || showResigned) && (
+                      <tr className={`transition-all ${
+                        resigned
                           ? "bg-orange-50/80 hover:bg-orange-100/60"
                           : "hover:bg-blue-50/20 bg-white/50"
                       }`}>
-                        {/* STT */}
-                        <td className="px-4 py-3 text-center text-xs text-slate-400 font-mono">{index + 1}</td>
+                        {/* STT — ghim */}
+                        <td style={{ left: frozenLefts[0] }} className={`sticky z-10 px-4 py-3 text-center text-xs text-slate-400 font-mono ${isResignedEmployee(emp) ? "cell-frozen-resigned" : "cell-frozen"}`}>{index + 1}</td>
 
-                        {/* Mã nhân viên */}
-                        <td className="px-4 py-3 text-xs text-slate-600 font-semibold">{emp.employee_code || <span className="text-slate-300 italic">—</span>}</td>
+                        {/* Mã nhân viên — ghim */}
+                        <td style={{ left: frozenLefts[1] }} className={`sticky z-10 px-4 py-3 text-xs text-slate-600 font-semibold ${isResignedEmployee(emp) ? "cell-frozen-resigned" : "cell-frozen"}`}>{emp.employee_code || <span className="text-slate-300 italic">—</span>}</td>
 
-                        {/* Họ tên */}
-                        <td className="px-4 py-3">
+                        {/* Họ tên — ghim (cột cuối vùng ghim, có đổ bóng phân tách) */}
+                        <td style={{ left: frozenLefts[2] }} className={`sticky z-10 px-4 py-3 shadow-[3px_0_6px_-2px_rgba(15,23,42,0.18)] ${isResignedEmployee(emp) ? "cell-frozen-resigned" : "cell-frozen"}`}>
                           <div className="flex items-center gap-2.5">
                             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center font-bold text-white text-[10px] shadow-sm shrink-0">
                               {emp.avatar}
@@ -1150,7 +1303,10 @@ export default function EmployeeManagementPage() {
                           </div>
                         </td>
                       </tr>
-                    ))}
+                      )}
+                      </Fragment>
+                      );
+                    })}
                     {filtered.length === 0 && (
                       <tr>
                         <td colSpan={21} className="text-center py-12 text-slate-400 text-xs italic">Không tìm thấy nhân viên nào phù hợp</td>

@@ -44,6 +44,14 @@ export type TenantConfig = {
   // giá trị, gói hiệu lực của mỗi user = min(plan tenant, gói phòng của user).
   // Xem resolveEffectivePlan trong lib/access.ts.
   department_plans: Record<string, "basic" | "professional" | "enterprise"> | null;
+  // Bật thì các Ô CHỌN NGƯỜI (giao việc, nhân viên tham dự họp, lịch công việc,
+  // chia sẻ tin tức) không còn liệt kê nhân sự đã nghỉ việc — dựa trên cờ
+  // `is_resigned` có sẵn trong view employees_directory (migration 031).
+  //
+  // KHÔNG ảnh hưởng: module Danh sách nhân viên & C&B (vẫn thấy đủ để tra cứu),
+  // nhận diện người đăng nhập (Header/Sidebar/useCurrentUser) và các số liệu
+  // thống kê — lọc ở đó sẽ làm mất quyền hoặc sai số đếm.
+  hide_resigned_in_pickers: boolean;
 };
 
 export const TENANT_DEFAULTS: TenantConfig = {
@@ -65,6 +73,7 @@ export const TENANT_DEFAULTS: TenantConfig = {
   saturday_exempt_names: ["Phạm Thành Lộc"],
   plan: "enterprise",
   department_plans: null, // chưa bật phân gói theo phòng -> dùng chung `plan`
+  hide_resigned_in_pickers: false, // mặc định TẮT -> hành vi y như trước khi có tính năng
 };
 
 let cached: TenantConfig | null = null;
@@ -100,6 +109,13 @@ export async function fetchTenantConfig(): Promise<TenantConfig> {
   })();
 
   return inflight;
+}
+
+// Xoá cache sau khi GHI cấu hình. Cache nằm ở tầng module nên nếu không xoá,
+// người vừa đổi công tắc sẽ còn thấy giá trị cũ ở các trang khác cho tới khi
+// tải lại toàn bộ ứng dụng.
+export function invalidateTenantConfig() {
+  cached = null;
 }
 
 // Hook cho component: render ngay với DEFAULTS, tự cập nhật khi DB trả về.

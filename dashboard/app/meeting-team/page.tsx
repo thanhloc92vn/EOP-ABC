@@ -5,6 +5,8 @@ import { useState, useEffect, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
+import { fetchTenantConfig } from "@/lib/tenantConfig";
+import { isResignedRow } from "@/lib/resigned";
 import {
   Mic,
   Calendar,
@@ -159,12 +161,16 @@ export default function MeetingTeamPage() {
 
   const fetchEmployees = async () => {
     try {
+      // Danh sách để chọn "Nhân viên tham dự" -> chịu công tắc ẩn nhân sự đã nghỉ.
+      // (Chỗ tra danh tính người đăng nhập bên dưới thì KHÔNG lọc, lọc là mất tên.)
+      const cfg = await fetchTenantConfig();
       const { data, error } = await supabase
         .from("employees_directory")
-        .select("name, role, department")
+        .select("*")
         .order("name", { ascending: true });
       if (error) throw error;
-      setEmployees(data || []);
+      const rows = cfg.hide_resigned_in_pickers ? (data || []).filter(e => !isResignedRow(e)) : (data || []);
+      setEmployees(rows);
     } catch (err) {
       console.error("Error fetching employees:", err);
     }

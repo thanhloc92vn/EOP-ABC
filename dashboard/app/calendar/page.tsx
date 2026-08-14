@@ -6,6 +6,8 @@ import { useSearchParams, useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
+import { fetchTenantConfig } from "@/lib/tenantConfig";
+import { isResignedRow } from "@/lib/resigned";
 import { exportPhieuThanhToan, exportPhieuCongTac, downloadDocFile } from "@/lib/wordExporter";
 import {
   getGroupLeaderNameForMember,
@@ -264,13 +266,18 @@ function CalendarContent() {
         })));
       }
 
-      // Fetch Employees
-      const { data: empsData, error: empsError } = await supabase
+      // Fetch Employees — danh sách chọn người cho lịch, chịu công tắc ẩn nhân sự đã nghỉ
+      const cfg = await fetchTenantConfig();
+      const { data: empsRaw, error: empsError } = await supabase
         .from("employees_directory")
-        .select("id, name, avatar, role, email, department")
+        .select("*")
         .order("name", { ascending: true });
 
       if (empsError) throw empsError;
+
+      const empsData = empsRaw && cfg.hide_resigned_in_pickers
+        ? empsRaw.filter(e => !isResignedRow(e))
+        : empsRaw;
 
       if (empsData) {
         setEmployees(empsData.map((e: any) => ({
