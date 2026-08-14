@@ -976,13 +976,30 @@ export default function TaskManagementPage() {
                           t.assignee.toLowerCase().includes(searchQuery.toLowerCase());
     if (!matchesSearch) return false;
 
-    // ─── Lọc theo khoảng thời gian: căn theo DEADLINE ───
-    // Việc thuộc "Tháng 7" khi DEADLINE rơi vào tháng 7, bất kể bắt đầu từ bao giờ.
-    // Việc KHÔNG có deadline thì luôn hiện — không có căn cứ để loại, ẩn đi sẽ làm
-    // người dùng tưởng mất việc.
+    // ─── Lọc theo khoảng thời gian: VIỆC CÒN SỐNG TRONG KHOẢNG ĐANG XEM ───
+    // Trước đây căn theo MỖI deadline: giao tháng 8 mà hạn tháng 10 thì mở tháng
+    // 8 không thấy việc đâu — người giao tưởng mất, người nhận tưởng chưa bị giao.
+    //
+    // Nay dùng luật GIAO NHAU: việc hiện ở mọi tháng mà quãng [ngày giao → hạn]
+    // có chạm vào khoảng đang xem. Ví dụ giao 14/08, hạn 10/10 -> thấy ở cả
+    // tháng 8, 9 và 10. Thẻ chỉ "đi ngang qua" tháng này (hạn rơi tháng khác)
+    // được gắn nhãn "Hạn ..." ở phần vẽ thẻ, nên không lẫn với việc tới hạn.
+    //
+    // Thiếu ngày thì nới ra chứ không siết lại — ẩn nhầm một việc tai hại hơn
+    // nhiều so với hiện thừa một việc:
+    //   chỉ có hạn        -> xét mỗi hạn (như luật cũ)
+    //   chỉ có ngày giao  -> coi như còn chạy, hiện từ tháng giao trở đi
+    //   không có ngày nào -> luôn hiện
     if (taskFrom && taskTo) {
-      const d = dayKey(t.due_date);
-      if (d && (d < taskFrom || d > taskTo)) return false;
+      const start = dayKey(t.start_date);
+      const due = dayKey(t.due_date);
+      if (start && due) {
+        if (start > taskTo || due < taskFrom) return false;
+      } else if (due) {
+        if (due < taskFrom || due > taskTo) return false;
+      } else if (start) {
+        if (start > taskTo) return false;
+      }
     }
 
     // ─── Lọc theo Phòng ban / Ban điều hành ───
@@ -1433,6 +1450,13 @@ export default function TaskManagementPage() {
                             : isDueTomorrow
                               ? "bg-amber-500/20 border-amber-300/70 border-l-4 border-l-amber-600"
                               : cardStyle.bg;
+                          // Việc chỉ ĐI NGANG QUA khoảng đang xem: đã giao rồi nhưng hạn
+                          // rơi vào tháng khác. Luật lọc "giao nhau" cố ý cho nó hiện để
+                          // không tàng hình, nhưng phải nói rõ hạn nằm ở đâu — nếu không
+                          // người xem tưởng việc này phải xong trong tháng.
+                          const dueOutsideRange =
+                            !!taskFrom && !!taskTo && !!dayKey(task.due_date) &&
+                            (dayKey(task.due_date) < taskFrom || dayKey(task.due_date) > taskTo);
                           return (
                             <div
                               key={task.id}
@@ -1507,10 +1531,17 @@ export default function TaskManagementPage() {
 
                                 {/* Footer Info */}
                                 <div className="flex items-center justify-between gap-2 text-[9px] text-slate-500 font-bold">
-                                  <span className={`flex items-center gap-0.5 shrink-0 ${isDueToday ? "text-rose-600 font-extrabold" : isDueTomorrow ? "text-amber-600 font-extrabold" : ""}`}>
-                                    <Calendar size={10} className="opacity-75" /> {task.due_date ? new Date(task.due_date).toLocaleDateString("vi-VN", { day: '2-digit', month: '2-digit' }) : "Không hạn"}
+                                  <span
+                                    title={dueOutsideRange ? "Việc đang chạy — hạn rơi vào tháng khác, không phải tháng đang xem" : undefined}
+                                    className={`flex items-center gap-0.5 shrink-0 ${isDueToday ? "text-rose-600 font-extrabold" : isDueTomorrow ? "text-amber-600 font-extrabold" : dueOutsideRange ? "text-slate-400" : ""}`}
+                                  >
+                                    <Calendar size={10} className="opacity-75" />
+                                    {task.due_date
+                                      ? `${dueOutsideRange ? "Hạn " : ""}${new Date(task.due_date).toLocaleDateString("vi-VN", { day: '2-digit', month: '2-digit' })}`
+                                      : "Không hạn"}
                                     {isDueToday && <span className="ml-1 bg-rose-600 text-white px-1.5 py-0.5 rounded-full text-[8px] uppercase tracking-wide">Hôm nay</span>}
                                     {isDueTomorrow && <span className="ml-1 bg-amber-600 text-white px-1.5 py-0.5 rounded-full text-[8px] uppercase tracking-wide">Ngày mai</span>}
+                                    {dueOutsideRange && <span className="ml-1 bg-slate-400 text-white px-1.5 py-0.5 rounded-full text-[8px] uppercase tracking-wide">Tháng khác</span>}
                                   </span>
                                   <div className="flex items-center gap-1.5 min-w-0">
                                     {/* Tên dự án — chỉ hiện khi task có chọn dự án. Thẻ cao cố

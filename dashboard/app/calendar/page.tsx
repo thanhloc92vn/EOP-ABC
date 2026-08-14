@@ -542,18 +542,70 @@ function CalendarContent() {
     });
   }, [tasks, searchQuery, selectedPriorities, selectedMember, currentUser, isManager, seesAllDepartments, myDeptKey, employeeDirectory]);
 
-  // Tasks categorized
-  const tasksWithDate = useMemo(() => {
-    return filteredTasks.filter(t => t.due_date || t.start_date);
-  }, [filteredTasks]);
-
   // Nghỉ phép và công tác PHẢI trải hết số ngày: nhìn vào ngày 16 là biết ai
   // đang vắng hôm đó. Việc thường thì không — một việc kéo 3 tuần mà vẽ ở cả 21
-  // ô sẽ lấp kín lịch và che mất mọi thứ khác, nên chỉ hiện ở ô ngày deadline.
+  // ô sẽ lấp kín lịch và che mất mọi thứ khác, nên chỉ hiện một mốc mỗi tháng.
+  //
+  // PHẢI khai TRƯỚC `tasksWithDate`: useMemo chạy ngay trong lượt render này, mà
+  // `const` khai sau thì lúc đó còn nằm trong vùng chết (TDZ) -> sập trang Lịch.
   const isSpanningType = (t: Task) => {
     const titleLower = t.title.toLowerCase();
     return titleLower.startsWith("nghỉ phép") || titleLower.includes("nghi phep")
         || titleLower.startsWith("công tác") || titleLower.includes("cong tac");
+  };
+
+  // Tasks categorized
+  const tasksWithDate = useMemo(() => {
+    return filteredTasks.filter(t => {
+      if (!t.due_date && !t.start_date) return false;
+
+      // Việc đã xác nhận hoàn thành thì RỜI KHỎI LỊCH cho gọn — lịch là chỗ nhìn
+      // xem sắp tới phải làm gì, việc đóng sổ rồi nằm lại chỉ tổ che mất phần
+      // còn phải chạy. Xem lại việc cũ thì sang bảng Kanban cột "Đã hoàn thành".
+      //
+      // TRỪ nghỉ phép và công tác: với hai loại này `completed` KHÔNG có nghĩa là
+      // xong việc mà là ĐÃ DUYỆT (xem nhãn "Đã duyệt" ở khung chi tiết đơn) — ẩn
+      // đi là xoá sạch lịch nghỉ của cả công ty, đúng thứ mà lịch sinh ra để xem.
+      if (t.status === "completed" && !isSpanningType(t)) return false;
+
+      return true;
+    });
+  }, [filteredTasks]);
+
+  /** Cắt lấy phần ngày — cột có lúc là 'YYYY-MM-DD', có lúc kèm giờ. */
+  const dk = (v?: string | null) => (v ? String(v).slice(0, 10) : "");
+
+  /**
+   * Ô này có phải chỗ vẽ thẻ "GIAO VIỆC" (chứ không phải thẻ deadline) không.
+   * Chỉ đúng với việc thường có đủ hai mốc và hai mốc KHÁC ngày nhau — giao và
+   * hết hạn cùng ngày thì vẽ một thẻ deadline là đủ, hai thẻ chồng nhau vô nghĩa.
+   */
+  const isStartAnchor = (t: Task, dateStr: string) =>
+    !isSpanningType(t) && !!dk(t.start_date) && !!dk(t.due_date) &&
+    dk(t.start_date) !== dk(t.due_date) && dateStr === dk(t.start_date);
+
+  /**
+   * Ô này có phải MỐC THÁNG GIỮA không — tháng nằm giữa tháng giao và tháng hạn.
+   *
+   * Việc giao 14/08 hạn 10/10 mà chỉ vẽ hai đầu thì mở lịch tháng 9 trống trơn,
+   * không biết có việc nào đang chạy. Nay tháng giữa cũng vẽ, đặt ở ĐÚNG NGÀY SỐ
+   * của deadline (hạn 10/10 -> tháng 9 nằm ở ô 10/09) để mắt tìm quen một chỗ.
+   *
+   * Ngày 31 rơi vào tháng chỉ có 30 ngày thì lùi về ngày cuối tháng, không thì
+   * thẻ rơi mất không vẽ ở đâu cả.
+   */
+  const isMidMonthAnchor = (t: Task, date: Date) => {
+    if (isSpanningType(t)) return false;
+    const start = dk(t.start_date);
+    const end = dk(t.due_date);
+    if (!start || !end) return false;
+
+    const cellYm = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+    if (cellYm <= start.slice(0, 7) || cellYm >= end.slice(0, 7)) return false;
+
+    const lastDayOfCellMonth = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+    const anchorDay = Math.min(parseInt(end.slice(8, 10), 10), lastDayOfCellMonth);
+    return date.getDate() === anchorDay;
   };
 
   // Get tasks for a specific date cell
@@ -561,15 +613,22 @@ function CalendarContent() {
     const compareDateStr = date.toLocaleDateString("en-CA"); // YYYY-MM-DD
 
     return tasksWithDate.filter(t => {
-      const start = t.start_date;
-      const end = t.due_date;
+      const start = dk(t.start_date);
+      const end = dk(t.due_date);
 
       if (start && end) {
         if (isSpanningType(t)) {
           return compareDateStr >= start && compareDateStr <= end;
         }
-        // Việc thường: gom về đúng ngày hết hạn
-        return compareDateStr === end;
+        // Việc thường: MỘT MỐC MỖI THÁNG, không trải hết ngày ở giữa (một việc
+        // kéo 3 tuần mà tô cả 21 ô sẽ lấp kín lịch — đó là lý do luật cũ gom về
+        // một ô duy nhất).
+        //   tháng giao  -> ô ngày giao
+        //   tháng giữa  -> ô cùng ngày số với deadline
+        //   tháng hạn   -> ô deadline
+        return compareDateStr === end
+            || compareDateStr === start
+            || isMidMonthAnchor(t, date);
       }
       if (start) {
         return compareDateStr === start;
@@ -1519,9 +1578,19 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                               const isLeave = t.title.toLowerCase().startsWith("nghỉ phép");
                               const isTrip = t.title.toLowerCase().startsWith("công tác");
                               const taskOverdue = t.due_date && t.status !== "completed" && t.progress < 100 && t.due_date < new Date().toLocaleDateString("en-CA");
+                              // Thẻ ở ô NGÀY GIAO — không phải mốc phải xong, nên để nhạt
+                              // hẳn và ghi rõ chữ "Giao". Cùng một việc sẽ xuất hiện lần
+                              // nữa ở ô deadline với kiểu bình thường.
+                              const startCard = isStartAnchor(t, cellDateStr);
+                              // Mốc tháng giữa — việc đang chạy, chưa tới hạn thật.
+                              const midCard = isMidMonthAnchor(t, cell.date);
 
                               let styleClass = "bg-blue-50 text-blue-700 border-blue-100 hover:bg-blue-100/50";
-                              if (taskOverdue) {
+                              if (startCard) {
+                                styleClass = "bg-white text-slate-500 border-slate-200 border-dashed hover:bg-slate-50 hover:text-slate-700";
+                              } else if (midCard) {
+                                styleClass = "bg-amber-50/50 text-amber-700 border-amber-200 border-dashed hover:bg-amber-100/50";
+                              } else if (taskOverdue) {
                                 styleClass = "bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100/70 font-bold ring-1 ring-rose-500/20";
                               } else if (isLeave) {
                                 styleClass = "bg-emerald-50 text-emerald-700 border-emerald-100 hover:bg-emerald-100/50 font-semibold";
@@ -1537,14 +1606,24 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
 
                               return (
                                 <div
-                                  key={t.id}
-                                  title={`${t.title} - ${t.assignee} (${t.progress}%)`}
+                                  key={`${t.id}-${startCard ? "start" : midCard ? "mid" : "due"}`}
+                                  title={
+                                    startCard
+                                      ? `NGÀY GIAO — ${t.title} - ${t.assignee}. Hạn: ${t.due_date ? new Date(t.due_date).toLocaleDateString("vi-VN") : "—"}`
+                                      : midCard
+                                        ? `ĐANG CHẠY — ${t.title} - ${t.assignee} (${t.progress}%). Hạn thật: ${t.due_date ? new Date(t.due_date).toLocaleDateString("vi-VN") : "—"}`
+                                        : `${t.title} - ${t.assignee} (${t.progress}%)`
+                                  }
                                   onClick={() => handleTaskClick(t)}
                                   // Nhấn đúp lên thẻ việc là mở chi tiết, không phải tạo ghi chú
                                   onDoubleClick={(e) => e.stopPropagation()}
                                   className={`px-1.5 py-1 rounded text-[8px] border leading-tight truncate cursor-pointer transition-all ${styleClass}`}
                                 >
-                                  {taskOverdue && "⚠️ "}{isLeave ? "🌴" : isTrip ? "💼" : ""} {t.title.replace(/^Nghỉ phép:\s*|^Công tác:\s*/i, "")}
+                                  {startCard
+                                    ? <><span className="font-bold opacity-70">Giao ·</span> {t.title}</>
+                                    : midCard
+                                      ? <><span className="font-bold opacity-70">Đang chạy ·</span> {t.title}</>
+                                      : <>{taskOverdue && "⚠️ "}{isLeave ? "🌴" : isTrip ? "💼" : ""} {t.title.replace(/^Nghỉ phép:\s*|^Công tác:\s*/i, "")}</>}
                                 </div>
                               );
                             })}
