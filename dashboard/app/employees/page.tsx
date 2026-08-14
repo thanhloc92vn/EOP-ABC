@@ -1145,8 +1145,15 @@ export default function EmployeeManagementPage() {
                           />
                         </td>
 
-                        {/* Giới tính */}
-                        <td className="px-4 py-3 text-xs text-slate-500 font-medium">{emp.gender || <span className="text-slate-300">—</span>}</td>
+                        {/* Giới tính — chỉnh tay như các cột khác (Nam / Nữ, để trống được) */}
+                        <td className="px-4 py-1 text-xs text-slate-500 font-medium">
+                          <EditableSelect
+                            value={emp.gender}
+                            options={["", "Nam", "Nữ"]}
+                            onSave={(val) => handleUpdateEmployeeField(emp.id, "gender", val)}
+                            readOnly={!canEdit}
+                          />
+                        </td>
 
                         {/* Ngày nhận việc */}
                         <td className="px-4 py-1 text-xs text-slate-500 font-medium whitespace-nowrap">
@@ -2058,7 +2065,8 @@ function EditableSelect({ value, options, onSave, readOnly = false }: EditableSe
     >
       {allOptions.map((opt) => (
         <option key={opt} value={opt}>
-          {opt}
+          {/* Ô rỗng (vd: chưa có giới tính) hiện gạch ngang cho dễ chọn */}
+          {opt || "—"}
         </option>
       ))}
     </select>
