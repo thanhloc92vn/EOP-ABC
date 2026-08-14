@@ -9,7 +9,7 @@ const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 // khách deploy riêng đặt 2 biến môi trường này (script provisioning sẽ set),
 // thiếu thì fallback giá trị TNEC như cũ.
 export const metadata: Metadata = {
-  title: process.env.NEXT_PUBLIC_SYSTEM_TITLE || "PM - HCNS - TNEC",
+  title: process.env.NEXT_PUBLIC_SYSTEM_TITLE || "Trungnam E&C",
   description: process.env.NEXT_PUBLIC_SYSTEM_DESCRIPTION || "Phần mềm Quản lý Hành chính Nhân sự - Trung Nam E&C",
 };
 
