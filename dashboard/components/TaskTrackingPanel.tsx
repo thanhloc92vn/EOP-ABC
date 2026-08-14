@@ -20,8 +20,13 @@ import { supabase } from "@/lib/supabase";
 import { apiFetch } from "@/lib/apiClient";
 import {
   ListChecks, ChevronDown, ChevronRight, Loader2, Send, UserCheck, CalendarClock,
-  Search, X, Pencil, Check,
+  Search, X, Pencil, Check, Upload, Eye, FileText, ImageIcon,
 } from "lucide-react";
+import {
+  TaskFile, parseTaskFiles, uploadTaskFile, resolveTaskFileUrl, removeTaskFile,
+  isAllowedTaskFile, isImageName, humanSize, TASK_FILE_MAX_BYTES,
+} from "@/lib/taskFiles";
+import TaskFilePreviewModal from "./TaskFilePreviewModal";
 
 export type TrackingTask = {
   id: string;
@@ -42,6 +47,8 @@ export type TaskUpdate = {
   next_due_date: string | null;
   created_by: string | null;
   created_at: string;
+  /** Ảnh / PDF đính kèm dòng cập nhật này (migration 044). */
+  attachment_files?: TaskFile[];
 };
 
 type Props = {
@@ -113,6 +120,14 @@ export default function TaskTrackingPanel({
    *  làm hồ sơ lẫn người ngoài công trường, trước đây phải gửi 2 lần. */
   const [draftTag, setDraftTag] = useState<Record<string, string[]>>({});
   const [draftDue, setDraftDue] = useState<Record<string, string>>({});
+  /** Tệp đã tải lên kho, chờ gắn vào dòng cập nhật — cũng tách theo từng task. */
+  const [draftFiles, setDraftFiles] = useState<Record<string, TaskFile[]>>({});
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [fileErr, setFileErr] = useState("");
+
+  // Khung xem tệp giữa màn hình. Link ký trước rồi mới mở khung.
+  const [preview, setPreview] = useState<{ file: TaskFile; url: string } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   // ─── Sửa nhanh tên việc ngay trên dòng ───
   // Chỉ để CHỮA LỖI CHÍNH TẢ tên việc, nên sửa tại chỗ chứ không mở modal
@@ -187,7 +202,12 @@ export default function TaskTrackingPanel({
         .in("task_id", ids)
         .order("created_at", { ascending: false });
       if (error) throw error;
-      setUpdates((data || []) as TaskUpdate[]);
+      // Ánh xạ tay cột đính kèm: chưa chạy migration 044 thì cột không có trong
+      // kết quả, parseTaskFiles trả mảng rỗng -> bảng vẫn chạy như cũ.
+      setUpdates((data || []).map((u: any) => ({
+        ...u,
+        attachment_files: parseTaskFiles(u.attachment_files),
+      })) as TaskUpdate[]);
     } catch (e: any) {
       setErr(e?.message || String(e));
     } finally {
@@ -300,11 +320,66 @@ export default function TaskTrackingPanel({
     }
   };
 
+  // Tải tệp lên kho `task-files` ngay lúc chọn, không đợi bấm "Gửi cập nhật":
+  // tải sẵn thì lỗi quá nặng / sai định dạng báo ngay tại chỗ, người dùng sửa
+  // luôn thay vì gõ xong cả đoạn rồi mới biết tệp không lên được.
+  // Duyệt TỪNG tệp và gom lỗi lại: chọn 3 tấm mà hỏng 1 thì 2 tấm kia vẫn lên.
+  const handlePickFiles = async (taskId: string, files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setFileErr("");
+    setUploadingFile(true);
+    const problems: string[] = [];
+    try {
+      for (const file of Array.from(files)) {
+        if (!isAllowedTaskFile(file)) {
+          problems.push(`"${file.name}" không phải ảnh hoặc PDF`);
+          continue;
+        }
+        if (file.size > TASK_FILE_MAX_BYTES) {
+          problems.push(`"${file.name}" nặng ${humanSize(file.size)} (tối đa 2MB)`);
+          continue;
+        }
+        try {
+          const uploaded = await uploadTaskFile(file);
+          setDraftFiles(p => ({ ...p, [taskId]: [...(p[taskId] || []), uploaded] }));
+        } catch (e: any) {
+          problems.push(e?.message || String(e));
+        }
+      }
+    } finally {
+      setUploadingFile(false);
+    }
+    if (problems.length > 0) setFileErr(problems.join(" · "));
+  };
+
+  // Gỡ tệp khỏi bản nháp. XOÁ LUÔN trong kho — khác với form sửa công việc:
+  // ở đây tệp vừa tải lên và chưa dòng cập nhật nào trỏ tới, nên không có ai
+  // khác dùng chung để mà làm hỏng.
+  const handleRemoveDraftFile = (taskId: string, file: TaskFile) => {
+    setDraftFiles(p => ({ ...p, [taskId]: (p[taskId] || []).filter(f => f.path !== file.path) }));
+    removeTaskFile(file.path);
+  };
+
+  const handleOpenFile = async (file: TaskFile) => {
+    setPreviewLoading(true);
+    try {
+      const url = await resolveTaskFileUrl(file.path);
+      if (!url) {
+        setErr(`Không mở được "${file.name}". Tệp có thể đã bị xoá, hoặc tài khoản của bạn không có quyền đọc kho tệp công việc.`);
+        return;
+      }
+      setPreview({ file, url });
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
   const postUpdate = async (taskId: string) => {
     const content = (draftContent[taskId] || "").trim();
     if (!content) { setErr("Nhập nội dung cập nhật trước khi gửi."); return; }
     const tagged = draftTag[taskId] || [];
     const due = draftDue[taskId] || "";
+    const files = draftFiles[taskId] || [];
     try {
       setPosting(true);
       setErr("");
@@ -315,11 +390,23 @@ export default function TaskTrackingPanel({
         tagged_name: tagged.length > 0 ? tagged.join(", ") : null,
         next_due_date: due || null,
         created_by: currentUserName || null,
+        attachment_files: files,
       }]);
-      if (error) throw error;
+      if (error) {
+        // Chưa chạy migration 044 thì Postgres báo không tìm thấy cột — nói
+        // thẳng phải chạy tệp nào, đừng để người dùng đọc lỗi cột thô.
+        if (/attachment_files/i.test(error.message)) {
+          throw new Error(
+            `${error.message} — chưa chạy migrations/044_task_update_attachments.sql trong Supabase > SQL Editor.`
+          );
+        }
+        throw error;
+      }
       setDraftContent(p => ({ ...p, [taskId]: "" }));
       setDraftTag(p => ({ ...p, [taskId]: [] }));
       setDraftDue(p => ({ ...p, [taskId]: "" }));
+      setDraftFiles(p => ({ ...p, [taskId]: [] }));
+      setFileErr("");
       await fetchUpdates();
 
       if (tagged.length > 0) {
@@ -620,6 +707,30 @@ export default function TaskTrackingPanel({
                                     </span>
                                   )}
                                 </div>
+
+                                {/* Tệp đính kèm của dòng cập nhật — bấm cả thẻ để xem
+                                    ngay giữa màn hình. KHÔNG có nút gỡ: đây là vết đã
+                                    ghi vào lịch sử, sửa được thì mất ý nghĩa dòng thời gian. */}
+                                {(u.attachment_files || []).length > 0 && (
+                                  <div className="flex flex-wrap gap-1.5 mt-2">
+                                    {(u.attachment_files || []).map((f) => (
+                                      <button
+                                        key={f.path}
+                                        type="button"
+                                        title={`Xem "${f.name}"`}
+                                        disabled={previewLoading}
+                                        onClick={() => handleOpenFile(f)}
+                                        className="inline-flex items-center gap-1.5 bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50/50 rounded-lg px-2 py-1 max-w-[240px] disabled:opacity-50 transition-colors cursor-pointer"
+                                      >
+                                        {isImageName(f.name)
+                                          ? <ImageIcon size={12} className="text-blue-500 shrink-0" />
+                                          : <FileText size={12} className="text-rose-500 shrink-0" />}
+                                        <span className="truncate text-[10px] font-bold text-slate-700">{f.name}</span>
+                                        <Eye size={12} className="shrink-0 text-slate-400" />
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
                             ))}
                           </div>
@@ -709,6 +820,36 @@ export default function TaskTrackingPanel({
                                 className="border border-slate-200 rounded-lg px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-blue-500/20 font-semibold text-slate-800 text-xs bg-white"
                                 title="Hạn kế tiếp"
                               />
+
+                              {/* Đính kèm ảnh / PDF — cùng kho `task-files` và cùng
+                                  mức 2MB với form giao việc. Nhãn bọc input file vì
+                                  input gốc của trình duyệt không tô kiểu được. */}
+                              <label
+                                title="Đính kèm ảnh hoặc PDF, mỗi tệp tối đa 2MB"
+                                className={`flex items-center gap-1.5 px-2.5 py-1.5 border border-dashed rounded-lg text-[11px] font-bold transition-colors ${
+                                  uploadingFile
+                                    ? "border-slate-200 bg-slate-50 text-slate-400 cursor-wait"
+                                    : "border-slate-300 bg-white text-slate-500 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/40 cursor-pointer"
+                                }`}
+                              >
+                                {uploadingFile
+                                  ? <Loader2 size={13} className="animate-spin" />
+                                  : <Upload size={13} className="upload-nudge-icon" />}
+                                {uploadingFile ? "Đang tải..." : "Đính kèm ảnh / PDF"}
+                                <input
+                                  type="file"
+                                  multiple
+                                  accept="image/*,application/pdf"
+                                  disabled={uploadingFile}
+                                  onChange={(e) => {
+                                    handlePickFiles(t.id, e.target.files);
+                                    // Dọn giá trị để chọn LẠI đúng tệp vừa gỡ vẫn nổ onChange.
+                                    e.target.value = "";
+                                  }}
+                                  className="hidden"
+                                />
+                              </label>
+
                               <button
                                 type="button"
                                 disabled={posting}
@@ -718,6 +859,46 @@ export default function TaskTrackingPanel({
                                 {posting ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Gửi cập nhật
                               </button>
                             </div>
+
+                            {fileErr && (
+                              <p className="text-[11px] font-bold text-rose-600 leading-relaxed">{fileErr}</p>
+                            )}
+
+                            {/* Tệp đã lên kho, đang chờ bấm "Gửi cập nhật" để gắn vào
+                                dòng. Xếp thành hàng ngang cho gọn — ô cập nhật vốn
+                                đã nằm trong bảng, thêm chiều cao là dòng bị đẩy dài. */}
+                            {(draftFiles[t.id] || []).length > 0 && (
+                              <div className="flex flex-wrap gap-1.5">
+                                {(draftFiles[t.id] || []).map((f) => (
+                                  <span
+                                    key={f.path}
+                                    className="inline-flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg pl-2 pr-1.5 py-1 max-w-[240px]"
+                                  >
+                                    {isImageName(f.name)
+                                      ? <ImageIcon size={12} className="text-blue-500 shrink-0" />
+                                      : <FileText size={12} className="text-rose-500 shrink-0" />}
+                                    <span className="truncate text-[10px] font-bold text-slate-700">{f.name}</span>
+                                    <button
+                                      type="button"
+                                      title="Xem tệp"
+                                      disabled={previewLoading}
+                                      onClick={() => handleOpenFile(f)}
+                                      className="shrink-0 text-slate-400 hover:text-blue-600 disabled:opacity-50 transition-colors cursor-pointer"
+                                    >
+                                      <Eye size={12} />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      title="Gỡ tệp"
+                                      onClick={() => handleRemoveDraftFile(t.id, f)}
+                                      className="shrink-0 text-slate-400 hover:text-rose-500 transition-colors cursor-pointer"
+                                    >
+                                      <X size={11} />
+                                    </button>
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         ) : (
                           <p className="text-[11px] text-slate-400 italic">
@@ -733,6 +914,14 @@ export default function TaskTrackingPanel({
           </tbody>
         </table>
       </div>
+
+      {preview && (
+        <TaskFilePreviewModal
+          file={preview.file}
+          url={preview.url}
+          onClose={() => setPreview(null)}
+        />
+      )}
     </div>
   );
 }

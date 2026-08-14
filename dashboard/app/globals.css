@@ -682,6 +682,10 @@ html.dark .hover\:bg-amber-50:hover { background-color: rgba(245, 158, 11, 0.16)
 html.dark .bg-blue-50\/70 { background-color: rgba(59, 130, 246, 0.16) !important; }
 html.dark .bg-rose-50\/70 { background-color: rgba(244, 63, 94, 0.16) !important; }
 html.dark .bg-emerald-50\/50 { background-color: rgba(16, 185, 129, 0.16) !important; }
+/* Thanh tiêu đề bảng "Danh sách việc theo dõi" — mức /70 chưa từng được map
+   (chỉ có /40, /50, /60) nên riêng nó giữ nguyên nền xanh nhạt gần trắng, trong
+   khi chữ đã bị đổi sang xám sáng -> nhìn như thanh bar bị lỗi. */
+html.dark .bg-emerald-50\/70 { background-color: rgba(16, 185, 129, 0.16) !important; }
 
 /* Viền còn sót */
 html.dark .border-indigo-300,
