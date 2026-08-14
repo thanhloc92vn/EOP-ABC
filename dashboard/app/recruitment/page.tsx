@@ -472,15 +472,36 @@ function getFrozenOffsets(cols: { width: string }[]): number[] {
 }
 
 
-// Đưa mọi kiểu ngày đang lưu (chuỗi YYYY-MM-DD hoặc timestamp created_at) về
-// YYYY-MM-DD cho ô nhập. Trả "" nếu không đọc được, để chỗ gọi rơi xuống nguồn kế tiếp.
+// Đưa mọi kiểu ngày đang lưu về YYYY-MM-DD. Trả "" nếu không đọc được, để chỗ gọi
+// rơi xuống nguồn kế tiếp.
+//
+// Bảng `candidates` chứa nhiều định dạng khác nhau trong cùng một cột:
+//   - "2026-08-14"            cột DATE (v1/v2_interview_date) + dòng do hệ thống tạo
+//   - "17/08/2026"            cột TEXT gõ tay (onboard_date, các ngày nhập từ trước)
+//   - "2026-08-13T18:00:00Z"  timestamptz (created_at)
+// Bắt buộc tự tách DD/MM/YYYY, KHÔNG được ném vào new Date(): JS đọc "03/08/2026"
+// theo kiểu Mỹ ra 8 tháng 3 (sai âm thầm) và "17/08/2026" thì Invalid Date.
 function toDateInputValue(raw: any): string {
   if (!raw) return "";
-  const s = String(raw);
+  const s = String(raw).trim();
+  if (!s) return "";
+
+  // Đã đúng chuẩn -> dùng nguyên, không qua Date để khỏi lệch múi giờ
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+
+  const p2 = (v: string) => v.padStart(2, "0");
+
+  const dmy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (dmy) return `${dmy[3]}-${p2(dmy[2])}-${p2(dmy[1])}`;
+
+  const ymd = s.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+  if (ymd) return `${ymd[1]}-${p2(ymd[2])}-${p2(ymd[3])}`;
+
+  // Còn lại: timestamp ISO của created_at — đổi sang ngày theo giờ máy, khớp với
+  // cách cột "Ngày tạo" đang hiển thị (toLocaleDateString).
   const d = new Date(s);
   if (isNaN(d.getTime())) return "";
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return `${d.getFullYear()}-${p2(String(d.getMonth() + 1))}-${p2(String(d.getDate()))}`;
 }
 
 // Ngày hiển thị cho 2 cột mốc vòng tuyển. Ô trống thì lần lượt lấy mốc gần nhất
@@ -507,12 +528,18 @@ function resolveStageDate(colKey: string, candidate: any): string {
 // Mỗi tab hiển thị một cột ngày và một cột kết quả khác nhau, nên 2 bộ lọc này
 // phải bám theo đúng cột đang hiện chứ không dùng chung một trường cố định.
 
-// Ngày dùng để lọc = đúng ngày đang hiện trong cột của tab đó (kể cả ngày lấy tạm
-// khi ô trống), để lọc ra đúng những dòng người dùng nhìn thấy.
+// Cột ngày mà bộ lọc bám vào ở từng tab. Vòng 1/Vòng 2 lọc theo NGÀY PHỎNG VẤN,
+// Thử Việc lọc theo NGÀY ONBOARD — đó mới là mốc người dùng cần tra, chứ không phải
+// ngày hồ sơ vào vòng.
+//
+// Dùng toDateInputValue vì kiểu cột không đồng nhất: v1/v2_interview_date là DATE,
+// còn onboard_date lưu chuỗi. Ô trống thì KHÔNG lấy ngày thay thế — lọc theo "Ngày PV"
+// mà dòng chưa có ngày PV thì đúng ra là không khớp.
 function getRowFilterDate(subTab: string, c: any): string {
   if (subTab === "tong_hop") return toDateInputValue(c.created_at);
-  if (subTab === "vong_1") return resolveStageDate("v1_date", c);
-  return resolveStageDate("v2_date", c);
+  if (subTab === "vong_1") return toDateInputValue(c.v1_interview_date);
+  if (subTab === "vong_2") return toDateInputValue(c.v2_interview_date);
+  return toDateInputValue(c.onboard_date);
 }
 
 // Kết quả dùng để lọc = đúng nhãn đang hiện trong ô select của cột, kể cả giá trị
@@ -528,9 +555,9 @@ function getRowFilterResult(subTab: string, c: any): string {
 
 const RESULT_FILTER_CONFIG: Record<string, { label: string; dateLabel: string; options: string[] }> = {
   tong_hop: { label: "Trạng thái", dateLabel: "Ngày tạo", options: ["PASS CV", "LƯU CV", "FAIL"] },
-  vong_1:   { label: "Kết quả V1", dateLabel: "Ngày Vòng 1", options: ["Chờ đánh giá", "ĐẠT", "LOẠI", "TC PV"] },
-  vong_2:   { label: "Kết quả V2", dateLabel: "Ngày Vòng 2", options: ["Chờ đánh giá", "ĐẠT", "LOẠI", "TC PV"] },
-  thu_viec: { label: "Kết quả nhận việc", dateLabel: "Ngày Vòng 2", options: ["Chờ nhận việc", "NHẬN", "TC"] },
+  vong_1:   { label: "Kết quả V1", dateLabel: "Ngày PV", options: ["Chờ đánh giá", "ĐẠT", "LOẠI", "TC PV"] },
+  vong_2:   { label: "Kết quả V2", dateLabel: "Ngày PV", options: ["Chờ đánh giá", "ĐẠT", "LOẠI", "TC PV"] },
+  thu_viec: { label: "Kết quả nhận việc", dateLabel: "ONBOARD", options: ["Chờ nhận việc", "NHẬN", "TC"] },
 };
 
 const NO_DEPT_LABEL = "Chưa xếp phòng";
