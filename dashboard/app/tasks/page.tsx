@@ -254,6 +254,10 @@ export default function TaskManagementPage() {
   // khác hai ô trên vốn chỉ dành cho người xem được toàn công ty.
   const [filterPriority, setFilterPriority] = useState("all");
 
+  // Lọc theo dự án — cũng hiện với MỌI tài khoản. Giá trị đặc biệt "__none__"
+  // để soi riêng nhóm việc không gắn dự án nào.
+  const [filterProject, setFilterProject] = useState("all");
+
   // Danh mục dự án / nhóm / nguồn công việc (Cài đặt hệ thống -> Danh mục công việc).
   // Chưa chạy migration 037 thì cả 3 danh sách rỗng — form vẫn mở, chỉ là 3 ô
   // dropdown trống, không sập trang.
@@ -949,6 +953,22 @@ export default function TaskManagementPage() {
       .slice(0, 30);
   }, [assignableEmployees, assigneeSearch, newAssignees]);
 
+  /** Nhãn dự án của một việc — ưu tiên tên, không có thì lấy mã. */
+  const taskProjectLabel = (t: Task) => (t.project_name || t.project_code || "").trim();
+
+  // Danh sách dự án cho ô lọc: lấy từ CHÍNH các việc đang có, không lấy từ danh
+  // mục. Danh mục `projects` để trống là chuyện bình thường, và việc cũ có thể
+  // trỏ tới dự án đã bị gỡ khỏi danh mục — hai trường hợp đó mà lấy theo danh
+  // mục thì ô lọc trống hoặc thiếu, người dùng tưởng hỏng.
+  const projectOptions = useMemo(() => {
+    const seen = new Set<string>();
+    tasks.forEach(t => {
+      const label = taskProjectLabel(t);
+      if (label) seen.add(label);
+    });
+    return [...seen].sort((a, b) => a.localeCompare(b, "vi"));
+  }, [tasks]);
+
   const filteredTasks = tasks.filter(t => {
     const matchesSearch = t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           t.assignee.toLowerCase().includes(searchQuery.toLowerCase());
@@ -976,6 +996,12 @@ export default function TaskManagementPage() {
     // ─── Lọc theo mức ưu tiên ───
     // Việc cũ chưa có ô ưu tiên được coi là "Trung bình", giống lúc nạp dữ liệu.
     if (filterPriority !== "all" && (t.priority || "Trung bình") !== filterPriority) return false;
+
+    // ─── Lọc theo dự án ───
+    if (filterProject !== "all") {
+      const label = taskProjectLabel(t);
+      if (filterProject === "__none__" ? !!label : label !== filterProject) return false;
+    }
 
     if (!currentUser) return false;
 
@@ -1174,6 +1200,29 @@ export default function TaskManagementPage() {
                   <option value="Cao">Cao</option>
                   <option value="Trung bình">Trung bình</option>
                   <option value="Thấp">Thấp</option>
+                </select>
+              </div>
+
+              {/* Lọc theo dự án — cũng hiện với MỌI tài khoản. Danh sách dựng từ
+                  chính các việc đang có nên không phụ thuộc danh mục dự án. */}
+              <div
+                className={`flex items-center gap-2 bg-white px-3 py-2 border rounded-xl shadow-sm transition-colors ${
+                  filterProject === "all" ? "border-slate-200" : "border-blue-300"
+                }`}
+              >
+                <Building2 size={13} className={filterProject === "all" ? "text-slate-400" : "text-blue-500"} />
+                <select
+                  value={filterProject}
+                  onChange={(e) => setFilterProject(e.target.value)}
+                  className={`text-xs bg-transparent outline-none font-semibold cursor-pointer max-w-[190px] ${
+                    filterProject === "all" ? "text-slate-600" : "text-slate-800"
+                  }`}
+                >
+                  <option value="all">Tất cả dự án</option>
+                  <option value="__none__">— Không thuộc dự án nào —</option>
+                  {projectOptions.map(p => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
                 </select>
               </div>
 
