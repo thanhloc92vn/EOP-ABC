@@ -37,16 +37,32 @@ export default function TaskAttachmentField({
       </label>
 
       {/* Nhãn bọc input file: input file gốc của trình duyệt không tô kiểu được,
-          nên giấu đi và bấm vào cả khối này. */}
+          nên giấu đi và bấm vào cả khối này. Khối để cao hơn hẳn các ô khác vì
+          đính kèm hay bị bỏ quên — mũi tên nhấp nháy theo vòng lặp để nhắc. */}
       <label
-        className={`w-full border border-dashed border-slate-300 rounded-xl p-3 flex items-center justify-center gap-2 text-xs font-bold transition-colors ${
+        className={`w-full border-2 border-dashed rounded-xl px-4 py-6 flex flex-col items-center justify-center gap-2 transition-colors ${
           uploading
-            ? "bg-slate-50 text-slate-400 cursor-wait"
-            : "text-slate-500 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/40 cursor-pointer"
+            ? "border-slate-300 bg-slate-50 text-slate-400 cursor-wait"
+            : "border-slate-300 text-slate-500 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/40 cursor-pointer"
         }`}
       >
-        {uploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
-        {uploading ? "Đang tải tệp lên..." : "Chọn ảnh / PDF để đính kèm"}
+        <span
+          className={`w-11 h-11 rounded-full flex items-center justify-center ${
+            uploading ? "bg-slate-100 text-slate-400" : "bg-blue-50 text-blue-600 upload-nudge-ring"
+          }`}
+        >
+          {uploading
+            ? <Loader2 size={20} className="animate-spin" />
+            : <Upload size={20} className="upload-nudge-icon" />}
+        </span>
+        <span className="text-[13px] font-bold">
+          {uploading ? "Đang tải tệp lên..." : "Chọn ảnh / PDF để đính kèm"}
+        </span>
+        {!uploading && (
+          <span className="text-[11px] font-semibold text-slate-400">
+            Bấm để chọn tệp — nhớ đính kèm tài liệu liên quan nhé!
+          </span>
+        )}
         <input
           type="file"
           multiple

@@ -250,6 +250,10 @@ export default function TaskManagementPage() {
   const [filterDept, setFilterDept] = useState("all");
   const [filterBdh, setFilterBdh] = useState("all");
 
+  // Lọc theo mức ưu tiên (Cao / Trung bình / Thấp) — hiện với MỌI tài khoản,
+  // khác hai ô trên vốn chỉ dành cho người xem được toàn công ty.
+  const [filterPriority, setFilterPriority] = useState("all");
+
   // Danh mục dự án / nhóm / nguồn công việc (Cài đặt hệ thống -> Danh mục công việc).
   // Chưa chạy migration 037 thì cả 3 danh sách rỗng — form vẫn mở, chỉ là 3 ô
   // dropdown trống, không sập trang.
@@ -969,6 +973,10 @@ export default function TaskManagementPage() {
       if (taskDept !== wanted) return false;
     }
 
+    // ─── Lọc theo mức ưu tiên ───
+    // Việc cũ chưa có ô ưu tiên được coi là "Trung bình", giống lúc nạp dữ liệu.
+    if (filterPriority !== "all" && (t.priority || "Trung bình") !== filterPriority) return false;
+
     if (!currentUser) return false;
 
     // Đơn NGHỈ PHÉP / CÔNG TÁC không thuộc bảng Kanban này — chúng hiển thị ở
@@ -1134,6 +1142,40 @@ export default function TaskManagementPage() {
               >
                 Tải lại
               </button>
+
+              {/* Lọc theo mức ưu tiên — hiện với MỌI tài khoản, kể cả người chỉ
+                  thấy việc của riêng mình. Đổi viền/chữ theo mức đang chọn để
+                  nhìn lướt là biết bảng đang lọc gì. */}
+              <div
+                className={`flex items-center gap-2 bg-white px-3 py-2 border rounded-xl shadow-sm transition-colors ${
+                  filterPriority === "Cao" ? "border-rose-300" :
+                  filterPriority === "Trung bình" ? "border-amber-300" :
+                  filterPriority === "Thấp" ? "border-emerald-300" :
+                  "border-slate-200"
+                }`}
+              >
+                <Filter
+                  size={13}
+                  className={
+                    filterPriority === "Cao" ? "text-rose-500" :
+                    filterPriority === "Trung bình" ? "text-amber-500" :
+                    filterPriority === "Thấp" ? "text-emerald-500" :
+                    "text-slate-400"
+                  }
+                />
+                <select
+                  value={filterPriority}
+                  onChange={(e) => setFilterPriority(e.target.value)}
+                  className={`text-xs bg-transparent outline-none font-semibold cursor-pointer ${
+                    filterPriority === "all" ? "text-slate-600" : "text-slate-800"
+                  }`}
+                >
+                  <option value="all">Tất cả loại công việc</option>
+                  <option value="Cao">Cao</option>
+                  <option value="Trung bình">Trung bình</option>
+                  <option value="Thấp">Thấp</option>
+                </select>
+              </div>
 
               {/* Lọc Phòng ban / Ban điều hành — CHỈ hiện với người xem được toàn công
                   ty. Người khác vốn chỉ thấy việc phòng mình, bày ra chỉ tổ rối. */}

@@ -933,8 +933,36 @@ textarea {
   100% { transform: scale(1) rotate(0deg); }
 }
 
+/* ── Ô "Tệp đính kèm" của form giao việc ─────────────────────────────
+   Mũi tên nhô lên rồi lặp lại: nhắc khéo mọi người nhớ đính kèm ảnh/PDF,
+   nghỉ một nhịp dài giữa hai lần để không gây rối mắt khi điền form. */
+.upload-nudge-icon {
+  animation: upload-nudge 2.4s ease-in-out infinite;
+}
+
+@keyframes upload-nudge {
+  0%, 55%, 100% { transform: translateY(0) scale(1); }
+  62%           { transform: translateY(-4px) scale(1.08); }
+  72%           { transform: translateY(0) scale(1); }
+  80%           { transform: translateY(-2px) scale(1.04); }
+  88%           { transform: translateY(0) scale(1); }
+}
+
+/* Vòng tròn nền của mũi tên loang nhẹ theo cùng nhịp */
+.upload-nudge-ring {
+  animation: upload-nudge-ring 2.4s ease-in-out infinite;
+}
+
+@keyframes upload-nudge-ring {
+  0%, 55%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+  62%           { box-shadow: 0 0 0 6px rgba(59, 130, 246, 0.14); }
+  88%, 99%      { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+}
+
 /* Tôn trọng cài đặt giảm chuyển động của hệ điều hành */
 @media (prefers-reduced-motion: reduce) {
   .confetti-on .confetti-piece { animation: none; }
   .confetti-on .birthday-cake { animation: none; }
+  .upload-nudge-icon { animation: none; }
+  .upload-nudge-ring { animation: none; }
 }
