@@ -116,11 +116,13 @@ const COLUMNS = [
   { id: "in_progress", title: "Đang thực hiện", color: "border-t-blue-500" },
   { id: "pending_approval", title: "Chờ phê duyệt", color: "border-t-purple-500" },
   { id: "need_revision", title: "Cần chỉnh sửa", color: "border-t-rose-500" },
-  { id: "completed", title: "Đã hoàn thành", color: "border-t-emerald-500" },
-  // Cột 6: nhân viên xong phần việc nhưng DỰ ÁN còn theo tiếp (chờ nghiệm thu,
-  // CĐT yêu cầu bổ sung...). Task kéo sang đây thì RỜI khỏi "Đã hoàn thành" —
-  // "hoàn thành" nghĩa là đóng sổ hẳn, còn đây là đang theo dõi.
+  // Nhân viên xong phần việc nhưng DỰ ÁN còn theo tiếp (chờ nghiệm thu, CĐT yêu
+  // cầu bổ sung...). Task kéo sang đây thì RỜI khỏi "Đã hoàn thành" — "hoàn
+  // thành" nghĩa là đóng sổ hẳn, còn đây là đang theo dõi.
+  // ĐỨNG TRƯỚC "Đã hoàn thành": đọc từ trái sang là đúng đường đi thật của một
+  // việc, và cột đóng sổ nằm cuối hàng.
   { id: "tracking", title: "Update thông tin", color: "border-t-amber-500" },
+  { id: "completed", title: "Đã hoàn thành", color: "border-t-emerald-500" },
 ];
 
 const getCardStyles = (status: string) => {
