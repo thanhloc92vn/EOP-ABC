@@ -100,9 +100,8 @@ export async function POST(request: NextRequest) {
         <div style="max-width: 640px; margin: 40px auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.05); border: 1px solid #e2e8f0;">
 
           <div style="background-color: #b45309; background: linear-gradient(135deg, #d97706 0%, #b45309 100%); padding: 32px 40px; color: #ffffff;">
-            <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.15em; color: #fde68a; margin-bottom: 8px;">${cfg.company_name.toUpperCase()} — ${cfg.system_subtitle.toUpperCase()}</div>
             <h1 style="margin: 0; font-size: 22px; font-weight: 850; letter-spacing: -0.025em; color: #ffffff;">🔄 Bạn Được Giao Theo Dõi Tiếp</h1>
-            <div style="font-size: 13px; color: #fef3c7; margin-top: 6px; font-weight: 500;">Quản lý công việc — ${cfg.system_title}</div>
+            <div style="font-size: 13px; color: #fef3c7; margin-top: 6px; font-weight: 500;">Hệ thống quản trị - ${cfg.company_name}</div>
           </div>
 
           <div style="padding: 28px 40px 8px 40px;">
@@ -145,7 +144,7 @@ export async function POST(request: NextRequest) {
           </div>
 
           <div style="background-color: #f8fafc; padding: 24px 40px; text-align: center; border-top: 1px solid #e2e8f0; font-size: 11px; color: #64748b; line-height: 1.5; margin-top: 16px;">
-            Trực thuộc hệ thống quản trị nhân sự <strong>${cfg.system_title}</strong><br>
+            Trực thuộc hệ thống quản trị - <strong>${cfg.company_name}</strong><br>
             Email này được gửi tự động khi Anh/Chị được giao theo dõi công việc. Vui lòng không trả lời trực tiếp email này.
           </div>
         </div>
@@ -156,7 +155,7 @@ export async function POST(request: NextRequest) {
     await transporter.sendMail({
       from: `"${cfg.email_sender_name}" <${smtpUser}>`,
       to: recipient,
-      subject: `[${cfg.company_name}] 🔄 Theo dõi tiếp: ${taskTitle}${nextDueDate ? ` (hạn ${fmtDate(nextDueDate)})` : ""}`,
+      subject: `🔄 Theo dõi tiếp: ${taskTitle}${nextDueDate ? ` (hạn ${fmtDate(nextDueDate)})` : ""}`,
       html,
     });
 

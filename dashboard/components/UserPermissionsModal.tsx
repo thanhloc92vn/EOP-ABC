@@ -795,7 +795,7 @@ export default function UserPermissionsModal({
           <div className="bg-amber-50/70 border border-amber-100 rounded-xl p-3.5 text-[11px] text-amber-800 leading-relaxed">
             <p className="font-bold flex items-center gap-1.5 mb-0.5"><Users size={13} /> Nhóm duyệt riêng là gì?</p>
             Tổ có luồng duyệt cấp 1 riêng: thành viên gửi <b>bất kỳ đơn gì</b> (nghỉ phép, công tác, đăng ký xe/phòng họp)
-            thì <b>tổ trưởng của tổ</b> duyệt cấp 1 thay vì Trưởng phòng ban — sau đó vẫn qua HCNS duyệt cuối như thường.
+            thì <b>tổ trưởng của tổ</b> duyệt cấp 1 thay vì Trưởng phòng ban — sau đó vẫn qua phòng HCNS xác nhận như thường.
             Tên tổ trưởng/thành viên phải khớp đúng tên trong Danh sách nhân viên.
           </div>
 

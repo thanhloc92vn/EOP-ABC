@@ -86,8 +86,8 @@ export async function POST(request: NextRequest) {
     if (isNotifyMode) {
       const isFinalStage = stage === "final";
       const stageLabel = isFinalStage
-        ? "duyệt cuối (điều phối xe & phòng họp)"
-        : "xác nhận cấp Trưởng phòng / Tổ trưởng";
+        ? "xác nhận (phòng HCNS — điều phối xe & phòng họp)"
+        : "phê duyệt cấp Trưởng phòng / Tổ trưởng";
       const siteOrigin = body.siteUrl || request.headers.get("origin") || process.env.NEXT_PUBLIC_SITE_URL || cfg.site_url;
       // Mở thẳng trang Đăng ký xe/phòng họp và tự bật popup chi tiết của đúng đăng ký này
       // (không bắt người duyệt phải tự tìm trong tab "Duyệt yêu cầu" nữa).
@@ -104,7 +104,7 @@ export async function POST(request: NextRequest) {
         attendees.length > 0 ? infoRow("Nhân viên tham dự", attendees.join(", ")) : "",
         booking.participant_type === "khach_hang" ? infoRow("Khách hàng bên ngoài", booking.customer_info || "Có") : "",
         booking.notes ? infoRow("Ghi chú hậu cần", booking.notes) : "",
-        isFinalStage && booking.manager_approved_by ? infoRow("Trưởng phòng đã xác nhận", booking.manager_approved_by) : "",
+        isFinalStage && booking.manager_approved_by ? infoRow("Trưởng phòng đã phê duyệt", booking.manager_approved_by) : "",
       ].join("");
 
       const notifyHtml = `
@@ -116,9 +116,8 @@ export async function POST(request: NextRequest) {
 
             <!-- Banner Header -->
             <div style="background-color: #005BAC; background: linear-gradient(135deg, #005BAC 0%, #1e40af 100%); padding: 32px 40px; color: #ffffff;">
-              <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.15em; color: #93c5fd; margin-bottom: 8px;">${cfg.company_name.toUpperCase()} — ${cfg.system_subtitle.toUpperCase()}</div>
               <h1 style="margin: 0; font-size: 22px; font-weight: 850; letter-spacing: -0.025em; color: #ffffff;">🔔 Yêu Cầu ${typeLabel} Chờ Duyệt</h1>
-              <div style="font-size: 13px; color: #bfdbfe; margin-top: 6px; font-weight: 500;">Hệ thống điều phối xe & phòng họp — ${cfg.system_title}</div>
+              <div style="font-size: 13px; color: #bfdbfe; margin-top: 6px; font-weight: 500;">Hệ thống quản trị - ${cfg.company_name}</div>
             </div>
 
             <!-- Greeting -->
@@ -159,7 +158,7 @@ export async function POST(request: NextRequest) {
 
             <!-- Footer -->
             <div style="background-color: #f8fafc; padding: 24px 40px; text-align: center; border-top: 1px solid #e2e8f0; font-size: 11px; color: #64748b; line-height: 1.5; margin-top: 16px;">
-              Trực thuộc hệ thống quản trị nhân sự <strong>${cfg.system_title}</strong><br>
+              Trực thuộc hệ thống quản trị - <strong>${cfg.company_name}</strong><br>
               Email này được gửi tự động khi có yêu cầu mới. Vui lòng không trả lời trực tiếp email này.
             </div>
           </div>
@@ -180,7 +179,7 @@ export async function POST(request: NextRequest) {
       await transporter.sendMail({
         from: `"${cfg.email_sender_name}" <${smtpUser}>`,
         to: uniqueRecipients,
-        subject: `[${cfg.company_name}] 🔔 Chờ duyệt: ${typeLabel} ${booking.resource_name} - ${booking.requester_name || ""} (${dateStr2})`,
+        subject: `🔔 Chờ duyệt: ${typeLabel} ${booking.resource_name} - ${booking.requester_name || ""} (${dateStr2})`,
         html: notifyHtml,
       });
 
@@ -201,8 +200,8 @@ export async function POST(request: NextRequest) {
       infoRow("Số lượng người", String(booking.attendee_count || attendees.length || "-")),
       attendees.length > 0 ? infoRow("Nhân viên tham dự", attendees.join(", ")) : "",
       booking.notes ? infoRow("Ghi chú hậu cần", booking.notes) : "",
-      booking.manager_approved_by ? infoRow("Trưởng phòng xác nhận", booking.manager_approved_by) : "",
-      infoRow(isApproved ? "Người duyệt cuối (HCNS)" : isDeleted ? "Người xoá lịch" : "Người từ chối", approverName || booking.final_decision_by),
+      booking.manager_approved_by ? infoRow("Trưởng phòng phê duyệt", booking.manager_approved_by) : "",
+      infoRow(isApproved ? "Người xác nhận (phòng HCNS)" : isDeleted ? "Người xoá lịch" : "Người từ chối", approverName || booking.final_decision_by),
     ].join("");
 
     const resultBlock = isApproved
@@ -255,9 +254,8 @@ export async function POST(request: NextRequest) {
 
           <!-- Banner Header -->
           <div style="background-color: #005BAC; background: linear-gradient(135deg, #005BAC 0%, #1e40af 100%); padding: 32px 40px; color: #ffffff;">
-            <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.15em; color: #93c5fd; margin-bottom: 8px;">${cfg.company_name.toUpperCase()} — ${cfg.email_sender_name.toUpperCase()}</div>
             <h1 style="margin: 0; font-size: 22px; font-weight: 850; letter-spacing: -0.025em; color: #ffffff;">Kết Quả ${typeLabel}</h1>
-            <div style="font-size: 13px; color: #bfdbfe; margin-top: 6px; font-weight: 500;">Hệ thống điều phối xe & phòng họp — ${cfg.system_title}</div>
+            <div style="font-size: 13px; color: #bfdbfe; margin-top: 6px; font-weight: 500;">Hệ thống quản trị - ${cfg.company_name}</div>
           </div>
 
           <!-- Status Banner -->
@@ -292,7 +290,7 @@ export async function POST(request: NextRequest) {
 
           <!-- Footer -->
           <div style="background-color: #f8fafc; padding: 24px 40px; text-align: center; border-top: 1px solid #e2e8f0; font-size: 11px; color: #64748b; line-height: 1.5;">
-            Trực thuộc hệ thống quản trị nhân sự <strong>${cfg.system_title}</strong><br>
+            Trực thuộc hệ thống quản trị - <strong>${cfg.company_name}</strong><br>
             Email này được gửi tự động sau khi có kết quả phê duyệt. Vui lòng không trả lời trực tiếp email này.
           </div>
         </div>
@@ -304,7 +302,7 @@ export async function POST(request: NextRequest) {
     await transporter.sendMail({
       from: `"${cfg.email_sender_name}" <${smtpUser}>`,
       to: booking.requester_email,
-      subject: `[${cfg.company_name}] ${isApproved ? "✅ Đã duyệt" : isDeleted ? "🗑️ Đã xoá lịch" : "❌ Từ chối"} - ${typeLabel} ${booking.resource_name} ngày ${dateStr}`,
+      subject: `${isApproved ? "✅ Đã duyệt" : isDeleted ? "🗑️ Đã xoá lịch" : "❌ Từ chối"} - ${typeLabel} ${booking.resource_name} ngày ${dateStr}`,
       html: mailHtml,
     });
 

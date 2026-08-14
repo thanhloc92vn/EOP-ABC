@@ -527,7 +527,7 @@ export default function Header({ title, subtitle }: Props) {
         }
 
         if (getRequestStage(t) === "hcns") {
-          messageText += " (đã qua Trưởng phòng/Tổ trưởng, chờ HCNS duyệt cuối)";
+          messageText += " (đã qua Trưởng phòng/Tổ trưởng phê duyệt, chờ phòng HCNS xác nhận)";
         }
 
         return {
@@ -581,7 +581,7 @@ export default function Header({ title, subtitle }: Props) {
           type: "booking",
           bookingType: isVehicleBooking ? "xe" : "phong_hop",
           typeText: isVehicleBooking ? "Đăng ký xe" : "Đăng ký phòng họp",
-          message: `${b.requester_name} đăng ký ${isVehicleBooking ? "xe" : ""} ${b.resource_name} lúc ${timeStr}${b.status === "pending_hcns" ? " (đã qua Trưởng phòng, chờ HCNS duyệt cuối)" : ""}`,
+          message: `${b.requester_name} đăng ký ${isVehicleBooking ? "xe" : ""} ${b.resource_name} lúc ${timeStr}${b.status === "pending_hcns" ? " (đã qua Trưởng phòng phê duyệt, chờ phòng HCNS xác nhận)" : ""}`,
           time: b.created_at ? new Date(b.created_at).toLocaleTimeString("vi-VN", { hour: '2-digit', minute: '2-digit' }) + " " + new Date(b.created_at).toLocaleDateString("vi-VN") : "",
           timestamp: b.created_at ? new Date(b.created_at).getTime() : 0
         };

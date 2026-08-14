@@ -872,8 +872,8 @@ function CalendarContent() {
 
       showNotice(
         "success",
-        "Đã xác nhận yêu cầu",
-        "Yêu cầu được chuyển sang HCNS để duyệt cuối. Email báo HCNS đang được gửi."
+        "Đã phê duyệt yêu cầu",
+        "Yêu cầu được chuyển sang phòng HCNS để xác nhận. Email báo HCNS đang được gửi."
       );
       fetchData();
 
@@ -1647,7 +1647,7 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
             {pendingApprovals.length > 0 && (
               <div className="bg-white rounded-2xl border border-slate-200/50 shadow-sm p-4 flex flex-col space-y-4">
                 <div className="space-y-2.5">
-                  <span className="text-[10px] font-extrabold text-indigo-600 uppercase tracking-wider block">📥 Chờ bạn xác nhận - Cấp 1 ({pendingApprovals.length})</span>
+                  <span className="text-[10px] font-extrabold text-indigo-600 uppercase tracking-wider block">📥 Chờ bạn phê duyệt - Cấp 1 ({pendingApprovals.length})</span>
                   <div className="space-y-2">
                     {pendingApprovals.map(t => (
                       <div key={t.id} className="p-3 bg-indigo-50/30 border border-indigo-100 rounded-xl space-y-2 text-left">
@@ -1656,13 +1656,13 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                           Nhân sự: <span className="font-bold text-slate-800">{t.assignee}</span> <br />
                           Thời gian: {t.start_date ? new Date(t.start_date).toLocaleDateString("vi-VN") : ""} ➔ {t.due_date ? new Date(t.due_date).toLocaleDateString("vi-VN") : ""}
                         </p>
-                        <p className="text-[8px] text-indigo-400 font-semibold leading-relaxed">Xác nhận xong sẽ tự động chuyển sang HCNS duyệt cuối.</p>
+                        <p className="text-[8px] text-indigo-400 font-semibold leading-relaxed">Phê duyệt xong sẽ tự động chuyển sang phòng HCNS xác nhận.</p>
                         <div className="flex gap-2 pt-1">
                           <button
                             onClick={() => handleCap1Confirm(t.id)}
                             className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] font-bold rounded-lg cursor-pointer transition-colors text-center active:scale-95"
                           >
-                            Xác nhận
+                            Phê duyệt
                           </button>
                           <button
                             onClick={() => { setRejectReason(""); setRejectBox({ taskId: t.id }); }}
@@ -1815,11 +1815,11 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                         <span className="font-extrabold text-indigo-700">
                           {resolveCap1Approver(modalName, leaveDaysCount <= 1)}
                         </span>
-                        <span className="text-slate-500 font-semibold"> xác nhận, sau đó HCNS duyệt cuối.</span>
+                        <span className="text-slate-500 font-semibold"> phê duyệt, sau đó phòng HCNS xác nhận.</span>
                       </>
                     ) : (
                       <span className="text-slate-500 font-semibold">
-                        Đơn sẽ nằm ở mục Duyệt yêu cầu để cấp quản lý xác nhận, sau đó HCNS duyệt cuối.
+                        Đơn sẽ nằm ở mục Duyệt yêu cầu để cấp quản lý phê duyệt, sau đó phòng HCNS xác nhận.
                       </span>
                     )}
                   </div>
@@ -2417,11 +2417,11 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                     <>
                       <span className="text-slate-500 font-semibold">Đơn sẽ chuyển tới </span>
                       <span className="font-extrabold text-indigo-700">{resolveCap1Approver(modalName, false)}</span>
-                      <span className="text-slate-500 font-semibold"> xác nhận, sau đó HCNS duyệt cuối.</span>
+                      <span className="text-slate-500 font-semibold"> phê duyệt, sau đó phòng HCNS xác nhận.</span>
                     </>
                   ) : (
                     <span className="text-slate-500 font-semibold">
-                      Đơn sẽ nằm ở mục Duyệt yêu cầu để cấp quản lý xác nhận, sau đó HCNS duyệt cuối.
+                      Đơn sẽ nằm ở mục Duyệt yêu cầu để cấp quản lý phê duyệt, sau đó phòng HCNS xác nhận.
                     </span>
                   )}
                 </div>

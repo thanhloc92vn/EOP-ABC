@@ -382,7 +382,7 @@ function SettingsContent() {
 
       if (error) throw error;
 
-      alert("Đã xác nhận! Yêu cầu được chuyển sang Phòng HCNS (điều phối xe & phòng họp) để duyệt cuối.\n📧 Email báo người duyệt cuối đang được gửi.");
+      alert("Đã phê duyệt! Yêu cầu được chuyển sang phòng HCNS (điều phối xe & phòng họp) để xác nhận.\n📧 Email báo người xác nhận đang được gửi.");
       fetchResourceBookings();
 
       // Tra cứu người duyệt cuối (HCNS - can_approve_booking) + gửi mail: chạy nền
@@ -405,10 +405,10 @@ function SettingsContent() {
               approverEmails,
               siteUrl: window.location.origin,
             },
-            "Chưa gửi được email báo người duyệt cuối"
+            "Chưa gửi được email báo người xác nhận (phòng HCNS)"
           );
         } catch (mailErr: any) {
-          alert(`⚠️ Chưa gửi được email báo người duyệt cuối: ${mailErr.message || "lỗi kết nối"}`);
+          alert(`⚠️ Chưa gửi được email báo người xác nhận (phòng HCNS): ${mailErr.message || "lỗi kết nối"}`);
         }
       })();
     } catch (err) {
@@ -481,7 +481,7 @@ function SettingsContent() {
 
       if (error) throw error;
 
-      alert("Đã xác nhận! Yêu cầu được chuyển sang HCNS để duyệt cuối.\n📧 Email báo HCNS đang được gửi.");
+      alert("Đã phê duyệt! Yêu cầu được chuyển sang phòng HCNS để xác nhận.\n📧 Email báo HCNS đang được gửi.");
       fetchTasks();
 
       // Tra cứu người duyệt cấp 2 + gửi mail: chạy nền
@@ -915,7 +915,7 @@ function SettingsContent() {
       localStorage.setItem("tnec_cb_smtp_secure", String(secure));
     }
     setShowEmailConfigModal(false);
-    alert("Đã lưu cấu hình gửi email SMTP! Các nút Duyệt & gửi mail sẽ dùng tài khoản này.");
+    alert("Đã lưu cấu hình gửi email SMTP! Các nút Xác nhận & gửi mail sẽ dùng tài khoản này.");
   };
 
   const handleSave = (e: React.FormEvent) => {
@@ -1215,7 +1215,7 @@ function SettingsContent() {
                 ) : (
                   <p className="flex items-center gap-2 text-amber-600">
                     <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" />
-                    Chưa cấu hình — các nút &quot;Duyệt &amp; gửi mail&quot; sẽ không gửi được email kết quả.
+                    Chưa cấu hình — các nút &quot;Xác nhận &amp; gửi mail&quot; sẽ không gửi được email kết quả.
                   </p>
                 )}
               </div>
@@ -1459,7 +1459,7 @@ function SettingsContent() {
                                           onClick={() => handleCap1Confirm(req, true)}
                                           className="bg-[#005BAC] hover:bg-blue-700 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 shadow-sm cursor-pointer"
                                         >
-                                          Xác nhận & chuyển HCNS
+                                          Phê duyệt & chuyển HCNS
                                         </button>
                                         <button
                                           type="button"
@@ -1476,7 +1476,7 @@ function SettingsContent() {
                                           onClick={() => handleFinalDecision(req, true, true)}
                                           className="bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 shadow-sm cursor-pointer"
                                         >
-                                          Duyệt & gửi mail
+                                          Xác nhận & gửi mail
                                         </button>
                                         <button
                                           type="button"
@@ -1550,7 +1550,7 @@ function SettingsContent() {
                                           onClick={() => handleCap1Confirm(req, false)}
                                           className="bg-[#005BAC] hover:bg-blue-700 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 shadow-sm cursor-pointer"
                                         >
-                                          Xác nhận & chuyển HCNS
+                                          Phê duyệt & chuyển HCNS
                                         </button>
                                         <button
                                           type="button"
@@ -1567,7 +1567,7 @@ function SettingsContent() {
                                           onClick={() => handleFinalDecision(req, false, true)}
                                           className="bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 shadow-sm cursor-pointer"
                                         >
-                                          Duyệt & gửi mail
+                                          Xác nhận & gửi mail
                                         </button>
                                         <button
                                           type="button"
@@ -1682,7 +1682,7 @@ function SettingsContent() {
                               <span className={`px-2.5 py-1 rounded-full border text-[9px] font-extrabold uppercase ${
                                 isManagerStep ? "bg-amber-50 text-amber-700 border-amber-200" : "bg-indigo-50 text-indigo-700 border-indigo-200"
                               }`}>
-                                {isManagerStep ? "Cấp 1: Chờ Trưởng phòng xác nhận" : "Cấp 2: Chờ HCNS duyệt cuối"}
+                                {isManagerStep ? "Cấp 1: Chờ Trưởng phòng phê duyệt" : "Cấp 2: Chờ phòng HCNS xác nhận"}
                               </span>
                             </div>
 
@@ -1712,7 +1712,7 @@ function SettingsContent() {
                                 {attendeeList.length > 0 && <p><strong className="text-slate-600">Tham dự:</strong> {attendeeList.join(", ")}</p>}
                                 {b.customer_info && <p><strong className="text-slate-600">Khách hàng:</strong> {b.customer_info}</p>}
                                 {b.notes && <p><strong className="text-slate-600">Ghi chú hậu cần:</strong> {b.notes}</p>}
-                                {b.manager_approved_by && <p><strong className="text-slate-600">Trưởng phòng đã xác nhận:</strong> {b.manager_approved_by}</p>}
+                                {b.manager_approved_by && <p><strong className="text-slate-600">Trưởng phòng đã phê duyệt:</strong> {b.manager_approved_by}</p>}
                               </div>
                             )}
 
@@ -1724,7 +1724,7 @@ function SettingsContent() {
                                     onClick={() => handleManagerConfirmBooking(b)}
                                     className="bg-[#005BAC] hover:bg-blue-700 text-white text-[10px] font-bold px-4 py-2 rounded-lg transition-all active:scale-95 shadow-sm cursor-pointer"
                                   >
-                                    Xác nhận & chuyển HCNS
+                                    Phê duyệt & chuyển HCNS
                                   </button>
                                   <button
                                     type="button"
@@ -1741,7 +1741,7 @@ function SettingsContent() {
                                     onClick={() => handleFinalBookingDecision(b, true)}
                                     className="bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold px-4 py-2 rounded-lg transition-all active:scale-95 shadow-sm cursor-pointer"
                                   >
-                                    Duyệt & gửi mail
+                                    Xác nhận & gửi mail
                                   </button>
                                   <button
                                     type="button"

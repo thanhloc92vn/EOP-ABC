@@ -125,8 +125,8 @@ export async function POST(request: NextRequest) {
         <div style="max-width: 640px; margin: 40px auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.05); border: 1px solid #e2e8f0;">
 
           <div style="background-color: #005BAC; background: linear-gradient(135deg, #005BAC 0%, #00AEEF 100%); padding: 32px 40px; color: #ffffff;">
-            <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.15em; color: #bfdbfe; margin-bottom: 8px;">${esc(cfg.company_name).toUpperCase()} — BẢNG TIN NỘI BỘ</div>
             <h1 style="margin: 0; font-size: 22px; font-weight: 850; letter-spacing: -0.025em; color: #ffffff;">📰 ${esc(categoryLabel)}: ${esc(post.title)}</h1>
+            <div style="font-size: 13px; color: #bfdbfe; margin-top: 6px; font-weight: 500;">Hệ thống quản trị - ${esc(cfg.company_name)}</div>
           </div>
 
           <div style="padding: 28px 40px 12px 40px;">
@@ -164,7 +164,7 @@ export async function POST(request: NextRequest) {
           </div>
 
           <div style="background-color: #f8fafc; padding: 24px 40px; text-align: center; border-top: 1px solid #e2e8f0; font-size: 11px; color: #64748b; line-height: 1.5; margin-top: 16px;">
-            Trực thuộc hệ thống quản trị nhân sự <strong>${esc(cfg.system_title)}</strong><br>
+            Trực thuộc hệ thống quản trị - <strong>${esc(cfg.company_name)}</strong><br>
             Email này được gửi khi một đồng nghiệp chia sẻ bài viết. Vui lòng không trả lời trực tiếp email này.
           </div>
         </div>
@@ -182,7 +182,7 @@ export async function POST(request: NextRequest) {
         await transporter.sendMail({
           from: `"${cfg.email_sender_name}" <${smtpUser}>`,
           to: t.to,
-          subject: `[${cfg.company_name}] 📰 ${categoryLabel}: ${post.title}`,
+          subject: `📰 ${categoryLabel}: ${post.title}`,
           html: buildHtml(t.name),
         });
         sent.push(`${t.name} (${t.to})`);

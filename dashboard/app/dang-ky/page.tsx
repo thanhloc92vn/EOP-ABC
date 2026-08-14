@@ -439,7 +439,7 @@ function BookingContent() {
         console.warn("Bỏ qua lỗi gửi email báo duyệt cấp 1:", notifyErr);
       }
 
-      showToast("success", "Đã gửi đăng ký thành công! Yêu cầu đang chờ Trưởng phòng xác nhận.");
+      showToast("success", "Đã gửi đăng ký thành công! Yêu cầu đang chờ Trưởng phòng phê duyệt.");
       resetForm();
       fetchBookings();
     } catch (err: any) {
@@ -518,7 +518,7 @@ function BookingContent() {
         .eq("id", b.id);
       if (error) throw error;
 
-      showToast("success", "Đã phê duyệt! Yêu cầu chuyển sang Hành chính điều phối.");
+      showToast("success", "Đã phê duyệt! Yêu cầu chuyển sang phòng HCNS xác nhận & điều phối.");
       closeBookingModal();
       fetchBookings();
 
