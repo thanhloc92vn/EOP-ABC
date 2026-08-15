@@ -836,6 +836,12 @@ export default function TaskManagementPage() {
       return;
     }
 
+    // Ngày đã ấn định thì gửi lại đúng giá trị GỐC, không gửi giá trị trên form.
+    // Ô đã `disabled` nên bình thường hai giá trị này trùng nhau — viết ra đây để
+    // form không vô tình đẩy ngày khác lên và ăn lỗi từ trigger `trg_guard_task_dates`.
+    const nextStartDate = lockStartDate ? editingTask.start_date : editStartDate;
+    const nextDueDate = lockDueDate ? editingTask.due_date : editDueDate;
+
     try {
       const { error } = await supabase
         .from("tasks")
@@ -843,11 +849,11 @@ export default function TaskManagementPage() {
           title: editTitle,
           assignee: editAssignee,
           priority: editPriority,
-          due_date: editDueDate || null,
+          due_date: nextDueDate || null,
           progress: Number(editProgress),
           status: editStatus,
           description: editDescription,
-          start_date: editStartDate || null,
+          start_date: nextStartDate || null,
           link: editLink,
           notes: editNotes,
           project_code: editProjectCode || null,
@@ -1154,6 +1160,17 @@ export default function TaskManagementPage() {
     currentUser.role.toLowerCase().includes("to truong") ||
     currentUser.role.toLowerCase().includes("leader")
   ));
+
+  // KHOÁ NGÀY BẮT ĐẦU / DEADLINE ĐÃ ẤN ĐỊNH
+  // Nhân viên không được tự dời hạn công việc của mình. Nhưng ô còn TRỐNG thì vẫn
+  // đặt được lần đầu (task chưa có hạn vẫn dùng bình thường) — đặt xong là khoá.
+  // Điều kiện xét trên giá trị GỐC của task (editingTask), không phải giá trị đang
+  // gõ trên form: xét theo form thì vừa gõ xong ô đã tự khoá giữa chừng.
+  // Chỉ khoá ở modal SỬA. Lúc TẠO MỚI ai cũng đặt hạn thoải mái.
+  // Tầng chặn thật nằm ở trigger `trg_guard_task_dates` (migration 046) — ở đây
+  // chỉ là hiển thị, gọi thẳng API thì giao diện không cản được.
+  const lockStartDate = !canManageTasks && !!editingTask?.start_date;
+  const lockDueDate = !canManageTasks && !!editingTask?.due_date;
 
   return (
     <div className="flex min-h-screen bg-[#F7F9FC]">
@@ -2130,7 +2147,7 @@ export default function TaskManagementPage() {
                 </div>
               </div>
 
-              {/* Start Date & Deadline */}
+              {/* Start Date & Deadline — khoá khi đã ấn định, xem lockStartDate/lockDueDate */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label className="text-slate-500">Ngày bắt đầu</label>
@@ -2138,8 +2155,18 @@ export default function TaskManagementPage() {
                     type="date"
                     value={editStartDate}
                     onChange={(e) => setEditStartDate(e.target.value)}
-                    className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 font-medium text-slate-800"
+                    disabled={lockStartDate}
+                    className={`w-full border rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 font-medium ${
+                      lockStartDate
+                        ? "border-slate-200 bg-slate-100 text-slate-500 cursor-not-allowed"
+                        : "border-slate-200 text-slate-800"
+                    }`}
                   />
+                  {lockStartDate && (
+                    <p className="text-[11px] text-slate-400">
+                      Đã ấn định — chỉ cấp quản lý đổi được
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-1">
                   <label className="text-slate-500">Deadline</label>
@@ -2147,8 +2174,18 @@ export default function TaskManagementPage() {
                     type="date"
                     value={editDueDate}
                     onChange={(e) => setEditDueDate(e.target.value)}
-                    className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 font-medium text-slate-800"
+                    disabled={lockDueDate}
+                    className={`w-full border rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 font-medium ${
+                      lockDueDate
+                        ? "border-slate-200 bg-slate-100 text-slate-500 cursor-not-allowed"
+                        : "border-slate-200 text-slate-800"
+                    }`}
                   />
+                  {lockDueDate && (
+                    <p className="text-[11px] text-slate-400">
+                      Đã ấn định — chỉ cấp quản lý đổi được
+                    </p>
+                  )}
                 </div>
               </div>
 
