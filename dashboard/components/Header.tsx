@@ -7,9 +7,9 @@ import { supabase } from "@/lib/supabase";
 import {
   fetchApprovalPermissions,
   hasAnyApprovalPermission,
-  isMarketingTeamMember,
   isMarketingTeamLeader,
   isManagerRole,
+  isBookingCap1Approver,
   getRequestStage,
   isLeaveTripCap1Approver,
   isLeaveTripCap2Approver,
@@ -553,16 +553,19 @@ export default function Header({ title, subtitle }: Props) {
       });
 
       // Filter booking notifications:
-      // - pending_manager: Trưởng/Phó phòng cùng phòng ban người đăng ký (hoặc Admin)
+      // - pending_manager: tổ trưởng của chính tổ người đăng ký, hoặc Trưởng/Phó
+      //   phòng cùng đơn vị nếu người đăng ký chưa xếp tổ (isBookingCap1Approver)
       // - pending_hcns: người có quyền can_approve_booking (HCNS điều phối) hoặc Admin
       const filteredBookings = bookingsData.filter(b => {
         if (b.status === "pending_manager") {
-          if (isUserAdmin) return true;
-          // Tổ Marketing (thuộc HCNS): thông báo cấp 1 chỉ đến Tổ trưởng Marketing
-          if (isMarketingTeamMember(b.requester_name)) {
-            return isMarketingTeamLeader(userObj.name);
-          }
-          return isUserManager && userObj.department === b.department;
+          return isBookingCap1Approver({
+            currentUserName: userObj.name,
+            currentUserRole: userObj.role,
+            currentUserIsAdmin: isUserAdmin,
+            currentUserDepartment: userObj.department,
+            requesterName: b.requester_name,
+            requesterDepartment: b.department,
+          });
         }
         if (b.status === "pending_hcns") {
           return isUserAdmin || perms.canApproveBooking;

@@ -29,9 +29,8 @@ import {
 import { supabase } from "@/lib/supabase";
 import {
   getGroupLeaderNameForMember,
-  isMarketingTeamMember,
-  isMarketingTeamLeader,
-  isManagerRole,
+  isBookingCap1Approver,
+  isDepartmentManagerRole,
 } from "@/lib/approvers";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 
@@ -400,17 +399,12 @@ function BookingContent() {
             .filter(Boolean)
             .join(", ");
         } else {
+          // Chưa xếp tổ -> Trưởng/Phó phòng cùng đơn vị. Dùng chung
+          // isDepartmentManagerRole() với bộ lọc trên giao diện để người nhận
+          // mail đúng là người bấm duyệt được (trước đây là 2 danh sách chức
+          // danh chép tay, lệch nhau ở Kế toán trưởng/Chỉ huy trưởng).
           approverEmails = employees
-            .filter((e) => {
-              if (e.department !== department || !e.email) return false;
-              const r = (e.role || "").toLowerCase();
-              return (
-                r.includes("trưởng phòng") || r.includes("truong phong") ||
-                r.includes("phó phòng") || r.includes("pho phong") ||
-                r.includes("giám đốc") || r.includes("giam doc") ||
-                r.startsWith("tp.") || r.startsWith("tp ")
-              );
-            })
+            .filter((e) => e.department === department && !!e.email && isDepartmentManagerRole(e.role))
             .map((e) => e.email)
             .join(", ");
         }
@@ -476,15 +470,19 @@ function BookingContent() {
   // đúng quy ước đã dùng ở Header.tsx/settings/page.tsx, tránh bỏ sót tài khoản Admin nội bộ.
   const isUserAdmin = !!currentUser && (currentUser.isAdmin || (currentUser.role || "").toLowerCase() === "admin");
 
-  // Trưởng bộ phận cùng phòng ban (hoặc Tổ trưởng nhóm duyệt riêng, hoặc Admin) — quyền ở cấp "Chờ duyệt"
-  // và VẪN GIỮ quyền Từ chối/Xoá lịch ngay cả sau khi đã chuyển sang "Đã phê duyệt".
+  // Người duyệt cấp 1 của ĐÚNG đơn này: tổ trưởng của tổ người đăng ký, hoặc
+  // Trưởng/Phó phòng cùng đơn vị khi người đăng ký chưa xếp tổ, hoặc Admin.
+  // VẪN GIỮ quyền Từ chối/Xoá lịch ngay cả sau khi đã chuyển sang "Đã phê duyệt".
   const isDeptManagerFor = (b: BookingRow) => {
     if (!currentUser) return false;
-    if (isUserAdmin) return true;
-    if (isMarketingTeamMember(b.requester_name)) {
-      return isMarketingTeamLeader(currentUser.name);
-    }
-    return isManagerRole(currentUser.role) && currentUser.department === b.department;
+    return isBookingCap1Approver({
+      currentUserName: currentUser.name,
+      currentUserRole: currentUser.role,
+      currentUserIsAdmin: isUserAdmin,
+      currentUserDepartment: currentUser.department,
+      requesterName: b.requester_name,
+      requesterDepartment: b.department,
+    });
   };
 
   // Hành chính (HCNS) điều phối xe/phòng cụ thể — chỉ thao tác được khi đã "Đã phê duyệt"

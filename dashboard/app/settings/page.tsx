@@ -16,9 +16,9 @@ import { useDepartments } from "@/lib/departments";
 import { useTenantConfig } from "@/lib/tenantConfig";
 import {
   hasAnyApprovalPermission,
-  isMarketingTeamMember,
   isMarketingTeamLeader,
   isManagerRole,
+  isBookingCap1Approver,
   getRequestStage,
   isLeaveTripCap1Approver,
   isLeaveTripCap2Approver,
@@ -871,30 +871,24 @@ function SettingsContent() {
   }, [explanations, currentUser, isApprover, approvalPerms]);
 
   // Đăng ký xe / phòng họp chờ duyệt:
-  // - Cấp 1 (pending_manager): Trưởng/Phó phòng cùng phòng ban với người đăng ký, hoặc Admin.
+  // - Cấp 1 (pending_manager): tổ trưởng của chính tổ người đăng ký; người đăng
+  //   ký chưa xếp tổ thì Trưởng/Phó phòng cùng đơn vị. Hoặc Admin.
   // - Cấp 2 (pending_hcns): người được cấp quyền can_approve_booking (HCNS điều phối) hoặc Admin.
   const pendingBookings = useMemo(() => {
     if (!currentUser || !isApprover) return [];
 
-    const roleLower = (currentUser.role || "").toLowerCase();
-    const isUserAdmin = currentUser.isAdmin || roleLower === "admin";
-    const isUserManager =
-      roleLower.includes("trưởng phòng") || roleLower.includes("truong phong") ||
-      roleLower.includes("phó phòng") || roleLower.includes("pho phong") ||
-      roleLower.includes("phó trưởng phòng") || roleLower.includes("pho truong phong") ||
-      roleLower.includes("giám đốc") || roleLower.includes("giam doc") ||
-      roleLower.includes("quản lý") || roleLower.includes("quan ly") ||
-      roleLower.startsWith("tp.") || roleLower.startsWith("tp ") ||
-      roleLower.includes("leader");
+    const isUserAdmin = currentUser.isAdmin || (currentUser.role || "").toLowerCase() === "admin";
 
     return resourceBookings.filter((b) => {
       if (b.status === "pending_manager") {
-        if (isUserAdmin) return true;
-        // Tổ Marketing (thuộc HCNS): cấp 1 do Tổ trưởng Marketing duyệt, không qua Trưởng phòng HCNS
-        if (isMarketingTeamMember(b.requester_name)) {
-          return isMarketingTeamLeader(currentUser.name);
-        }
-        return isUserManager && currentUser.department === b.department;
+        return isBookingCap1Approver({
+          currentUserName: currentUser.name,
+          currentUserRole: currentUser.role,
+          currentUserIsAdmin: isUserAdmin,
+          currentUserDepartment: currentUser.department,
+          requesterName: b.requester_name,
+          requesterDepartment: b.department,
+        });
       }
       if (b.status === "pending_hcns") {
         return isUserAdmin || approvalPerms.canApproveBooking;

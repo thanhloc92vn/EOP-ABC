@@ -150,10 +150,80 @@ export function isMarketingTeamMember(personName?: string | null): boolean {
   return !!getApprovalGroupOfMember(personName);
 }
 
+// CHÚ Ý: hàm này chỉ trả lời "người này có phụ trách MỘT tổ nào đó không" —
+// dùng để mở menu/chuông "Duyệt yêu cầu", KHÔNG dùng để lọc từng đơn. Muốn biết
+// người này có được duyệt đơn của MỘT người cụ thể hay không thì dùng
+// isGroupLeaderOfRequester() bên dưới: ghép nhầm hai câu hỏi này chính là lý do
+// mọi tổ trưởng từng thấy đơn đăng ký của thành viên mọi tổ khác.
 export function isMarketingTeamLeader(userName?: string | null): boolean {
   const n = (userName || "").trim().toLowerCase();
   if (!n) return false;
   return activeGroups().some(g => g.leader_name.trim().toLowerCase() === n);
+}
+
+// Người này có phải tổ trưởng của ĐÚNG cái tổ mà người gửi đơn thuộc về không?
+// false khi người gửi không thuộc tổ nào — nơi gọi tự quyết định nhánh sau đó.
+export function isGroupLeaderOfRequester(
+  userName?: string | null,
+  requesterName?: string | null
+): boolean {
+  const group = getApprovalGroupOfMember(requesterName);
+  if (!group) return false;
+  return normalizeName(group.leader_name) === normalizeName(userName);
+}
+
+// Cấp trưởng ĐƠN VỊ (phòng/ban/BĐH) — hẹp hơn isManagerRole() vì KHÔNG tính
+// "tổ trưởng"/"leader": tổ trưởng chỉ phụ trách thành viên tổ mình, người cùng
+// phòng nhưng chưa xếp tổ thuộc về Trưởng/Phó phòng (chốt 17/08/2026).
+export function isDepartmentManagerRole(role?: string | null): boolean {
+  const r = normalizeName(role);
+  if (!r) return false;
+  return (
+    r.includes("truong phong") || r.includes("pho phong") ||
+    r.includes("quyen truong phong") ||
+    r.includes("giam doc") ||
+    r.includes("quan ly") ||
+    r.includes("ke toan truong") ||
+    r.includes("truong bo phan") ||
+    r.includes("chi huy truong") || r.includes("chi huy pho") ||
+    r.startsWith("tp.") || r.startsWith("tp ") || r === "tp"
+  );
+}
+
+// ━━━ Đăng ký xe / phòng họp — ai được duyệt CẤP 1 một đơn cụ thể ━━━
+// Gom về một chỗ vì luật này từng được chép tay ở 3 nơi (chuông Header, trang
+// /dang-ky, Cài đặt > Duyệt yêu cầu) và 3 bản đã trôi lệch nhau: hai nơi tính
+// tổ trưởng là quản lý, nơi còn lại thì không — cùng một đơn mà chuông kêu,
+// /dang-ky duyệt được, còn danh sách trong Cài đặt lại không liệt kê.
+export function isBookingCap1Approver(params: {
+  currentUserName: string;
+  currentUserRole: string;
+  currentUserIsAdmin: boolean;
+  currentUserDepartment?: string | null;
+  requesterName: string;
+  requesterDepartment?: string | null;
+}): boolean {
+  const {
+    currentUserName, currentUserRole, currentUserIsAdmin,
+    currentUserDepartment, requesterName, requesterDepartment,
+  } = params;
+  if (currentUserIsAdmin) return true;
+
+  // 1. Người gửi thuộc một tổ có luồng riêng -> CHỈ tổ trưởng của chính tổ đó.
+  //    Tổ trưởng tổ khác dừng ở đây, không rơi xuống nhánh phòng ban bên dưới.
+  if (getApprovalGroupOfMember(requesterName)) {
+    return isGroupLeaderOfRequester(currentUserName, requesterName);
+  }
+
+  // 2. Người gửi chưa xếp tổ -> Trưởng/Phó phòng cùng đơn vị. Tổ trưởng KHÔNG
+  //    thấy: họ chỉ phụ trách thành viên tổ mình.
+  if (!isDepartmentManagerRole(currentUserRole)) return false;
+
+  const mine = normalizeName(currentUserDepartment);
+  const theirs = normalizeName(requesterDepartment);
+  // Thiếu phòng ban ở một trong hai bên thì không suy đoán (Admin đã thoát ở trên)
+  if (!mine || !theirs) return false;
+  return mine === theirs;
 }
 
 // ━━━ NGOẠI LỆ DUYỆT NGHỈ 1 NGÀY (bảng leave_exceptions) ━━━
