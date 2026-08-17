@@ -70,6 +70,19 @@ const FLAG_GROUPS: { title: string; flags: { key: string; label: string; desc: s
       { key: "can_view_reports", label: "Báo cáo quản trị", desc: "Kế hoạch thu chi, Sản lượng, Doanh thu — chỉ có tác dụng khi công ty ở gói Enterprise" },
     ],
   },
+  {
+    // Luồng 4 cấp của Phiếu trình ký hồ sơ/văn bản (migration 050). Tách nhóm
+    // riêng vì mỗi cấp là một chân trong CÙNG một luồng — để lẫn vào nhóm trên
+    // thì lúc cấp quyền rất dễ tick nhầm cấp.
+    title: "Phiếu trình ký hồ sơ / văn bản",
+    flags: [
+      { key: "can_create_signing", label: "Lập phiếu trình ký", desc: "Tải hồ sơ lên, bóc tách số liệu và trình phiếu đi (chuyên viên KHĐT)" },
+      { key: "can_approve_signing_qlda", label: "Duyệt — PGĐ QLDA", desc: "Bước 1: Phó Giám đốc phụ trách Quản lý dự án cho ý kiến" },
+      { key: "can_approve_signing_khdt", label: "Duyệt — PGĐ KHĐT", desc: "Bước 2: Phó Giám đốc phụ trách Kế hoạch Đấu thầu cho ý kiến" },
+      { key: "can_approve_signing_director", label: "Duyệt — Giám đốc", desc: "Bước 3: Giám đốc phê duyệt" },
+      { key: "can_approve_signing_accounting", label: "Kế toán — Xác nhận chi", desc: "Bước 4: nhận phiếu đã duyệt và xác nhận đã thanh toán" },
+    ],
+  },
 ];
 
 const ALL_FLAG_KEYS = FLAG_GROUPS.flatMap(g => g.flags.map(f => f.key));

@@ -23,6 +23,8 @@
 import { useState } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
+import FinancePartnerCatalog from "@/components/FinancePartnerCatalog";
+import SigningPanel from "@/components/SigningPanel";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import {
   Wallet,
@@ -34,6 +36,16 @@ import {
 } from "lucide-react";
 
 type ReportTab = "thu-chi" | "san-luong" | "doanh-thu";
+
+// Tab "Kế hoạch thu chi" đã gánh 2 việc khác hẳn nhau: danh mục đối tác (dữ liệu
+// nền, sửa thưa) và phiếu trình ký (việc hằng ngày, có luồng duyệt). Tách tab con
+// thay vì dồn một trang — dồn lại thì mỗi lần vào phải cuộn qua thứ không cần.
+type ThuChiTab = "doi-tac" | "trinh-ky";
+
+const THU_CHI_TABS: { id: ThuChiTab; label: string; desc: string }[] = [
+  { id: "trinh-ky", label: "Phiếu trình ký", desc: "Lập phiếu, trình duyệt 4 cấp, xuất Word" },
+  { id: "doi-tac", label: "Danh mục đối tác", desc: "Nhà thầu, số tài khoản, hợp đồng theo dự án" },
+];
 
 const TABS: {
   id: ReportTab;
@@ -64,6 +76,7 @@ const TABS: {
 export default function BaoCaoPage() {
   const user = useCurrentUser();
   const [activeTab, setActiveTab] = useState<ReportTab>("thu-chi");
+  const [thuChiTab, setThuChiTab] = useState<ThuChiTab>("trinh-ky");
 
   // Đang tra danh tính: KHÔNG hiện gì thuộc về nội dung báo cáo. Nếu render sẵn
   // rồi mới ẩn thì có một nhịp dữ liệu loé ra trước khi quyền kịp tính xong.
@@ -170,31 +183,63 @@ export default function BaoCaoPage() {
             })}
           </div>
 
-          {/* ─── Khung nội dung báo cáo ─── */}
-          <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium space-y-5">
-            <div className="border-b border-slate-100 pb-4">
-              <h3 className="font-heading font-bold text-slate-800 text-sm">
-                {current.label}
-              </h3>
-              <p className="text-slate-400 text-[10px] font-semibold mt-1">
-                {current.desc}
-              </p>
-            </div>
+          {/* ─── Nội dung báo cáo ───
+              Kế hoạch thu chi: bước 1 là DANH MỤC ĐỐI TÁC (migration 048). Màn
+              hình nhập kế hoạch tháng và xuất Excel làm ở bước sau — chốt danh
+              mục trước thì lúc đó chỉ việc chọn, không phải gõ lại.
 
-            {/* Trạng thái rỗng thật — chưa dựng bảng số liệu cho nhóm báo cáo này */}
-            <div className="flex flex-col items-center justify-center text-center py-16 px-6 space-y-3">
-              <div className="w-14 h-14 rounded-2xl bg-slate-50 flex items-center justify-center text-slate-300 ring-4 ring-slate-100/50">
-                <Database size={26} />
+              Tab này render THẲNG ra nền trang, KHÔNG bọc trong khung `.glass`
+              như hai tab kia: nội dung của nó đã là các thẻ KPI + lưới card, bọc
+              thêm một lớp card nữa thành card-lồng-card, viền chồng viền. */}
+          {activeTab === "thu-chi" ? (
+            <div className="space-y-5 max-w-6xl">
+              {/* Tab con */}
+              <div className="flex bg-slate-100/70 rounded-xl p-1 gap-1 w-fit">
+                {THU_CHI_TABS.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setThuChiTab(t.id)}
+                    title={t.desc}
+                    className={`px-4 py-2 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                      thuChiTab === t.id
+                        ? "bg-white text-blue-700 shadow-sm"
+                        : "text-slate-500 hover:text-slate-700"
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
               </div>
-              <p className="font-heading font-extrabold text-slate-700 text-xs">
-                Chưa có dữ liệu {current.label.toLowerCase()}
-              </p>
-              <p className="text-slate-400 text-[11px] font-medium max-w-sm leading-relaxed">
-                Khung báo cáo và phân quyền đã sẵn sàng. Bảng số liệu sẽ được dựng ở
-                bước tiếp theo, sau khi chốt các chỉ tiêu cần theo dõi.
-              </p>
+
+              {thuChiTab === "trinh-ky" ? <SigningPanel /> : <FinancePartnerCatalog />}
             </div>
-          </div>
+          ) : (
+            <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium space-y-5">
+              <div className="border-b border-slate-100 pb-4">
+                <h3 className="font-heading font-bold text-slate-800 text-sm">
+                  {current.label}
+                </h3>
+                <p className="text-slate-400 text-[10px] font-semibold mt-1">
+                  {current.desc}
+                </p>
+              </div>
+
+              {/* Trạng thái rỗng thật — chưa dựng bảng số liệu cho nhóm báo cáo này */}
+              <div className="flex flex-col items-center justify-center text-center py-16 px-6 space-y-3">
+                <div className="w-14 h-14 rounded-2xl bg-slate-50 flex items-center justify-center text-slate-300 ring-4 ring-slate-100/50">
+                  <Database size={26} />
+                </div>
+                <p className="font-heading font-extrabold text-slate-700 text-xs">
+                  Chưa có dữ liệu {current.label.toLowerCase()}
+                </p>
+                <p className="text-slate-400 text-[11px] font-medium max-w-sm leading-relaxed">
+                  Khung báo cáo và phân quyền đã sẵn sàng. Bảng số liệu sẽ được dựng ở
+                  bước tiếp theo, sau khi chốt các chỉ tiêu cần theo dõi.
+                </p>
+              </div>
+            </div>
+          )}
         </main>
       </div>
     </div>

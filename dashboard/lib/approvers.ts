@@ -43,6 +43,15 @@ export type ApprovalPermissions = {
                            // Doanh thu). Module thuộc gói Enterprise; cờ này cấp riêng cho
                            // một người mà không phải nâng gói cả phòng (migration 042).
                            // Không vượt được trần license: tenant phải ở gói Enterprise.
+  // ─── Phiếu trình ký hồ sơ/văn bản (migration 050) ───
+  // Luồng 4 cấp: PGĐ QLDA -> PGĐ KHĐT -> Giám đốc -> Kế toán. Mỗi cấp một cờ để
+  // đổi người phụ trách chỉ cần tick lại, không phải sửa SQL hay code.
+  canCreateSigning: boolean;    // Lập phiếu trình ký. Tách khỏi canViewReports vì
+                                // kế toán/giám đốc cần duyệt nhưng không phải người lập.
+  canApproveSigningQlda: boolean;
+  canApproveSigningKhdt: boolean;
+  canApproveSigningDirector: boolean;
+  canApproveSigningAccounting: boolean;
   // Quan hệ giám sát: tên hiển thị (khớp cột `assignee` dạng text) của người mà chủ
   // dòng này được thấy task, ngoài task của chính họ. VD: Như Quỳnh -> "Thanh Hằng".
   supervisesName: string | null;
@@ -68,6 +77,11 @@ export const NO_APPROVAL_PERMISSIONS: ApprovalPermissions = {
   canManageProjectLocations: false,
   canManageNews: false,
   canViewReports: false,
+  canCreateSigning: false,
+  canApproveSigningQlda: false,
+  canApproveSigningKhdt: false,
+  canApproveSigningDirector: false,
+  canApproveSigningAccounting: false,
   supervisesName: null,
 };
 
@@ -464,6 +478,11 @@ export async function fetchApprovalPermissions(email?: string | null): Promise<A
       canManageProjectLocations: !!row.can_manage_project_locations,
       canManageNews: !!row.can_manage_news,
       canViewReports: !!row.can_view_reports,
+      canCreateSigning: !!row.can_create_signing,
+      canApproveSigningQlda: !!row.can_approve_signing_qlda,
+      canApproveSigningKhdt: !!row.can_approve_signing_khdt,
+      canApproveSigningDirector: !!row.can_approve_signing_director,
+      canApproveSigningAccounting: !!row.can_approve_signing_accounting,
       supervisesName: row.supervises_name || null,
     };
   } catch {

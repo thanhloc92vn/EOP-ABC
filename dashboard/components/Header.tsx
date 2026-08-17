@@ -385,6 +385,31 @@ export default function Header({ title, subtitle }: Props) {
         console.warn("Could not fetch VPP requests for header:", err);
       }
 
+      // 5b. PHIẾU TRÌNH KÝ đang chờ (migration 050). Lấy hết phiếu còn trong
+      // luồng rồi lọc theo cờ ở dưới — RLS đã chặn người ngoài luồng, nên truy
+      // vấn này với nhân viên thường trả về rỗng chứ không lộ gì.
+      type SigningNotifRow = {
+        id: string; ma_phieu: string | null; hop_dong_so: string | null;
+        dot_so: number | null; status: string;
+        created_by: string; created_by_name: string | null; updated_at: string | null;
+        tra_lai_ly_do: string | null; tra_lai_boi: string | null;
+      };
+      let signingData: SigningNotifRow[] = [];
+      try {
+        const { data, error } = await supabase
+          .from("signing_submissions")
+          .select("id, ma_phieu, hop_dong_so, chu_dau_tu, du_an, dot_so, status, created_by, created_by_name, created_at, updated_at, tra_lai_ly_do, tra_lai_boi")
+          // 'tra_lai' phải có trong danh sách: phiếu bị trả là việc cần NGƯỜI LẬP
+          // sửa lại, đúng nghĩa "việc cần xử lý" của chuông.
+          .in("status", ["cho_pho_giam_doc", "cho_giam_doc", "cho_ke_toan", "tra_lai",
+                         "cho_pgd_qlda", "cho_pgd_khdt"]);
+        if (!error && data) signingData = data;
+      } catch (err) {
+        // Chưa chạy migration 050 thì bảng chưa tồn tại — chuông vẫn phải kêu
+        // cho các mục còn lại, không được để hỏng cả khối thông báo.
+        console.warn("Could not fetch signing submissions for header:", err);
+      }
+
       // 6. GHI CHÚ LỊCH ĐẾN NGÀY — nhắc chính chủ, đúng ngày đã ghi trên lịch.
       // KHÁC HẲN 5 mục trên: đây không phải việc chờ duyệt, nên phải tính TRƯỚC
       // hàng rào hasApprovalPrivileges bên dưới và đi kèm ở cả hai nhánh — nếu
@@ -453,7 +478,19 @@ export default function Header({ title, subtitle }: Props) {
       // hasAnyApprovalPermission() (chúng không mở menu "Duyệt yêu cầu" ở Cài đặt vì
       // duyệt phúc lợi nằm ở trang C&B, còn cấp phát VPP nằm ở trang Hành chính),
       // nhưng người chỉ có mỗi một trong hai cờ đó vẫn phải nhận được thông báo.
-      const hasApprovalPrivileges = isUserAdmin || isUserManager || isUserHR || hasAnyApprovalPermission(perms) || perms.canApproveBenefit || perms.canManageVpp || isMarketingTeamLeader(userObj.name);
+      // Cờ duyệt PHIẾU TRÌNH KÝ cũng phải tính vào đây: Kế toán viên có thể
+      // không phải quản lý, không HCNS, không giữ cờ duyệt nào khác — nhưng vẫn
+      // cần chuông kêu khi có phiếu chờ xác nhận chi.
+      // canCreateSigning cũng tính vào: chuyên viên KHĐT lập phiếu thường không
+      // phải quản lý, không HCNS, không giữ cờ duyệt nào — nhưng phải nhận được
+      // chuông khi phiếu của họ BỊ TRẢ LẠI. Thiếu vế này thì họ bị `return` sớm
+      // ngay dưới đây và không bao giờ thấy thông báo trả lại.
+      const hasSigningRole =
+        perms.canApproveSigningQlda || perms.canApproveSigningKhdt ||
+        perms.canApproveSigningDirector || perms.canApproveSigningAccounting ||
+        perms.canCreateSigning;
+
+      const hasApprovalPrivileges = isUserAdmin || isUserManager || isUserHR || hasAnyApprovalPermission(perms) || perms.canApproveBenefit || perms.canManageVpp || hasSigningRole || isMarketingTeamLeader(userObj.name);
       if (!hasApprovalPrivileges) {
         // Không có quyền duyệt gì cả thì chuông vẫn phải kêu cho ghi chú của
         // chính họ — đó là toàn bộ nội dung chuông của một nhân viên thường.
@@ -644,8 +681,63 @@ export default function Header({ title, subtitle }: Props) {
             }))
         : [];
 
+      // Phiếu trình ký: chỉ báo cho ĐÚNG cấp đang giữ phiếu. Admin thấy tất cả
+      // vì Admin duyệt thay được ở mọi bước.
+      const SIGNING_STAGE_LABEL: Record<string, string> = {
+        cho_pho_giam_doc: "Phó Giám đốc xem xét",
+        cho_giam_doc: "Giám đốc phê duyệt",
+        cho_ke_toan: "Kế toán xác nhận chi",
+        // Phiếu cũ trước migration 053
+        cho_pgd_qlda: "Phó Giám đốc xem xét",
+        cho_pgd_khdt: "Phó Giám đốc xem xét",
+      };
+      // Chỉ MỘT chặng Phó Giám đốc — giữ cờ QLDA hay KHĐT đều nhận thông báo,
+      // vì chỉ cần một trong hai vị xem xét là phiếu đi tiếp (migration 053).
+      const mySigningStages = new Set<string>();
+      if (perms.canApproveSigningQlda || perms.canApproveSigningKhdt) {
+        mySigningStages.add("cho_pho_giam_doc");
+        mySigningStages.add("cho_pgd_qlda");
+        mySigningStages.add("cho_pgd_khdt");
+      }
+      if (perms.canApproveSigningDirector) mySigningStages.add("cho_giam_doc");
+      if (perms.canApproveSigningAccounting) mySigningStages.add("cho_ke_toan");
+
+      // Chuông báo cho HAI vai khác nhau:
+      //  - Cấp duyệt: phiếu đang chờ đúng chặng của mình.
+      //  - NGƯỜI LẬP: phiếu của mình BỊ TRẢ LẠI — họ phải sửa rồi trình lại, nên
+      //    đây mới đúng là "việc cần xử lý". Thiếu vế này thì người lập chỉ biết
+      //    phiếu bị trả khi tự mở trang ra xem.
+      // Các bước duyệt xuôi KHÔNG báo chuông cho người lập: đó là tin tiến độ,
+      // không phải việc phải làm — để bên email, không thì chuông thành ồn.
+      const myEmailLower = (userObj.email || "").toLowerCase();
+      const mappedSigning = signingData
+        .filter((s) => {
+          if (s.status === "tra_lai") {
+            return !!myEmailLower && (s.created_by || "").toLowerCase() === myEmailLower;
+          }
+          return isUserAdmin || mySigningStages.has(s.status);
+        })
+        .map((s) => ({
+          id: s.id,
+          type: "signing",
+          typeText: s.status === "tra_lai" ? "Phiếu bị trả lại" : "Phiếu trình ký",
+          message: `${s.ma_phieu || "Phiếu"} · HĐ ${s.hop_dong_so || "—"} đợt ${s.dot_so ?? "—"}`
+            + (s.status === "tra_lai"
+                ? ` — bị trả lại${s.tra_lai_boi ? ` bởi ${s.tra_lai_boi}` : ""}`
+                  + `${s.tra_lai_ly_do ? `: ${s.tra_lai_ly_do}` : ""}`
+                : ` — chờ ${SIGNING_STAGE_LABEL[s.status] || "xử lý"}`
+                  + (s.created_by_name ? ` (${s.created_by_name} lập)` : "")),
+          // Dùng updated_at chứ không created_at: phiếu nhích bước nào thì nổi
+          // lên đầu chuông lúc đó, không phải chìm theo ngày lập.
+          time: s.updated_at
+            ? new Date(s.updated_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })
+              + " " + new Date(s.updated_at).toLocaleDateString("vi-VN")
+            : "",
+          timestamp: s.updated_at ? new Date(s.updated_at).getTime() : 0,
+        }));
+
       // Combine and sort by timestamp descending
-      const allNotifications = [...mappedTasks, ...mappedJustifications, ...mappedBookings, ...mappedBenefitClaims, ...mappedVppRequests, ...mappedNotes].sort((a, b) => b.timestamp - a.timestamp);
+      const allNotifications = [...mappedTasks, ...mappedJustifications, ...mappedBookings, ...mappedBenefitClaims, ...mappedVppRequests, ...mappedSigning, ...mappedNotes].sort((a, b) => b.timestamp - a.timestamp);
       setNotifications(allNotifications);
     } catch (err) {
       console.error("Error fetching notifications for header:", err);
@@ -826,6 +918,9 @@ export default function Header({ title, subtitle }: Props) {
                           : notif.type === "benefit"
                           // Mở thẳng tab Phúc lợi > Hiếu hỷ & Trợ cấp bên trang C&B
                           ? "/cb?subtab=funeral_wedding"
+                          : notif.type === "signing"
+                          // Mở thẳng tab Kế hoạch thu chi > Phiếu trình ký
+                          ? "/bao-cao"
                           : notif.type === "leave"
                           ? "/settings?tab=approvals&subtab=leave"
                           : notif.type === "trip"
@@ -847,6 +942,8 @@ export default function Header({ title, subtitle }: Props) {
                             ? "bg-rose-50 text-rose-700"
                             : notif.type === "vpp"
                             ? "bg-violet-50 text-violet-700"
+                            : notif.type === "signing"
+                            ? "bg-amber-50 text-amber-700"
                             : notif.type === "note"
                             // Vàng hổ phách, trùng màu thẻ ghi chú trên lịch
                             ? "bg-amber-100 text-amber-800"
