@@ -450,10 +450,12 @@ function ResultCard({
 
 // ─── HELPERS FOR TABLE VIEW ──────────────────────────────────────────────────
 
-// Số cột đầu được GHIM khi kéo ngang: STT, Ngày (vòng 1/vòng 2/ngày tạo), Tên ứng
-// viên, Email, SĐT. Bảng rộng ~2500px nên màn hình nhỏ kéo sang phải là mất hết mốc
-// nhận dạng dòng — ghim 5 cột này thì luôn biết đang xem ai, ngày nào.
-const FROZEN_COL_COUNT = 5;
+// Số cột đầu được GHIM khi kéo ngang: STT, Ngày (ngày tạo / vòng 1 / vòng 2), Tên
+// ứng viên. Bảng rộng ~2500px nên màn hình nhỏ kéo sang phải là mất hết mốc nhận
+// dạng dòng — ghim 3 cột này thì luôn biết đang xem ai, ngày nào.
+//
+// Đổi con số này là đủ: toạ độ ghim, đổ bóng mép và nền đục đều bám theo nó.
+const FROZEN_COL_COUNT = 3;
 
 // Toạ độ `left` cộng dồn theo width khai báo trong getColumnsForTab — KHÔNG hardcode
 // 640px, đổi width của cột nào thì vị trí ghim tự khớp theo.
