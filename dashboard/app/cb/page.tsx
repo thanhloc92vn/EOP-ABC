@@ -220,42 +220,98 @@ const MOCK_BHXH_LOGS = [
   { name: "Phạm Văn Dũng", code: "0123456792", base: 22000000, SI: 1760000, HI: 330000, UI: 220000, company_total: 4730000, booklet: "Công ty giữ" }
 ];
 
-const BENEFIT_POLICY: Record<string, Record<string, number | string>> = {
-  "Sinh nhật": {
-    "Điều hành cao cấp": "Theo phê duyệt",
-    "Quản lý cấp cao": 1000000,
-    "Quản lý cấp trung": 500000,
-    "Quản lý sơ cấp": 400000,
-    "CBNV": 300000
-  },
-  "Kết hôn": {
-    "Điều hành cao cấp": "Theo phê duyệt",
-    "Quản lý cấp cao": 2000000,
-    "Quản lý cấp trung": 1000000,
-    "Quản lý sơ cấp": 700000,
-    "CBNV": 500000
-  },
-  "Sinh con": {
-    "Điều hành cao cấp": "Theo phê duyệt",
-    "Quản lý cấp cao": 2000000,
-    "Quản lý cấp trung": 1000000,
-    "Quản lý sơ cấp": 500000,
-    "CBNV": 500000
-  },
-  "Ốm đau": {
-    "Điều hành cao cấp": "Theo phê duyệt",
-    "Quản lý cấp cao": 1000000,
-    "Quản lý cấp trung": 500000,
-    "Quản lý sơ cấp": 400000,
-    "CBNV": 300000
-  },
-  "Tử tuất": {
-    "Điều hành cao cấp": "Theo phê duyệt",
-    "Quản lý cấp cao": 2000000,
-    "Quản lý cấp trung": 1000000,
-    "Quản lý sơ cấp": 700000,
-    "CBNV": 500000
-  }
+// ─── ĐỊNH MỨC TRỢ CẤP PHÚC LỢI (bảng `benefit_policies`, migration 047) ───
+// Mỗi cấp có 2 phần: tiền mặt (`*_amount`) và hiện vật (`*_gift`, tên hiện vật
+// lấy ở `gift_label` của dòng — giỏ hoa / vòng hoa). null = cấp đó không áp
+// dụng, hiển thị "—".
+type BenefitLevelKey = "exec" | "senior" | "mid" | "junior" | "staff";
+
+type BenefitPolicy = {
+  code: string;
+  name: string;
+  gift_label: string | null;
+  sort_order: number;
+  updated_at?: string;
+  updated_by?: string | null;
+} & Record<`${BenefitLevelKey}_amount` | `${BenefitLevelKey}_gift`, number | null>;
+
+const BENEFIT_LEVELS: { key: BenefitLevelKey; label: string }[] = [
+  { key: "exec", label: "Điều hành cao cấp" },
+  { key: "senior", label: "Quản lý cấp cao" },
+  { key: "mid", label: "Quản lý cấp trung" },
+  { key: "junior", label: "Quản lý sơ cấp" },
+  { key: "staff", label: "CBNV" }
+];
+
+const BENEFIT_LEVEL_KEY: Record<string, BenefitLevelKey> = {
+  "Điều hành cao cấp": "exec",
+  "Quản lý cấp cao": "senior",
+  "Quản lý cấp trung": "mid",
+  "Quản lý sơ cấp": "junior",
+  "CBNV": "staff"
+};
+
+// Định mức điều chỉnh 2026 — dùng khi chưa chạy migration 047 hoặc DB lỗi.
+const BENEFIT_POLICY_FALLBACK: BenefitPolicy[] = [
+  { code: "birthday", name: "Sinh nhật", gift_label: "Giỏ hoa", sort_order: 1,
+    exec_amount: 2000000, exec_gift: 1000000, senior_amount: 1000000, senior_gift: 800000,
+    mid_amount: 800000, mid_gift: 500000, junior_amount: 600000, junior_gift: null,
+    staff_amount: 400000, staff_gift: null },
+  { code: "marriage", name: "Kết hôn", gift_label: null, sort_order: 2,
+    exec_amount: 5000000, exec_gift: null, senior_amount: 3000000, senior_gift: null,
+    mid_amount: 2000000, mid_gift: null, junior_amount: 1000000, junior_gift: null,
+    staff_amount: 1000000, staff_gift: null },
+  { code: "childbirth", name: "Sinh con", gift_label: null, sort_order: 3,
+    exec_amount: 3000000, exec_gift: null, senior_amount: 2000000, senior_gift: null,
+    mid_amount: 1000000, mid_gift: null, junior_amount: 700000, junior_gift: null,
+    staff_amount: 500000, staff_gift: null },
+  { code: "spouse_childbirth", name: "Vợ CBNV sinh con", gift_label: null, sort_order: 4,
+    exec_amount: 2000000, exec_gift: null, senior_amount: 1000000, senior_gift: null,
+    mid_amount: 800000, mid_gift: null, junior_amount: 600000, junior_gift: null,
+    staff_amount: 400000, staff_gift: null },
+  { code: "sickness", name: "Ốm đau", gift_label: null, sort_order: 5,
+    exec_amount: 2000000, exec_gift: null, senior_amount: 1000000, senior_gift: null,
+    mid_amount: 800000, mid_gift: null, junior_amount: 600000, junior_gift: null,
+    staff_amount: 400000, staff_gift: null },
+  { code: "relative", name: "Thân nhân", gift_label: null, sort_order: 6,
+    exec_amount: 2000000, exec_gift: null, senior_amount: 1000000, senior_gift: null,
+    mid_amount: null, mid_gift: null, junior_amount: null, junior_gift: null,
+    staff_amount: null, staff_gift: null },
+  { code: "funeral_immediate", name: "Tử tuất (vợ/chồng, bố mẹ vợ chồng, con hợp pháp)", gift_label: "Vòng hoa", sort_order: 7,
+    exec_amount: 3000000, exec_gift: 1500000, senior_amount: 2000000, senior_gift: 1500000,
+    mid_amount: 1000000, mid_gift: 1000000, junior_amount: 700000, junior_gift: 1000000,
+    staff_amount: 500000, staff_gift: 1000000 },
+  { code: "funeral_extended", name: "Tử tuất (ông bà nội ngoại, anh chị em ruột)", gift_label: "Vòng hoa", sort_order: 8,
+    exec_amount: 2000000, exec_gift: 1500000, senior_amount: 1000000, senior_gift: 1500000,
+    mid_amount: 500000, mid_gift: 1000000, junior_amount: null, junior_gift: 1000000,
+    staff_amount: null, staff_gift: 1000000 }
+];
+
+// Tiền mặt + hiện vật của một ô (dòng phúc lợi × cấp nhân sự)
+const benefitCell = (p: BenefitPolicy | undefined, level: string) => {
+  const key = BENEFIT_LEVEL_KEY[level] || "staff";
+  return {
+    amount: p ? p[`${key}_amount`] : null,
+    gift: p ? p[`${key}_gift`] : null,
+    giftLabel: p?.gift_label || "Hiện vật"
+  };
+};
+
+// Chuỗi hiển thị một ô: "2.000.000 đ", "800.000 đ + Giỏ hoa 500.000 đ",
+// "Vòng hoa 1.000.000 đ" hoặc "—" khi cấp đó không áp dụng.
+const benefitCellText = (p: BenefitPolicy | undefined, level: string) => {
+  const c = benefitCell(p, level);
+  const parts: string[] = [];
+  if (c.amount !== null && c.amount !== undefined) parts.push(`${c.amount.toLocaleString("vi-VN")} đ`);
+  if (c.gift !== null && c.gift !== undefined) parts.push(`${c.giftLabel} ${c.gift.toLocaleString("vi-VN")} đ`);
+  return parts.length ? parts.join(" + ") : "—";
+};
+
+// Số tiền mặc định điền vào phiếu trợ cấp: lấy phần tiền mặt; ô chỉ có hiện
+// vật (vòng hoa) thì lấy giá trị hiện vật.
+const benefitClaimAmount = (p: BenefitPolicy | undefined, level: string) => {
+  const c = benefitCell(p, level);
+  return c.amount ?? c.gift ?? 0;
 };
 
 const getEmployeeLevel = (role: string): string => {
@@ -698,6 +754,13 @@ export default function CBPage() {
   const [allowanceDraft, setAllowanceDraft] = useState<AllowancePolicy | null>(null);
   const [savingAllowance, setSavingAllowance] = useState(false);
   const [canViewTimesheetSummary, setCanViewTimesheetSummary] = useState(false);
+
+  // Định mức trợ cấp phúc lợi (benefit_policies) + sửa tay cả bảng một lượt
+  const [benefitPolicies, setBenefitPolicies] = useState<BenefitPolicy[]>(BENEFIT_POLICY_FALLBACK);
+  const [canEditBenefitPolicy, setCanEditBenefitPolicy] = useState(false);
+  const [editingBenefitPolicy, setEditingBenefitPolicy] = useState(false);
+  const [benefitPolicyDraft, setBenefitPolicyDraft] = useState<BenefitPolicy[] | null>(null);
+  const [savingBenefitPolicy, setSavingBenefitPolicy] = useState(false);
 
   // Cùng lý do với chốt chặn lương ở trên: ẩn NÚT tab "Lấy ngày công máy chấm
   // công" thôi chưa đủ vì nội dung render theo state — phải đẩy người không đủ
@@ -1827,7 +1890,8 @@ export default function CBPage() {
     if (!emp) return;
 
     const level = getEmployeeLevel(emp.role);
-    let amount: number | string = BENEFIT_POLICY[claimForm.category][level];
+    const policy = benefitPolicies.find(p => p.name === claimForm.category);
+    let amount: number | string = benefitClaimAmount(policy, level);
     if (claimForm.customAmount) {
       amount = isNaN(Number(claimForm.customAmount)) ? claimForm.customAmount : Number(claimForm.customAmount);
     }
@@ -3098,6 +3162,66 @@ export default function CBPage() {
     }
   };
 
+  const fetchBenefitPolicies = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("benefit_policies")
+        .select("*")
+        .order("sort_order", { ascending: true });
+      if (error) throw error;
+      if (data && data.length > 0) setBenefitPolicies(data as BenefitPolicy[]);
+    } catch (e) {
+      // Chưa chạy migration 047 -> giữ BENEFIT_POLICY_FALLBACK, bảng vẫn xem được
+      console.error("Error fetching benefit policies:", e);
+    }
+  };
+
+  // Ô để trống = cấp đó không áp dụng -> lưu null (hiển thị "—"), không phải 0
+  const updateBenefitDraft = (
+    code: string,
+    field: `${BenefitLevelKey}_amount` | `${BenefitLevelKey}_gift`,
+    raw: string
+  ) => {
+    const value = raw.trim() === "" ? null : Number(raw);
+    if (value !== null && isNaN(value)) return;
+    setBenefitPolicyDraft(prev =>
+      (prev || []).map(p => (p.code === code ? { ...p, [field]: value } : p))
+    );
+  };
+
+  const handleSaveBenefitPolicy = async () => {
+    if (!benefitPolicyDraft || !canEditBenefitPolicy) return;
+    setSavingBenefitPolicy(true);
+    try {
+      const stamp = {
+        updated_at: new Date().toISOString(),
+        updated_by: currentUser?.name || currentUser?.email || null
+      };
+      for (const row of benefitPolicyDraft) {
+        const { error } = await supabase
+          .from("benefit_policies")
+          .update({
+            exec_amount: row.exec_amount, exec_gift: row.exec_gift,
+            senior_amount: row.senior_amount, senior_gift: row.senior_gift,
+            mid_amount: row.mid_amount, mid_gift: row.mid_gift,
+            junior_amount: row.junior_amount, junior_gift: row.junior_gift,
+            staff_amount: row.staff_amount, staff_gift: row.staff_gift,
+            ...stamp
+          })
+          .eq("code", row.code);
+        if (error) throw error;
+      }
+      setBenefitPolicies(benefitPolicyDraft);
+      setEditingBenefitPolicy(false);
+      setBenefitPolicyDraft(null);
+    } catch (err: any) {
+      console.error("Error saving benefit policies:", err);
+      alert("Lỗi khi lưu định mức phúc lợi: " + (err.message || "Lỗi không xác định"));
+    } finally {
+      setSavingBenefitPolicy(false);
+    }
+  };
+
   const handleSaveAllowance = async () => {
     if (!allowanceDraft || !canEditAllowance) return;
     setSavingAllowance(true);
@@ -3179,6 +3303,10 @@ export default function CBPage() {
       // Duyệt chi phúc lợi (hiếu hỷ + thưởng lễ): Admin hoặc cờ can_approve_benefit
       setCanApproveBenefit(!!(isAdmin || perms.canApproveBenefit));
 
+      // Sửa tay bảng định mức phúc lợi: Admin hoặc cờ can_manage_employees
+      // ("Quản lý hồ sơ nhân sự") — RLS benefit_policies chặn y hệt ở tầng DB.
+      setCanEditBenefitPolicy(!!(isAdmin || perms.canManageEmployees));
+
       const userInfo = {
         email,
         name: empData?.name || session.user.user_metadata?.full_name || session.user.user_metadata?.name || "Người dùng",
@@ -3198,6 +3326,7 @@ export default function CBPage() {
       await fetchExplanations();
       await fetchTravels();
       await fetchAllowancePolicies();
+      await fetchBenefitPolicies();
     } catch (err) {
       console.error("Error checking user access:", err);
     } finally {
@@ -3999,9 +4128,14 @@ export default function CBPage() {
         if (!parsed) return null;
         
         const level = getEmployeeLevel(emp.role);
-        const giftVal = BENEFIT_POLICY["Sinh nhật"][level];
-        const giftStr = giftVal === "Theo phê duyệt" ? "Theo phê duyệt" : `Hộp quà & ${giftVal.toLocaleString("vi-VN")}đ`;
-        const giftAmount = typeof giftVal === "number" ? giftVal : 0;
+        const birthdayPolicy = benefitPolicies.find(p => p.code === "birthday");
+        const cell = benefitCell(birthdayPolicy, level);
+        const giftAmount = cell.amount ?? 0;
+        // Giỏ hoa (nếu cấp đó có) đi kèm hộp quà, ghi rõ để HCNS chuẩn bị đúng
+        const giftStr = [
+          `Hộp quà & ${giftAmount.toLocaleString("vi-VN")}đ`,
+          cell.gift !== null && cell.gift !== undefined ? `${cell.giftLabel} ${cell.gift.toLocaleString("vi-VN")}đ` : ""
+        ].filter(Boolean).join(" + ");
         const tenure = getEmployeeTenureStr(emp);
         
         return {
@@ -4022,7 +4156,7 @@ export default function CBPage() {
       .filter((b): b is NonNullable<typeof b> => b !== null && b.month === selectedBirthdayMonth)
       .filter(b => hasFullAccess || b.name === currentUser?.name)
       .sort((a, b) => a.day - b.day);
-  }, [employees, selectedBirthdayMonth, hasFullAccess, currentUser]);
+  }, [employees, selectedBirthdayMonth, hasFullAccess, currentUser, benefitPolicies]);
 
   const daysInMonth = useMemo(() => {
     const year = new Date().getFullYear();
@@ -6578,15 +6712,57 @@ export default function CBPage() {
                           <h3 className="font-heading font-black text-base leading-tight">Định mức trợ cấp phúc lợi đã duyệt</h3>
                           <p className="text-white/80 text-xs font-medium mt-0.5">Chính sách trợ cấp áp dụng thống nhất cho các cấp nhân sự công ty</p>
                         </div>
+
+                        {/* Sửa tay: Admin hoặc cờ "Quản lý hồ sơ nhân sự" */}
+                        {canEditBenefitPolicy && (
+                          <div className="ml-auto flex items-center gap-2 shrink-0">
+                            {!editingBenefitPolicy ? (
+                              <button
+                                type="button"
+                                onClick={() => { setEditingBenefitPolicy(true); setBenefitPolicyDraft(benefitPolicies.map(p => ({ ...p }))); }}
+                                className="px-3 py-1.5 bg-white/20 hover:bg-white/30 backdrop-blur text-white text-[11px] font-bold rounded-xl border border-white/30 transition-all cursor-pointer active:scale-95 inline-flex items-center gap-1.5"
+                                title="Chỉnh định mức phúc lợi"
+                              >
+                                <Edit2 size={13} /> Chỉnh định mức
+                              </button>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={handleSaveBenefitPolicy}
+                                  disabled={savingBenefitPolicy}
+                                  className="px-3 py-1.5 bg-white hover:bg-emerald-50 text-emerald-700 text-[11px] font-bold rounded-xl transition-all cursor-pointer active:scale-95 inline-flex items-center gap-1.5 disabled:opacity-60 shadow-sm"
+                                >
+                                  {savingBenefitPolicy ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} Lưu định mức
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => { setEditingBenefitPolicy(false); setBenefitPolicyDraft(null); }}
+                                  disabled={savingBenefitPolicy}
+                                  className="px-3 py-1.5 bg-white/20 hover:bg-white/30 backdrop-blur text-white text-[11px] font-bold rounded-xl border border-white/30 transition-all cursor-pointer active:scale-95 inline-flex items-center gap-1.5 disabled:opacity-60"
+                                >
+                                  <X size={13} /> Hủy
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
+
+                    {editingBenefitPolicy && (
+                      <p className="text-[10px] font-semibold text-slate-500 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                        Ô trên là <strong className="text-slate-700">tiền mặt</strong>, ô dưới (nền xanh) là giá trị{" "}
+                        <strong className="text-slate-700">giỏ hoa / vòng hoa</strong>. Để trống nghĩa là cấp đó không áp dụng khoản này.
+                      </p>
+                    )}
 
                     <div className="overflow-x-auto">
                       <table className="w-full text-xs text-left border-collapse">
                         <thead>
                           <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 font-extrabold uppercase tracking-wider text-[10px]">
                             <th className="py-3 px-3 w-12 text-center">Stt</th>
-                            <th className="py-3 px-3 w-40">Nội dung</th>
+                            <th className="py-3 px-3 w-56">Nội dung</th>
                             <th className="py-3 px-3 text-center bg-blue-50/30 text-blue-800">Điều hành cao cấp</th>
                             <th className="py-3 px-3 text-center text-slate-700">Quản lý cấp cao</th>
                             <th className="py-3 px-3 text-center text-slate-700">Quản lý cấp trung</th>
@@ -6595,33 +6771,66 @@ export default function CBPage() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
-                          {Object.entries(BENEFIT_POLICY).map(([category, levels], idx) => (
-                            <tr key={category} className="hover:bg-slate-50/50 transition-colors">
-                              <td className="py-3.5 px-3 text-center text-slate-400 font-bold">{idx + 1}</td>
-                              <td className="py-3.5 px-3 text-slate-800 font-bold">{category}</td>
-                              <td className="py-3.5 px-3 text-center font-bold bg-blue-50/20 text-blue-700 italic">
-                                {levels["Điều hành cao cấp"]}
+                          {(editingBenefitPolicy && benefitPolicyDraft ? benefitPolicyDraft : benefitPolicies).map((row, idx) => (
+                            <tr key={row.code} className="hover:bg-slate-50/50 transition-colors">
+                              <td className="py-3.5 px-3 text-center text-slate-400 font-bold align-top">{idx + 1}</td>
+                              <td className="py-3.5 px-3 text-slate-800 font-bold align-top leading-snug">
+                                {row.name}
+                                {row.gift_label && (
+                                  <span className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">
+                                    Kèm {row.gift_label}
+                                  </span>
+                                )}
                               </td>
-                              <td className="py-3.5 px-3 text-center font-bold text-slate-800">
-                                {typeof levels["Quản lý cấp cao"] === "number" 
-                                  ? levels["Quản lý cấp cao"].toLocaleString("vi-VN") + " đ" 
-                                  : levels["Quản lý cấp cao"]}
-                              </td>
-                              <td className="py-3.5 px-3 text-center text-slate-600">
-                                {typeof levels["Quản lý cấp trung"] === "number" 
-                                  ? levels["Quản lý cấp trung"].toLocaleString("vi-VN") + " đ" 
-                                  : levels["Quản lý cấp trung"]}
-                              </td>
-                              <td className="py-3.5 px-3 text-center text-slate-600">
-                                {typeof levels["Quản lý sơ cấp"] === "number" 
-                                  ? levels["Quản lý sơ cấp"].toLocaleString("vi-VN") + " đ" 
-                                  : levels["Quản lý sơ cấp"]}
-                              </td>
-                              <td className="py-3.5 px-3 text-center text-slate-600">
-                                {typeof levels["CBNV"] === "number" 
-                                  ? levels["CBNV"].toLocaleString("vi-VN") + " đ" 
-                                  : levels["CBNV"]}
-                              </td>
+                              {BENEFIT_LEVELS.map(lv => {
+                                const amount = row[`${lv.key}_amount`];
+                                const gift = row[`${lv.key}_gift`];
+                                const isExec = lv.key === "exec";
+                                return (
+                                  <td
+                                    key={lv.key}
+                                    className={`py-3.5 px-3 text-center align-top ${isExec ? "bg-blue-50/20 text-blue-700 font-bold" : "text-slate-600"}`}
+                                  >
+                                    {!editingBenefitPolicy ? (
+                                      <>
+                                        <div className={amount !== null && amount !== undefined ? "font-bold" : "text-slate-300"}>
+                                          {amount !== null && amount !== undefined ? `${amount.toLocaleString("vi-VN")} đ` : (gift === null || gift === undefined ? "—" : "")}
+                                        </div>
+                                        {gift !== null && gift !== undefined && (
+                                          <div className="text-[10px] font-semibold text-emerald-600 mt-0.5">
+                                            {row.gift_label || "Hiện vật"} {gift.toLocaleString("vi-VN")} đ
+                                          </div>
+                                        )}
+                                      </>
+                                    ) : (
+                                      <div className="space-y-1">
+                                        <input
+                                          type="number"
+                                          min={0}
+                                          step={1000}
+                                          value={amount ?? ""}
+                                          placeholder="—"
+                                          onChange={(e) => updateBenefitDraft(row.code, `${lv.key}_amount`, e.target.value)}
+                                          className="w-full px-2 py-1 text-[11px] text-center bg-white border border-slate-200 rounded-lg focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none"
+                                          title="Tiền mặt (để trống nếu cấp này không áp dụng)"
+                                        />
+                                        {row.gift_label && (
+                                          <input
+                                            type="number"
+                                            min={0}
+                                            step={1000}
+                                            value={gift ?? ""}
+                                            placeholder={row.gift_label}
+                                            onChange={(e) => updateBenefitDraft(row.code, `${lv.key}_gift`, e.target.value)}
+                                            className="w-full px-2 py-1 text-[11px] text-center bg-emerald-50/40 border border-emerald-200 rounded-lg focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 outline-none"
+                                            title={`${row.gift_label} (để trống nếu không áp dụng)`}
+                                          />
+                                        )}
+                                      </div>
+                                    )}
+                                  </td>
+                                );
+                              })}
                             </tr>
                           ))}
                         </tbody>
@@ -7238,8 +7447,8 @@ export default function CBPage() {
                         const emp = employees.find(e => e.id === claimForm.employeeId);
                         if (!emp) return null;
                         const level = getEmployeeLevel(emp.role);
-                        const stdAmount = BENEFIT_POLICY[claimForm.category][level];
-                        
+                        const stdPolicy = benefitPolicies.find(p => p.name === claimForm.category);
+
                         return (
                           <div className="grid grid-cols-2 gap-3 p-3.5 bg-slate-50 border border-slate-150 rounded-xl">
                             <div>
@@ -7249,7 +7458,7 @@ export default function CBPage() {
                             <div>
                               <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Mức hỗ trợ quy định:</div>
                               <div className="text-xs font-black text-emerald-600 mt-0.5">
-                                {typeof stdAmount === "number" ? `${stdAmount.toLocaleString("vi-VN")} đ` : stdAmount}
+                                {benefitCellText(stdPolicy, level)}
                               </div>
                             </div>
                           </div>
@@ -7265,11 +7474,10 @@ export default function CBPage() {
                             onChange={(e) => setClaimForm(prev => ({ ...prev, category: e.target.value as any }))}
                             className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none transition-all cursor-pointer"
                           >
-                            <option value="Sinh nhật">Sinh nhật</option>
-                            <option value="Kết hôn">Kết hôn</option>
-                            <option value="Sinh con">Sinh con</option>
-                            <option value="Ốm đau">Ốm đau</option>
-                            <option value="Tử tuất">Tử tuất</option>
+                            {/* Danh mục lấy thẳng từ bảng định mức để không lệch nhau */}
+                            {benefitPolicies.map(p => (
+                              <option key={p.code} value={p.name}>{p.name}</option>
+                            ))}
                           </select>
                         </div>
 
