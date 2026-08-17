@@ -25,6 +25,7 @@ import {
   CheckCircle2,
   XCircle,
   ShieldCheck,
+  AlertTriangle,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
@@ -104,6 +105,23 @@ function formatDateTime(iso: string) {
     " " +
     d.toLocaleDateString("vi-VN")
   );
+}
+
+// Hai khung giờ có giao nhau không. Chạm mép KHÔNG tính là trùng: xe trả lúc
+// 10:00 thì đơn khác bắt đầu đúng 10:00 vẫn hợp lệ. Khớp đúng với ràng buộc
+// '[)' của EXCLUDE constraint resource_bookings_no_overlap (migration 049).
+function isOverlap(aStart: string, aEnd: string, bStart: string, bEnd: string) {
+  return (
+    new Date(aStart).getTime() < new Date(bEnd).getTime() &&
+    new Date(aEnd).getTime() > new Date(bStart).getTime()
+  );
+}
+
+// Mã lỗi Postgres khi đụng EXCLUDE constraint (23P01 exclusion_violation).
+// Đây là hàng rào cuối: dù giao diện sót, database vẫn chặn -> đổi sang câu
+// tiếng Việt thay vì ném nguyên thông báo kỹ thuật cho người dùng.
+function isOverlapDbError(err: any) {
+  return err?.code === "23P01" || String(err?.message || "").includes("resource_bookings_no_overlap");
 }
 
 // ━━━ Lịch timeline theo ngày (dạng lịch phòng họp cổ điển: hàng = xe/phòng, cột = giờ) ━━━
@@ -312,6 +330,72 @@ function BookingContent() {
     }
   };
 
+  // Khung giờ đang chọn trên form, dạng ISO. null khi chưa chọn đủ hoặc giờ không hợp lệ.
+  const formRangeISO = useMemo(() => {
+    if (!startDate || !startClock || !endDate || !endClock) return null;
+    const s = new Date(`${startDate}T${startClock}:00`);
+    const e = new Date(`${endDate}T${endClock}:00`);
+    if (isNaN(s.getTime()) || isNaN(e.getTime()) || e <= s) return null;
+    return { start: s.toISOString(), end: e.toISOString() };
+  }, [startDate, startClock, endDate, endClock]);
+
+  // Lịch đang chiếm chỗ cùng xe/phòng + cùng khung giờ. Tính ngay khi người dùng
+  // vừa chọn xong giờ (không đợi bấm Gửi) để họ đổi giờ trước khi mất công điền nốt.
+  const formConflicts = useMemo(() => {
+    if (!formRangeISO || !resourceName) return [];
+    return bookings.filter(
+      (b) =>
+        b.booking_type === bookingType &&
+        b.resource_name === resourceName &&
+        b.status !== "rejected" &&
+        isOverlap(formRangeISO.start, formRangeISO.end, b.start_time, b.end_time)
+    );
+  }, [bookings, bookingType, resourceName, formRangeISO]);
+
+  // Lịch trùng của đơn đang mở trong popup, theo xe/phòng đang chọn trong popup.
+  // Dùng để hiện cảnh báo đỏ + khoá nút Phê duyệt/Điều phối cho người duyệt thấy ngay.
+  const modalConflicts = useMemo(() => {
+    if (!selectedBooking || selectedBooking.status === "rejected") return [];
+    const resource = modalResourceName || selectedBooking.resource_name;
+    return bookings.filter(
+      (o) =>
+        o.id !== selectedBooking.id &&
+        o.booking_type === selectedBooking.booking_type &&
+        o.resource_name === resource &&
+        o.status !== "rejected" &&
+        isOverlap(selectedBooking.start_time, selectedBooking.end_time, o.start_time, o.end_time)
+    );
+  }, [bookings, selectedBooking, modalResourceName]);
+
+  // Hỏi lại database ngay trước khi ghi — danh sách trên máy có thể cũ vài phút,
+  // trong lúc đó người khác đã book mất. Lỗi query thì NÉM RA, không được nuốt:
+  // trước đây `const { data } = ...` bỏ qua error nên query hỏng là im lặng cho qua.
+  const fetchServerConflicts = async (opts: {
+    resource: string;
+    type: BookingType;
+    startISO: string;
+    endISO: string;
+    excludeId?: string;
+  }) => {
+    let q = supabase
+      .from("resource_bookings")
+      .select("id, host_name, start_time, end_time, status")
+      .eq("booking_type", opts.type)
+      .eq("resource_name", opts.resource)
+      .neq("status", "rejected")
+      .lt("start_time", opts.endISO)
+      .gt("end_time", opts.startISO);
+    if (opts.excludeId) q = q.neq("id", opts.excludeId);
+    const { data, error } = await q;
+    if (error) throw error;
+    return data || [];
+  };
+
+  // Câu thông báo chung khi bị chặn vì trùng lịch
+  const describeConflict = (c: { host_name: string; start_time: string; end_time: string; status: string }, resource: string) =>
+    `${resource} đã có lịch ${formatDateTime(c.start_time)} → ${formatDateTime(c.end_time)} ` +
+    `(chủ trì: ${c.host_name}, trạng thái: ${STATUS_META[c.status]?.label || c.status}).`;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser) {
@@ -341,25 +425,20 @@ function BookingContent() {
     try {
       setSubmitting(true);
 
-      // Kiểm tra trùng lịch với các đăng ký chưa bị từ chối của cùng xe/phòng
-      const { data: conflicts } = await supabase
-        .from("resource_bookings")
-        .select("id, host_name, start_time, end_time, status")
-        .eq("resource_name", resourceName)
-        .neq("status", "rejected")
-        .lt("start_time", endISO)
-        .gt("end_time", startISO);
-
-      if (conflicts && conflicts.length > 0) {
-        const c = conflicts[0];
-        const cMeta = STATUS_META[c.status]?.label || c.status;
-        const ok = window.confirm(
-          `⚠️ ${resourceName} đã có đăng ký trùng khung giờ (${formatDateTime(c.start_time)} → ${formatDateTime(c.end_time)}, chủ trì: ${c.host_name}, trạng thái: ${cMeta}).\n\nBạn vẫn muốn gửi đăng ký này để cấp duyệt xem xét?`
-        );
-        if (!ok) {
-          setSubmitting(false);
-          return;
-        }
+      // Chặn cứng trùng lịch: hỏi lại database ngay trước khi ghi (danh sách trên
+      // máy có thể đã cũ). Trước đây chỗ này chỉ là window.confirm — bấm OK là lọt,
+      // nên 2 người vẫn book được cùng 1 xe cùng khung giờ.
+      const conflicts = await fetchServerConflicts({
+        resource: resourceName,
+        type: bookingType,
+        startISO,
+        endISO,
+      });
+      if (conflicts.length > 0) {
+        showToast("error", `Không gửi được — ${describeConflict(conflicts[0], resourceName)} Vui lòng chọn khung giờ khác hoặc ${isVehicle ? "xe" : "phòng"} khác.`);
+        fetchBookings(); // kéo lại danh sách để cảnh báo đỏ trên form hiện đúng
+        setSubmitting(false);
+        return;
       }
 
       const { data: inserted, error } = await supabase
@@ -438,7 +517,13 @@ function BookingContent() {
       fetchBookings();
     } catch (err: any) {
       console.error("Error submitting booking:", err);
-      showToast("error", "Lỗi khi gửi đăng ký: " + (err.message || "không xác định"));
+      if (isOverlapDbError(err)) {
+        // Hai người bấm Gửi gần như cùng lúc -> ràng buộc ở database chặn người sau
+        showToast("error", `Không gửi được — vừa có người khác đăng ký ${resourceName} trùng khung giờ này. Vui lòng chọn giờ khác.`);
+        fetchBookings();
+      } else {
+        showToast("error", "Lỗi khi gửi đăng ký: " + (err.message || "không xác định"));
+      }
     } finally {
       setSubmitting(false);
     }
@@ -505,11 +590,29 @@ function BookingContent() {
     if (!currentUser || processingAction) return;
     try {
       setProcessingAction(true);
+      const finalResource = modalResourceName || b.resource_name;
+
+      // Kiểm tra trùng NGAY TRƯỚC KHI duyệt. Cần cả khi giữ nguyên xe (đơn khác có
+      // thể đã chiếm chỗ sau lúc gửi) lẫn khi đổi sang xe/phòng khác trong popup.
+      const conflicts = await fetchServerConflicts({
+        resource: finalResource,
+        type: b.booking_type,
+        startISO: b.start_time,
+        endISO: b.end_time,
+        excludeId: b.id,
+      });
+      if (conflicts.length > 0) {
+        showToast("error", `Không phê duyệt được — ${describeConflict(conflicts[0], finalResource)} Cần Từ chối/Xoá lịch kia trước, hoặc đổi sang ${isVehicle ? "xe" : "phòng"} khác.`);
+        fetchBookings();
+        setProcessingAction(false);
+        return;
+      }
+
       const { error } = await supabase
         .from("resource_bookings")
         .update({
           status: "pending_hcns",
-          resource_name: modalResourceName || b.resource_name,
+          resource_name: finalResource,
           manager_approved_by: currentUser.name,
           manager_approved_at: new Date().toISOString(),
         })
@@ -536,7 +639,7 @@ function BookingContent() {
               mode: "notify_approver",
               stage: "final",
               smtpConfig: readSmtpConfig(),
-              booking: { ...b, resource_name: modalResourceName || b.resource_name, manager_approved_by: currentUser.name },
+              booking: { ...b, resource_name: finalResource, manager_approved_by: currentUser.name },
               approverEmails,
               siteUrl: window.location.origin,
             },
@@ -548,7 +651,12 @@ function BookingContent() {
       })();
     } catch (err: any) {
       console.error("Error manager-approving booking:", err);
-      showToast("error", "Lỗi khi phê duyệt đăng ký!");
+      showToast(
+        "error",
+        isOverlapDbError(err)
+          ? `Không phê duyệt được — ${isVehicle ? "xe" : "phòng"} này đã có lịch khác trùng khung giờ.`
+          : "Lỗi khi phê duyệt đăng ký!"
+      );
     } finally {
       setProcessingAction(false);
     }
@@ -560,6 +668,23 @@ function BookingContent() {
     try {
       setProcessingAction(true);
       const finalResource = modalResourceName || b.resource_name;
+
+      // Chặn điều phối 2 đơn vào cùng một xe/phòng cùng khung giờ — kể cả khi
+      // Hành chính đổi sang xe khác trong popup mà xe đó đã kín lịch.
+      const conflicts = await fetchServerConflicts({
+        resource: finalResource,
+        type: b.booking_type,
+        startISO: b.start_time,
+        endISO: b.end_time,
+        excludeId: b.id,
+      });
+      if (conflicts.length > 0) {
+        showToast("error", `Không điều phối được — ${describeConflict(conflicts[0], finalResource)} Cần Từ chối/Xoá lịch kia trước, hoặc đổi sang ${isVehicle ? "xe" : "phòng"} khác.`);
+        fetchBookings();
+        setProcessingAction(false);
+        return;
+      }
+
       const { error } = await supabase
         .from("resource_bookings")
         .update({
@@ -590,7 +715,12 @@ function BookingContent() {
       );
     } catch (err: any) {
       console.error("Error dispatching booking:", err);
-      showToast("error", "Lỗi khi điều phối đăng ký!");
+      showToast(
+        "error",
+        isOverlapDbError(err)
+          ? `Không điều phối được — ${isVehicle ? "xe" : "phòng"} này đã có lịch khác trùng khung giờ.`
+          : "Lỗi khi điều phối đăng ký!"
+      );
     } finally {
       setProcessingAction(false);
     }
@@ -828,6 +958,25 @@ function BookingContent() {
                     )}
                   </div>
 
+                  {/* Cảnh báo trùng lịch — hiện ngay trong popup để người duyệt không
+                      phê duyệt nhầm 2 đơn cùng xe cùng giờ (sự cố Fortuner 19/8/2026) */}
+                  {modalConflicts.length > 0 && (
+                    <div className="rounded-xl border-2 border-rose-300 bg-rose-50 p-3 space-y-1.5">
+                      <p className="flex items-center gap-1.5 text-[11px] font-extrabold text-rose-700 uppercase">
+                        <AlertTriangle size={13} /> Trùng lịch — không thể duyệt
+                      </p>
+                      {modalConflicts.map((c) => (
+                        <p key={c.id} className="text-[11px] font-semibold text-rose-700">
+                          • {formatDateTime(c.start_time)} → {formatDateTime(c.end_time)} — {c.host_name} ({c.department}) —{" "}
+                          {STATUS_META[c.status]?.label || c.status}
+                        </p>
+                      ))}
+                      <p className="text-[10px] text-rose-600 font-semibold pt-0.5">
+                        Cần Từ chối hoặc Xoá lịch bên trên trước, hoặc đổi đơn này sang {isVehicle ? "xe" : "phòng"} khác.
+                      </p>
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <p className="text-slate-400 font-bold">Người chủ trì</p>
@@ -925,9 +1074,10 @@ function BookingContent() {
                   {isDeptManagerFor(selectedBooking) && selectedBooking.status === "pending_manager" && (
                     <button
                       type="button"
-                      disabled={processingAction}
+                      disabled={processingAction || modalConflicts.length > 0}
                       onClick={() => handleManagerApprove(selectedBooking)}
-                      className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold px-3.5 py-2 rounded-xl transition-all active:scale-95 cursor-pointer disabled:opacity-50 shadow-sm"
+                      title={modalConflicts.length > 0 ? "Đang trùng lịch với đăng ký khác — không phê duyệt được" : undefined}
+                      className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold px-3.5 py-2 rounded-xl transition-all active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
                     >
                       <CheckCircle2 size={13} /> Phê duyệt
                     </button>
@@ -936,9 +1086,10 @@ function BookingContent() {
                   {isHcnsApproverUser && selectedBooking.status === "pending_hcns" && (
                     <button
                       type="button"
-                      disabled={processingAction}
+                      disabled={processingAction || modalConflicts.length > 0}
                       onClick={() => handleHcnsDispatch(selectedBooking)}
-                      className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold px-3.5 py-2 rounded-xl transition-all active:scale-95 cursor-pointer disabled:opacity-50 shadow-sm"
+                      title={modalConflicts.length > 0 ? "Đang trùng lịch với đăng ký khác — không điều phối được" : undefined}
+                      className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold px-3.5 py-2 rounded-xl transition-all active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
                     >
                       <ShieldCheck size={13} /> Điều phối
                     </button>
@@ -1225,11 +1376,34 @@ function BookingContent() {
                 </div>
               )}
 
+              {/* Cảnh báo trùng lịch ngay khi vừa chọn xong xe + giờ (không đợi bấm Gửi),
+                  kèm khoá nút Gửi. Trước đây chỉ hỏi window.confirm lúc gửi, bấm OK là lọt. */}
+              {formConflicts.length > 0 && (
+                <div className="rounded-xl border-2 border-rose-300 bg-rose-50 p-4 space-y-2 animate-in fade-in duration-200">
+                  <p className="flex items-center gap-1.5 text-xs font-extrabold text-rose-700 uppercase">
+                    <AlertTriangle size={14} /> {resourceName} đã kín lịch khung giờ này
+                  </p>
+                  {formConflicts.map((c) => (
+                    <p key={c.id} className="text-[11px] font-semibold text-rose-700">
+                      • {formatDateTime(c.start_time)} → {formatDateTime(c.end_time)} — {c.host_name} ({c.department}) —{" "}
+                      {STATUS_META[c.status]?.label || c.status}
+                    </p>
+                  ))}
+                  <p className="text-[11px] text-rose-600 font-semibold">
+                    Vui lòng chọn khung giờ khác{resources.length > 1 ? `, hoặc đổi sang ${isVehicle ? "xe" : "phòng"} khác` : ""}. Nếu
+                    việc gấp cần nhường lịch, liên hệ Hành chính để xử lý lịch cũ trước.
+                  </p>
+                </div>
+              )}
+
               <div className="pt-4 border-t border-slate-100 flex items-center justify-end gap-4 flex-wrap">
+                {formConflicts.length > 0 && (
+                  <span className="text-[11px] font-bold text-rose-600">Đang trùng lịch — chưa gửi được</span>
+                )}
                 <button
                   type="submit"
-                  disabled={submitting}
-                  className="px-6 py-2.5 bg-[#005BAC] hover:bg-blue-700 disabled:opacity-60 text-white font-bold rounded-xl active:scale-95 transition-all shadow-md shadow-blue-500/10 flex items-center gap-2 cursor-pointer"
+                  disabled={submitting || formConflicts.length > 0}
+                  className="px-6 py-2.5 bg-[#005BAC] hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold rounded-xl active:scale-95 transition-all shadow-md shadow-blue-500/10 flex items-center gap-2 cursor-pointer"
                 >
                   {submitting ? (
                     <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
@@ -1308,13 +1482,52 @@ function BookingContent() {
                 {/* Các hàng xe / phòng họp */}
                 <div className="space-y-2">
                   {resources.map((res) => {
-                    const rowBookings = timelineBookings.filter((b) => b.resource_name === res);
+                    const rowBookings = timelineBookings
+                      .filter((b) => b.resource_name === res)
+                      .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+
+                    // Xếp tầng: lịch trùng giờ được đẩy xuống tầng dưới thay vì vẽ đè
+                    // lên nhau. Trước đây mọi khối đều `top-1 bottom-1` nên khối sau che
+                    // khối trước — nhìn y hệt 1 lịch, không ai phát hiện ra trùng.
+                    const lanes: BookingRow[][] = [];
+                    const laneOf = new Map<string, number>();
+                    const conflictIds = new Set<string>();
+                    rowBookings.forEach((b) => {
+                      rowBookings.forEach((o) => {
+                        if (o.id !== b.id && isOverlap(b.start_time, b.end_time, o.start_time, o.end_time)) {
+                          conflictIds.add(b.id);
+                        }
+                      });
+                      let idx = lanes.findIndex((lane) =>
+                        lane.every((o) => !isOverlap(b.start_time, b.end_time, o.start_time, o.end_time))
+                      );
+                      if (idx === -1) {
+                        lanes.push([]);
+                        idx = lanes.length - 1;
+                      }
+                      lanes[idx].push(b);
+                      laneOf.set(b.id, idx);
+                    });
+                    const laneCount = Math.max(1, lanes.length);
+
                     return (
                       <div key={res} className="flex items-center gap-2">
-                        <div className="w-32 shrink-0 text-xs font-bold text-slate-700 truncate pr-2" title={res}>
-                          {res}
+                        <div className="w-32 shrink-0 pr-2">
+                          <p className="text-xs font-bold text-slate-700 truncate" title={res}>
+                            {res}
+                          </p>
+                          {conflictIds.size > 0 && (
+                            <span className="inline-flex items-center gap-1 mt-0.5 text-[9px] font-extrabold text-rose-600 uppercase">
+                              <AlertTriangle size={10} /> Trùng lịch
+                            </span>
+                          )}
                         </div>
-                        <div className="relative flex-1 h-11 bg-slate-50 rounded-lg border border-slate-100 overflow-hidden">
+                        <div
+                          className={`relative flex-1 rounded-lg border overflow-hidden ${
+                            conflictIds.size > 0 ? "bg-rose-50/60 border-rose-200" : "bg-slate-50 border-slate-100"
+                          }`}
+                          style={{ height: laneCount * 36 + 8 }}
+                        >
                           {/* Đường kẻ dọc mỗi giờ */}
                           <div className="absolute inset-0 flex pointer-events-none">
                             {TIMELINE_HOURS.map((h, i) => (
@@ -1337,11 +1550,15 @@ function BookingContent() {
                               type="button"
                               key={b.id}
                               onClick={() => openBookingModal(b)}
-                              title={`${b.host_name} • ${formatDateTime(b.start_time)} ➔ ${formatDateTime(b.end_time)} • ${b.content} • ${STATUS_META[b.status]?.label || b.status} (bấm để xem chi tiết)`}
-                              className={`absolute top-1 bottom-1 rounded-md px-2 flex items-center text-[10px] font-bold text-white truncate shadow-sm cursor-pointer z-10 hover:brightness-95 active:scale-[0.98] transition-all ${
+                              title={`${b.host_name} • ${formatDateTime(b.start_time)} ➔ ${formatDateTime(b.end_time)} • ${b.content} • ${STATUS_META[b.status]?.label || b.status}${conflictIds.has(b.id) ? " • ⚠ TRÙNG LỊCH" : ""} (bấm để xem chi tiết)`}
+                              className={`absolute rounded-md px-2 flex items-center text-[10px] font-bold text-white truncate shadow-sm cursor-pointer z-10 hover:brightness-95 active:scale-[0.98] transition-all ${
                                 TIMELINE_STATUS_COLOR[b.status] || "bg-slate-400"
-                              }`}
-                              style={getTimelineBlockStyle(b)}
+                              } ${conflictIds.has(b.id) ? "ring-2 ring-rose-500 ring-offset-1" : ""}`}
+                              style={{
+                                ...getTimelineBlockStyle(b),
+                                top: (laneOf.get(b.id) ?? 0) * 36 + 4,
+                                height: 32,
+                              }}
                             >
                               {b.host_name}
                             </button>
