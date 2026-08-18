@@ -14,6 +14,7 @@ import {
   getTenureStr,
   parseLeaveTask,
   computeLeaveQuota,
+  CARRY_OVER_LAST_MONTH,
 } from "@/lib/annualLeave";
 import {
   User,
@@ -3970,6 +3971,9 @@ export default function CBPage() {
     return inMockConcurrent;
   };
 
+  // Đang trong quý I -> phép năm trước còn hiệu lực, bảng hiện thêm cột "Tồn năm trước".
+  const isCarryWindow = new Date().getMonth() + 1 <= CARRY_OVER_LAST_MONTH;
+
   const annualLeaveData = useMemo(() => {
     return employees.map(emp => {
       const isConcurrent = isConcurrentOrSupport(emp);
@@ -3996,6 +4000,8 @@ export default function CBPage() {
         hasOverride: quota.hasOverride,
         usedLeave: quota.used,
         pendingLeave: quota.pending,
+        carryLeave: quota.carry,
+        carryLeaveLeft: quota.carryLeft,
         remainingLeave: quota.remaining
       };
     });
@@ -6012,6 +6018,16 @@ export default function CBPage() {
                               </div>
                             </th>
                             <th className="py-3 px-3 text-center">Phép thâm niên</th>
+                            {/* Cột tồn chỉ tồn tại trong quý I — qua 1/4 là phép cũ hết
+                                hiệu lực, để cột rỗng quanh năm chỉ tổ rối bảng. */}
+                            {isCarryWindow && (
+                              <th className="py-3 px-3 text-center">
+                                Tồn năm trước
+                                <div className="normal-case tracking-normal text-[9px] font-bold text-slate-400 mt-0.5">
+                                  hết hạn 31/3
+                                </div>
+                              </th>
+                            )}
                             <th className="py-3 px-3 text-center">Tổng phép</th>
                             <th className="py-3 px-3 text-center">Đã nghỉ</th>
                             <th className="py-3 px-3 text-center">Còn lại</th>
@@ -6035,6 +6051,18 @@ export default function CBPage() {
                               <td className="py-3.5 px-3 text-center text-slate-500">
                                 {d.isConcurrent ? "0 ngày" : `+${d.seniorLeave} ngày`}
                               </td>
+                              {isCarryWindow && (
+                                <td className="py-3.5 px-3 text-center">
+                                  {d.carryLeave > 0 ? (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-50 text-amber-700 border border-amber-200"
+                                      title={`Còn dùng được ${d.carryLeaveLeft} ngày, hết hạn 31/3`}>
+                                      +{d.carryLeave} ngày
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-300">—</span>
+                                  )}
+                                </td>
+                              )}
                               {/* Admin bấm vào số để sửa tay. Bỏ trống ô rồi lưu là
                                   gỡ ghi đè, quay về công thức 12 + thâm niên. */}
                               <td className="py-3.5 px-3 text-center font-bold text-slate-800">
@@ -6237,6 +6265,17 @@ export default function CBPage() {
                                     }`}>{empLeave.remainingLeave} ngày</div>
                                   </div>
                                 </div>
+
+                                {/* Phép tồn năm trước — chỉ nhắc trong quý I, kèm hạn dùng
+                                    để nhân sự biết mà xài trước khi bị xoá. */}
+                                {isCarryWindow && empLeave.carryLeave > 0 && (
+                                  <div className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                                    Trong <strong>{empLeave.totalLeave} ngày</strong> hạn mức có <strong>{empLeave.carryLeave} ngày tồn của năm trước</strong>
+                                    {empLeave.carryLeaveLeft > 0
+                                      ? ` (còn dùng được ${empLeave.carryLeaveLeft} ngày)`
+                                      : " (đã dùng hết)"} — hết hạn 31/3, sau đó bị xoá. Nghỉ trong quý I sẽ trừ vào phần tồn này trước.
+                                  </div>
+                                )}
                                 
                                 {!empLeave.isConcurrent && (
                                   <div className="text-[9.5px] font-medium text-slate-400 leading-normal flex items-center gap-1 mt-1">

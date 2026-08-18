@@ -1820,6 +1820,13 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                       }`}>{leaveQuota.remaining}</div>
                     </div>
                   </div>
+                  {leaveQuota.carry > 0 && (
+                    <div className="text-[10.5px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 leading-snug">
+                      Hạn mức đang gồm <strong>{leaveQuota.carry} ngày tồn của năm trước</strong>
+                      {leaveQuota.carryLeft > 0 ? ` (còn ${leaveQuota.carryLeft} ngày)` : " (đã dùng hết)"} —
+                      hết hạn <strong>31/3</strong>, sau đó bị xoá. Nghỉ trong quý I trừ vào phần tồn này trước.
+                    </div>
+                  )}
                   {leaveOverQuota && (
                     <div className="text-[11px] font-bold text-rose-600 leading-snug border-t border-rose-200/70 pt-2">
                       Không đủ phép năm: xin nghỉ {leaveDaysCount} ngày nhưng chỉ còn {leaveQuota.remaining} ngày

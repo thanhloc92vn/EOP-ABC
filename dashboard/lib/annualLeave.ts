@@ -143,18 +143,25 @@ export const parseLeaveTask = (t: any) => {
   };
 };
 
+/** Phép năm cũ dùng được tới HẾT tháng này của năm sau, sang tháng 4 là xoá. */
+export const CARRY_OVER_LAST_MONTH = 3;
+
 export interface LeaveQuota {
   /** Phép cơ bản đã tích luỹ tới tháng này */
   base: number;
   /** Phép thâm niên: cứ đủ 5 năm +1 ngày */
   senior: number;
-  /** Tổng hạn mức (đã tính ô Admin nhập tay nếu có) */
+  /** Phép năm trước còn dư, CHƯA trừ gì — 0 nếu đã qua 31/3 */
+  carry: number;
+  /** Phép năm trước còn dùng được ngay lúc này (đã trừ phần đã nghỉ) */
+  carryLeft: number;
+  /** Tổng hạn mức = phép năm nay + phép tồn còn hiệu lực */
   total: number;
   /** Đã nghỉ — đơn phép năm ĐÃ DUYỆT trong năm nay */
   used: number;
   /** Đang giữ chỗ — đơn phép năm CHỜ DUYỆT trong năm nay */
   pending: number;
-  /** Còn được đăng ký = total - used - pending */
+  /** Còn được đăng ký */
   remaining: number;
   isConcurrent: boolean;
   /** Admin có nhập tay tổng phép cho người này không */
@@ -164,6 +171,17 @@ export interface LeaveQuota {
 
 // Đơn CHỜ DUYỆT cũng bị giữ chỗ. Nếu chỉ trừ đơn đã duyệt thì gửi 10 đơn liên
 // tiếp đều lọt vì chưa đơn nào được duyệt — đúng cái "đăng ký bừa" cần chặn.
+//
+// ─── PHÉP TỒN NĂM TRƯỚC ───
+// Phép năm cũ không mất ngay 1/1 mà mang sang dùng tới HẾT 31/3, sang 1/4 xoá.
+// VD dư 3 ngày của 2026 -> tháng 3/2027 có 6 ngày (3 cũ + 3 mới); qua tháng 4
+// còn đúng 4 ngày mới.
+//
+// Nghỉ trong quý I thì TRỪ VÀO PHÉP CŨ TRƯỚC (nó sắp hết hạn). Nhờ vậy ai nghỉ
+// 3 ngày trong tháng 1 thì sang tháng 4 vẫn còn nguyên 4 ngày phép mới.
+//
+// Số tồn tính trực tiếp lúc chạy từ chính dữ liệu đơn nghỉ — không cần bảng lưu
+// và không cần tác vụ chạy đêm giao thừa.
 export const computeLeaveQuota = (
   emp: any,
   entries: LeaveEntry[],
@@ -171,6 +189,7 @@ export const computeLeaveQuota = (
 ): LeaveQuota => {
   const ref = opts.ref || new Date();
   const year = ref.getFullYear();
+  const month = ref.getMonth() + 1;
   const isConcurrent = opts.isConcurrent ?? isConcurrentRole(emp);
 
   const base = getAccruedBaseLeave(emp, ref);
@@ -179,23 +198,61 @@ export const computeLeaveQuota = (
   const override = emp?.annual_leave_override;
   const hasOverride = override !== null && override !== undefined;
 
-  const total = isConcurrent ? 0 : hasOverride ? Number(override) : base + senior;
+  // Phép năm nay (chưa tính tồn). Admin nhập tay là CHỐT CỨNG cả cụm — con số
+  // gõ vào ô "Tổng phép" chính là tổng cuối cùng, đã bao gồm phần tồn nếu có.
+  const accrued = isConcurrent ? 0 : hasOverride ? Number(override) : base + senior;
 
-  const thisYearAnnual = entries.filter(
-    l => l.type === "Phép năm" && new Date(l.from).getFullYear() === year
-  );
   const sum = (list: LeaveEntry[]) => list.reduce((s, l) => s + (l.days || 0), 0);
+  const annualOfYear = (y: number) =>
+    entries.filter(l => l.type === "Phép năm" && new Date(l.from).getFullYear() === y);
+  // Đơn đã duyệt VÀ đơn đang chờ duyệt đều tính là đã tiêu.
+  const consumedIn = (y: number) =>
+    sum(annualOfYear(y).filter(l => l.status === "Đã duyệt" || l.status === "Chờ duyệt"));
 
-  const used = sum(thisYearAnnual.filter(l => l.status === "Đã duyệt"));
-  const pending = sum(thisYearAnnual.filter(l => l.status === "Chờ duyệt"));
+  // ── Quỹ phép tồn từ năm trước ──
+  // Hạn mức TRỌN năm ngoái = tích luỹ tính tới 31/12 năm ngoái, trừ đi số đã tiêu.
+  // Người vào việc trong năm nay thì getAccruedBaseLeave trả 0 -> tự khắc không có tồn.
+  let carryPool = 0;
+  if (!isConcurrent && !hasOverride) {
+    const endOfLastYear = new Date(year - 1, 11, 31);
+    const lastYearQuota =
+      getAccruedBaseLeave(emp, endOfLastYear) +
+      Math.floor(getTenureYears(emp, endOfLastYear) / 5);
+    carryPool = Math.max(0, lastYearQuota - consumedIn(year - 1));
+  }
+
+  const thisYear = annualOfYear(year);
+  const used = sum(thisYear.filter(l => l.status === "Đã duyệt"));
+  const pending = sum(thisYear.filter(l => l.status === "Chờ duyệt"));
+
+  // QUAN TRỌNG: quỹ cũ chỉ bù cho ngày nghỉ RƠI VÀO quý I. Ngày nghỉ tháng 6 mà
+  // vẫn được quỹ cũ gánh thì quỹ đó có xoá đâu — nó sống hết năm.
+  const isConsumed = (l: LeaveEntry) => l.status === "Đã duyệt" || l.status === "Chờ duyệt";
+  const inCarryWindow = (l: LeaveEntry) =>
+    new Date(l.from).getMonth() + 1 <= CARRY_OVER_LAST_MONTH;
+  const consumedInWindow = sum(thisYear.filter(l => isConsumed(l) && inCarryWindow(l)));
+  const consumedAfterWindow = sum(thisYear.filter(l => isConsumed(l) && !inCarryWindow(l)));
+
+  // Trừ phép cũ trước: trong quý I, tiêu tới đâu ăn vào quỹ cũ tới đó; vượt quá
+  // mới ăn sang phép năm nay. Ngày nghỉ ngoài quý I luôn ăn thẳng phép năm nay.
+  const carryUsed = Math.min(consumedInWindow, carryPool);
+  const spentFromNew = (consumedInWindow - carryUsed) + consumedAfterWindow;
+
+  // Qua 1/4 quỹ cũ hết hiệu lực: phần DƯ bị cắt, phần ĐÃ TIÊU trong quý I vẫn
+  // được ghi nhận nên không bị tính lại vào phép năm nay.
+  const carryStillValid = month <= CARRY_OVER_LAST_MONTH;
+  const carry = carryStillValid ? carryPool : 0;
+  const carryLeft = carryStillValid ? Math.max(0, carryPool - carryUsed) : 0;
 
   return {
     base: isConcurrent ? 0 : base,
     senior: isConcurrent ? 0 : senior,
-    total,
+    carry,
+    carryLeft,
+    total: accrued + carry,
     used,
     pending,
-    remaining: Math.max(0, total - used - pending),
+    remaining: Math.max(0, accrued - spentFromNew) + carryLeft,
     isConcurrent,
     hasOverride,
     tenureStr: getTenureStr(emp, ref),
