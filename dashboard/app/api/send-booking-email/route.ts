@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { smtpConfig, booking, decision, rejectReason, approverName, mode, approverEmails, stage, removedDaysLabel } = body;
+    const { smtpConfig, booking, decision, rejectReason, approverName, mode, approverEmails, stage, removedDaysLabel, previousStart, previousEnd } = body;
     const isNotifyMode = mode === "notify_approver";
 
     // ƯU TIÊN email hệ thống trên server (SMTP_USER/SMTP_PASS — ổn định, không phụ thuộc
@@ -42,8 +42,10 @@ export async function POST(request: NextRequest) {
 
     const isApproved = decision === "approved";
     const isDeleted = decision === "deleted";
-    // "trimmed": lịch nhiều ngày bị bỏ bớt ngày, phần còn lại VẪN hiệu lực.
-    const isTrimmed = decision === "trimmed";
+    // Lịch bị điều chỉnh nhưng VẪN hiệu lực: "trimmed" = bỏ bớt ngày trong lịch
+    // nhiều ngày, "rescheduled" = bộ phận điều phối đổi ngày giờ sử dụng.
+    const isRescheduled = decision === "rescheduled";
+    const isTrimmed = decision === "trimmed" || isRescheduled;
     const isVehicle = booking.booking_type === "xe";
     const typeLabel = isVehicle ? "Đăng ký xe công tác" : "Đăng ký phòng họp";
     // Brand công ty (tenant_config): tên gửi, tiêu đề hệ thống, URL trong email
@@ -76,6 +78,8 @@ export async function POST(request: NextRequest) {
     const statusBorder = isApproved ? "#bbf7d0" : isTrimmed ? "#fcd34d" : isDeleted ? "#e2e8f0" : "#fca5a5";
     const statusText = isApproved
       ? "ĐÃ ĐƯỢC PHÊ DUYỆT"
+      : isRescheduled
+      ? "LỊCH ĐÃ ĐỔI THỜI GIAN"
       : isTrimmed
       ? "LỊCH ĐÃ ĐƯỢC ĐIỀU CHỈNH"
       : isDeleted
@@ -212,6 +216,8 @@ export async function POST(request: NextRequest) {
       infoRow(
         isApproved
           ? "Người xác nhận (phòng HCNS)"
+          : isRescheduled
+          ? "Người đổi thời gian"
           : isTrimmed
           ? "Người điều chỉnh lịch"
           : isDeleted
@@ -225,8 +231,12 @@ export async function POST(request: NextRequest) {
       ? `
         <p style="margin: 0; font-size: 14px; line-height: 1.7; color: #334155;">
           Lịch <strong>${typeLabel.toLowerCase()}</strong> của Anh/Chị (${isVehicle ? "xe" : "phòng họp"} <strong>${booking.resource_name}</strong>)
-          đã được <strong style="color: #d97706;">điều chỉnh</strong>: bỏ ngày <strong>${removedDaysLabel || "-"}</strong>.
-          Phần lịch còn lại <strong>vẫn giữ nguyên hiệu lực</strong>:
+          đã được <strong style="color: #d97706;">điều chỉnh</strong>${
+            isRescheduled
+              ? `${previousStart && previousEnd ? `: đổi từ <strong>${fmtTime(previousStart)} ➔ ${fmtTime(previousEnd)}</strong>` : ""}`
+              : `: bỏ ngày <strong>${removedDaysLabel || "-"}</strong>`
+          }.
+          ${isRescheduled ? "Khung thời gian mới" : "Phần lịch còn lại <strong>vẫn giữ nguyên hiệu lực</strong>"}:
           <strong>${fmtTime(booking.start_time)} ➔ ${fmtTime(booking.end_time)}</strong>.
         </p>
         ${rejectReason ? `
@@ -235,7 +245,9 @@ export async function POST(request: NextRequest) {
           <div style="font-size: 13px; color: #78350f; font-weight: 600;">${rejectReason}</div>
         </div>` : ""}
         <p style="margin: 12px 0 0 0; font-size: 13px; line-height: 1.7; color: #475569;">
-          ${isVehicle ? "Xe" : "Phòng họp"} đã được trả về trạng thái trống trong ngày bị bỏ, các phòng ban khác có thể đăng ký sử dụng.
+          ${isRescheduled
+            ? `Khung giờ cũ đã được trả về trạng thái trống cho các phòng ban khác. Anh/Chị vui lòng bố trí lại lịch làm việc theo khung thời gian mới.`
+            : `${isVehicle ? "Xe" : "Phòng họp"} đã được trả về trạng thái trống trong ngày bị bỏ, các phòng ban khác có thể đăng ký sử dụng.`}
           Nếu đây là nhầm lẫn, vui lòng liên hệ ngay bộ phận điều phối (Phòng HCNS).
         </p>`
       : isApproved
@@ -294,7 +306,7 @@ export async function POST(request: NextRequest) {
 
           <!-- Status Banner -->
           <div style="margin: 28px 40px 0 40px; padding: 16px 20px; background-color: ${statusBg}; border: 1px solid ${statusBorder}; border-radius: 12px; text-align: center;">
-            <span style="font-size: 16px; font-weight: 900; color: ${statusColor}; letter-spacing: 0.05em;">${isApproved ? "✅" : isTrimmed ? "✂️" : isDeleted ? "🗑️" : "❌"} ${statusText}</span>
+            <span style="font-size: 16px; font-weight: 900; color: ${statusColor}; letter-spacing: 0.05em;">${isApproved ? "✅" : isRescheduled ? "🕒" : isTrimmed ? "✂️" : isDeleted ? "🗑️" : "❌"} ${statusText}</span>
           </div>
 
           <!-- Greeting & Result -->
@@ -336,7 +348,7 @@ export async function POST(request: NextRequest) {
     await transporter.sendMail({
       from: `"${cfg.email_sender_name}" <${smtpUser}>`,
       to: booking.requester_email,
-      subject: `${isApproved ? "✅ Đã duyệt" : isTrimmed ? "✂️ Đã điều chỉnh lịch" : isDeleted ? "🗑️ Đã xoá lịch" : "❌ Từ chối"} - ${typeLabel} ${booking.resource_name} ngày ${dateStr}`,
+      subject: `${isApproved ? "✅ Đã duyệt" : isRescheduled ? "🕒 Đã đổi thời gian" : isTrimmed ? "✂️ Đã điều chỉnh lịch" : isDeleted ? "🗑️ Đã xoá lịch" : "❌ Từ chối"} - ${typeLabel} ${booking.resource_name} ngày ${dateStr}`,
       html: mailHtml,
     });
 

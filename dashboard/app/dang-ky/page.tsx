@@ -162,6 +162,12 @@ function formatDayKey(key: string) {
   return `${d}/${m}/${y}`;
 }
 
+// Danh sách giờ cho ô sửa: luôn có sẵn giờ đang lưu, kể cả khi là giờ lẻ
+// không nằm trong khung 30 phút của form đăng ký.
+function clockOptions(current: string): string[] {
+  return current && !TIME_OPTIONS.includes(current) ? [current, ...TIME_OPTIONS] : TIME_OPTIONS;
+}
+
 // "HH:mm" của một mốc thời gian ISO (giờ địa phương)
 function clockOf(iso: string) {
   const d = new Date(iso);
@@ -208,6 +214,14 @@ function BookingContent() {
   const [trimTarget, setTrimTarget] = useState<BookingRow | null>(null);
   const [trimRemovedDays, setTrimRemovedDays] = useState<string[]>([]);
   const [trimNote, setTrimNote] = useState("");
+
+  // Sửa ngày giờ ngay trong popup — CHỈ Admin và người có cờ điều phối xe/phòng.
+  // Trưởng bộ phận không sửa được giờ (chỉ duyệt / từ chối / xoá) để tránh mỗi
+  // phòng tự đổi lịch một kiểu, mất vai trò điều phối tập trung của Hành chính.
+  const [editStartDate, setEditStartDate] = useState("");
+  const [editStartClock, setEditStartClock] = useState("");
+  const [editEndDate, setEditEndDate] = useState("");
+  const [editEndClock, setEditEndClock] = useState("");
 
   // Form state
   const [hostName, setHostName] = useState("");
@@ -390,20 +404,43 @@ function BookingContent() {
     );
   }, [bookings, bookingType, resourceName, formRangeISO]);
 
-  // Lịch trùng của đơn đang mở trong popup, theo xe/phòng đang chọn trong popup.
-  // Dùng để hiện cảnh báo đỏ + khoá nút Phê duyệt/Điều phối cho người duyệt thấy ngay.
+  // Khung giờ đang hiển thị trong popup: giờ VỪA CHỈNH nếu hợp lệ, không thì giờ
+  // đang lưu. null khi người dùng gõ giờ kết thúc <= giờ bắt đầu.
+  const modalRangeISO = useMemo(() => {
+    if (!selectedBooking) return null;
+    if (!editStartDate || !editStartClock || !editEndDate || !editEndClock) {
+      return { start: selectedBooking.start_time, end: selectedBooking.end_time };
+    }
+    const s = new Date(`${editStartDate}T${editStartClock}:00`);
+    const e = new Date(`${editEndDate}T${editEndClock}:00`);
+    if (isNaN(s.getTime()) || isNaN(e.getTime()) || e <= s) return null;
+    return { start: s.toISOString(), end: e.toISOString() };
+  }, [selectedBooking, editStartDate, editStartClock, editEndDate, editEndClock]);
+
+  // Giờ trong ô đã khác giờ đang lưu -> hiện nút Lưu thời gian
+  const modalTimeChanged = useMemo(() => {
+    if (!selectedBooking || !modalRangeISO) return false;
+    return (
+      new Date(modalRangeISO.start).getTime() !== new Date(selectedBooking.start_time).getTime() ||
+      new Date(modalRangeISO.end).getTime() !== new Date(selectedBooking.end_time).getTime()
+    );
+  }, [selectedBooking, modalRangeISO]);
+
+  // Lịch trùng của đơn đang mở trong popup, theo xe/phòng VÀ khung giờ đang chọn
+  // trong popup. Dùng để hiện cảnh báo đỏ + khoá nút Lưu/Phê duyệt/Điều phối.
   const modalConflicts = useMemo(() => {
     if (!selectedBooking || selectedBooking.status === "rejected") return [];
     const resource = modalResourceName || selectedBooking.resource_name;
+    const range = modalRangeISO || { start: selectedBooking.start_time, end: selectedBooking.end_time };
     return bookings.filter(
       (o) =>
         o.id !== selectedBooking.id &&
         o.booking_type === selectedBooking.booking_type &&
         o.resource_name === resource &&
         o.status !== "rejected" &&
-        isOverlap(selectedBooking.start_time, selectedBooking.end_time, o.start_time, o.end_time)
+        isOverlap(range.start, range.end, o.start_time, o.end_time)
     );
-  }, [bookings, selectedBooking, modalResourceName]);
+  }, [bookings, selectedBooking, modalResourceName, modalRangeISO]);
 
   // Hỏi lại database ngay trước khi ghi — danh sách trên máy có thể cũ vài phút,
   // trong lúc đó người khác đã book mất. Lỗi query thì NÉM RA, không được nuốt:
@@ -616,11 +653,19 @@ function BookingContent() {
   const openBookingModal = (b: BookingRow) => {
     setSelectedBooking(b);
     setModalResourceName(b.resource_name);
+    setEditStartDate(toDateKey(new Date(b.start_time)));
+    setEditStartClock(clockOf(b.start_time));
+    setEditEndDate(toDateKey(new Date(b.end_time)));
+    setEditEndClock(clockOf(b.end_time));
   };
 
   const closeBookingModal = () => {
     setSelectedBooking(null);
     setModalResourceName("");
+    setEditStartDate("");
+    setEditStartClock("");
+    setEditEndDate("");
+    setEditEndClock("");
   };
 
   // Trưởng bộ phận phê duyệt cấp 1: Chờ duyệt -> Đã phê duyệt + báo email cho Hành chính (HCNS)
@@ -889,6 +934,71 @@ function BookingContent() {
     }
   };
 
+  // Lưu ngày giờ vừa chỉnh trong popup. CHỈ Admin / người có cờ điều phối.
+  // Kiểm tra trùng lại với database ngay trước khi ghi (danh sách trên máy có thể cũ),
+  // và vẫn còn EXCLUDE constraint chặn ở tầng cuối nếu hai người bấm cùng lúc.
+  const handleSaveTime = async () => {
+    if (!currentUser || !selectedBooking || processingAction) return;
+    if (!isHcnsApproverUser) return;
+    const b = selectedBooking;
+    if (!modalRangeISO) {
+      showToast("error", "Giờ kết thúc phải sau giờ bắt đầu.");
+      return;
+    }
+    const { start: startISO, end: endISO } = modalRangeISO;
+    const resource = modalResourceName || b.resource_name;
+
+    try {
+      setProcessingAction(true);
+      const conflicts = await fetchServerConflicts({
+        resource,
+        type: b.booking_type,
+        startISO,
+        endISO,
+        excludeId: b.id,
+      });
+      if (conflicts.length > 0) {
+        showToast("error", `Không đổi được giờ — ${describeConflict(conflicts[0], resource)} Chọn khung giờ khác hoặc ${isVehicle ? "xe" : "phòng"} khác.`);
+        fetchBookings();
+        return;
+      }
+
+      const { error } = await supabase
+        .from("resource_bookings")
+        .update({ start_time: startISO, end_time: endISO })
+        .eq("id", b.id);
+      if (error) throw error;
+
+      showToast("success", "Đã đổi thời gian sử dụng. Đang gửi email báo người đăng ký...");
+      // Giữ popup mở với dữ liệu mới để điều phối tiếp, không bắt mở lại từ đầu.
+      setSelectedBooking({ ...b, start_time: startISO, end_time: endISO });
+      setViewDate(toDateKey(new Date(startISO)));
+      fetchBookings();
+
+      sendBookingEmailInBackground(
+        {
+          smtpConfig: readSmtpConfig(),
+          booking: { ...b, start_time: startISO, end_time: endISO },
+          decision: "rescheduled",
+          previousStart: b.start_time,
+          previousEnd: b.end_time,
+          approverName: currentUser.name,
+        },
+        "Chưa gửi được email báo đổi giờ"
+      );
+    } catch (err: any) {
+      console.error("Error updating booking time:", err);
+      showToast(
+        "error",
+        isOverlapDbError(err)
+          ? `Không đổi được giờ — ${isVehicle ? "xe" : "phòng"} này đã có lịch khác trùng khung giờ vừa chọn.`
+          : "Lỗi khi đổi thời gian sử dụng!"
+      );
+    } finally {
+      setProcessingAction(false);
+    }
+  };
+
   // Xác nhận bỏ ngày: bỏ HẾT ngày = xoá cả đơn (như cũ); bỏ bớt = rút ngắn khoảng
   // thời gian, các ngày còn lại vẫn giữ nguyên lịch bận, ngày đã bỏ trống ngay lập tức.
   const handleConfirmTrim = async () => {
@@ -1124,9 +1234,83 @@ function BookingContent() {
                     </div>
                     <div className="col-span-2">
                       <p className="text-slate-400 font-bold">Thời gian</p>
-                      <p className="font-bold text-slate-700 font-mono">
-                        {formatDateTime(selectedBooking.start_time)} ➔ {formatDateTime(selectedBooking.end_time)}
-                      </p>
+                      {isHcnsApproverUser && selectedBooking.status !== "rejected" ? (
+                        <div className="space-y-2 mt-1">
+                          <div className="grid grid-cols-[52px_1fr_1fr] gap-2 items-center">
+                            <span className="text-[10px] font-extrabold text-slate-400 uppercase">Bắt đầu</span>
+                            <input
+                              type="date"
+                              value={editStartDate}
+                              onChange={(e) => setEditStartDate(e.target.value)}
+                              className="px-2.5 py-1.5 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40 font-bold text-slate-700 cursor-pointer"
+                            />
+                            <select
+                              value={editStartClock}
+                              onChange={(e) => setEditStartClock(e.target.value)}
+                              className="px-2.5 py-1.5 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40 font-bold text-slate-700 bg-white cursor-pointer"
+                            >
+                              {clockOptions(editStartClock).map((t) => (
+                                <option key={t} value={t}>{t}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="grid grid-cols-[52px_1fr_1fr] gap-2 items-center">
+                            <span className="text-[10px] font-extrabold text-slate-400 uppercase">Kết thúc</span>
+                            <input
+                              type="date"
+                              value={editEndDate}
+                              min={editStartDate || undefined}
+                              onChange={(e) => setEditEndDate(e.target.value)}
+                              className="px-2.5 py-1.5 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40 font-bold text-slate-700 cursor-pointer"
+                            />
+                            <select
+                              value={editEndClock}
+                              onChange={(e) => setEditEndClock(e.target.value)}
+                              className="px-2.5 py-1.5 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40 font-bold text-slate-700 bg-white cursor-pointer"
+                            >
+                              {clockOptions(editEndClock).map((t) => (
+                                <option key={t} value={t}>{t}</option>
+                              ))}
+                            </select>
+                          </div>
+                          {!modalRangeISO && (
+                            <p className="text-[10px] font-bold text-rose-600">Giờ kết thúc phải sau giờ bắt đầu.</p>
+                          )}
+                          {modalTimeChanged && (
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <button
+                                type="button"
+                                disabled={processingAction || !modalRangeISO || modalConflicts.length > 0}
+                                onClick={handleSaveTime}
+                                title={modalConflicts.length > 0 ? "Khung giờ mới đang trùng lịch khác" : undefined}
+                                className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold px-3 py-1.5 rounded-lg transition-all active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                              >
+                                <CalendarClock size={12} /> Lưu thời gian
+                              </button>
+                              <button
+                                type="button"
+                                disabled={processingAction}
+                                onClick={() => {
+                                  setEditStartDate(toDateKey(new Date(selectedBooking.start_time)));
+                                  setEditStartClock(clockOf(selectedBooking.start_time));
+                                  setEditEndDate(toDateKey(new Date(selectedBooking.end_time)));
+                                  setEditEndClock(clockOf(selectedBooking.end_time));
+                                }}
+                                className="text-[11px] font-bold text-slate-500 hover:text-slate-700 px-2 py-1.5 cursor-pointer disabled:opacity-50"
+                              >
+                                Hoàn tác
+                              </button>
+                              <span className="text-[10px] text-slate-400 font-semibold">
+                                Người đăng ký sẽ nhận email báo đổi giờ.
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <p className="font-bold text-slate-700 font-mono">
+                          {formatDateTime(selectedBooking.start_time)} ➔ {formatDateTime(selectedBooking.end_time)}
+                        </p>
+                      )}
                     </div>
                     <div className="col-span-2">
                       <p className="text-slate-400 font-bold">{isVehicle ? "Mục đích / lộ trình" : "Nội dung cuộc họp"}</p>
