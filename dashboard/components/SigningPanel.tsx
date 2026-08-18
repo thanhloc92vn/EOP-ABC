@@ -22,12 +22,13 @@ import {
   fetchSubmissions, canActOn, canEdit, stagesOf, nextStatus, tinhDeNghi,
   fmtMoney, fmtDateTime, resolveDossierUrl, fetchStageApproverEmails, errText,
   normalizeStatus, pgdOpinionField, downloadSigningForm, docxPayloadFromRow, docxFileName,
+  deleteSubmission,
   STATUS_META, ACTION_LABEL, EVENT_LABEL, FLOW,
   type SigningSubmission, type SigningStatus,
 } from "@/lib/signingSubmissions";
 import {
   FileText, Plus, Loader2, RefreshCw, Search, AlertTriangle, X, Check,
-  Undo2, Inbox, ClipboardCheck, CircleDot, ExternalLink, Pencil, Send, Download,
+  Undo2, Inbox, ClipboardCheck, CircleDot, ExternalLink, Pencil, Send, Download, Trash2,
 } from "lucide-react";
 
 const labelCls = "text-[10px] font-bold text-slate-400 uppercase tracking-wider";
@@ -47,6 +48,12 @@ export default function SigningPanel() {
   const [creating, setCreating] = useState(false);
   const [viewing, setViewing] = useState<SigningSubmission | null>(null);
   const [mailWarn, setMailWarn] = useState("");
+  // id phiếu đang xoá — khoá riêng từng dòng để không chặn cả bảng, và để bấm
+  // trùng vào cùng một nút không bắn hai lệnh delete.
+  const [deleting, setDeleting] = useState<string | null>(null);
+  // Lỗi khi xoá KHÔNG dùng chung state `err`: `err` có early-return che sạch
+  // panel, một lần bấm hụt là mất cả danh sách.
+  const [delErr, setDelErr] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -61,6 +68,31 @@ export default function SigningPanel() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Xoá phiếu — CHỈ Admin thấy nút này (RLS migration 050 chặn lần hai ở DB).
+  // Xoá xong nạp lại cả bảng thay vì gỡ dòng khỏi state: KPI phía trên đếm từ
+  // `rows`, gỡ tay thì phải nhớ trừ đúng ô KPI tương ứng, nạp lại là chắc.
+  const removeRow = async (r: SigningSubmission) => {
+    if (deleting) return;
+    if (!confirm(
+      `Xoá phiếu "${r.ma_phieu || "(chưa có mã)"}"?
+
+` +
+      `Hợp đồng: ${r.hop_dong_so || "—"}
+` +
+      `Toàn bộ lịch sử duyệt của phiếu cũng mất theo. Không khôi phục được.`
+    )) return;
+    setDeleting(r.id);
+    setDelErr("");
+    try {
+      await deleteSubmission(r.id);
+      await load();
+    } catch (e) {
+      setDelErr(errText(e));
+    } finally {
+      setDeleting(null);
+    }
+  };
 
   const myStages = useMemo(() => stagesOf(user.perms), [user.perms]);
   const canCreate = user.isAdmin || user.perms.canCreateSigning;
@@ -144,6 +176,17 @@ export default function SigningPanel() {
         </div>
       )}
 
+      {delErr && (
+        <div className="bg-rose-50 border border-rose-200 rounded-2xl px-4 py-3 flex items-start gap-3">
+          <AlertTriangle size={15} className="text-rose-500 shrink-0 mt-0.5" />
+          <p className="flex-1 min-w-0 text-[11px] font-bold text-rose-700 break-words">{delErr}</p>
+          <button type="button" onClick={() => setDelErr("")}
+            className="p-1 text-rose-400 hover:text-rose-600 hover:bg-rose-100 rounded-lg cursor-pointer">
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
       {/* KPI */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
         <Kpi label="Cần tôi xử lý" value={stats.canXuLy} icon={Inbox} grad="from-amber-500 to-orange-600" />
@@ -220,9 +263,13 @@ export default function SigningPanel() {
               <span className={`${labelCls} w-24 shrink-0`}>Mã phiếu</span>
               <span className={`${labelCls} flex-1 min-w-0`}>Hợp đồng / Dự án</span>
               <span className={`${labelCls} w-14 shrink-0 text-center hidden sm:block`}>Đợt</span>
-              <span className={`${labelCls} w-36 shrink-0 text-right hidden md:block`}>Đề nghị TT</span>
+              {/* pr-6: số tiền căn phải, chip trạng thái căn trái — không chừa lề
+                  thì hai cột dính vào nhau thành một khối chữ. */}
+              <span className={`${labelCls} w-36 shrink-0 text-right pr-6 hidden md:block`}>Đề nghị TT</span>
               <span className={`${labelCls} w-32 shrink-0 hidden lg:block`}>Trạng thái</span>
-              <span className={`${labelCls} w-24 shrink-0 hidden xl:block`}>Cập nhật</span>
+              {user.isAdmin && (
+                <span className={`${labelCls} w-14 shrink-0 text-center`}>Thao tác</span>
+              )}
             </div>
             <div className="divide-y divide-slate-100">
               {visible.map((r) => {
@@ -230,7 +277,14 @@ export default function SigningPanel() {
                 const mine = canActOn(r, user.perms, user.isAdmin) &&
                   !["hoan_tat", "nhap", "tra_lai"].includes(r.status);
                 return (
-                  <button key={r.id} type="button" onClick={() => setViewing(r)}
+                  // Dòng là <div role="button"> chứ không phải <button>: bên trong
+                  // có nút Xoá riêng, mà <button> lồng <button> là HTML sai và
+                  // trình duyệt sẽ nuốt cú bấm của nút con.
+                  <div key={r.id} role="button" tabIndex={0}
+                    onClick={() => setViewing(r)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setViewing(r); }
+                    }}
                     className="w-full text-left flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50/80 transition-colors cursor-pointer">
                     <span className="w-24 shrink-0 font-mono font-bold text-[11px] text-slate-500 truncate">
                       {r.ma_phieu || "—"}
@@ -246,7 +300,7 @@ export default function SigningPanel() {
                     <span className="w-14 shrink-0 text-center text-[11px] font-bold text-slate-500 hidden sm:block">
                       {r.dot_so ?? "—"}
                     </span>
-                    <span className="w-36 shrink-0 text-right font-mono font-bold text-[11px] text-slate-700 hidden md:block">
+                    <span className="w-36 shrink-0 text-right pr-6 font-mono font-bold text-[11px] text-slate-700 hidden md:block">
                       {fmtMoney(r.de_nghi_thanh_toan ?? tinhDeNghi(r))}
                     </span>
                     <span className="w-32 shrink-0 hidden lg:flex items-center gap-1.5">
@@ -255,10 +309,20 @@ export default function SigningPanel() {
                       </span>
                       {mine && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" title="Chờ bạn xử lý" />}
                     </span>
-                    <span className="w-24 shrink-0 text-[10px] font-medium text-slate-400 hidden xl:block truncate">
-                      {fmtDateTime(r.updated_at).split(" ")[0]}
-                    </span>
-                  </button>
+                    {user.isAdmin && (
+                      <span className="w-14 shrink-0 flex items-center justify-center">
+                        <button type="button"
+                          onClick={(e) => { e.stopPropagation(); removeRow(r); }}
+                          disabled={deleting === r.id}
+                          title={`Xoá phiếu ${r.ma_phieu || ""}`.trim()}
+                          className="p-1.5 rounded-lg text-slate-300 hover:text-rose-600 hover:bg-rose-50 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
+                          {deleting === r.id
+                            ? <Loader2 size={14} className="animate-spin" />
+                            : <Trash2 size={14} />}
+                        </button>
+                      </span>
+                    )}
+                  </div>
                 );
               })}
             </div>

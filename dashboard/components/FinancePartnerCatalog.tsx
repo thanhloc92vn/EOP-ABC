@@ -36,6 +36,7 @@ import {
   type PartyType,
 } from "@/lib/financePartners";
 import { useProjectCatalog } from "@/lib/projectCatalog";
+import { useCurrentUser } from "@/lib/useCurrentUser";
 import { supabase } from "@/lib/supabase";
 import {
   Building2, Plus, Trash2, Save, RefreshCw, Loader2, Search, Landmark,
@@ -68,6 +69,10 @@ export default function FinancePartnerCatalog() {
   const [typeFilter, setTypeFilter] = useState<"" | PartyType>("");
   const [editId, setEditId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  // Xoá đối tác CHỈ Admin (migration 052 chặn lần hai ở DB). Ẩn nút chỉ là cho
+  // gọn mắt — người có cờ Báo cáo vẫn thêm/sửa bình thường, chỉ mất quyền xoá.
+  const user = useCurrentUser();
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const runWrite = useCallback(
     async (fn: () => Promise<{ error: unknown }>, failMsg: string) => {
@@ -87,6 +92,49 @@ export default function FinancePartnerCatalog() {
       }
     },
     [reload]
+  );
+
+  /**
+   * Xoá đối tác từ ngoài danh sách.
+   *
+   * KHÔNG dùng `runWrite`: hàm đó chỉ bắt `error`, mà RLS chặn DELETE thì
+   * Postgres không báo lỗi — nó xoá 0 dòng rồi trả về sạch sẽ. Phải đòi
+   * `select("id")` để đếm dòng thật sự bị xoá, nếu không người dùng thấy màn
+   * hình im lặng và tưởng đã xoá xong.
+   */
+  const removePartner = useCallback(
+    async (p: FinancePartner, contractCount: number) => {
+      if (deletingId) return;
+      if (!confirm(
+        `Xoá đối tác "${p.name}"?
+
+` +
+        (contractCount ? `${contractCount} dòng hợp đồng kèm theo cũng bị xoá.
+
+` : "") +
+        `Nếu chỉ muốn ẩn khỏi danh sách chọn thì mở đối tác ra, bỏ tick "Đang dùng" rồi Lưu — cách đó giữ lại dữ liệu.`
+      )) return;
+      setDeletingId(p.id);
+      setWriteErr("");
+      try {
+        const { data, error: e } = await supabase
+          .from("finance_partners")
+          .delete()
+          .eq("id", p.id)
+          .select("id");
+        if (e) throw e;
+        if (!data || data.length === 0) {
+          throw new Error("tài khoản của bạn không đủ quyền xoá đối tác.");
+        }
+        invalidateFinancePartners();
+        await reload();
+      } catch (e) {
+        setWriteErr(`Không xoá được đối tác: ${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        setDeletingId(null);
+      }
+    },
+    [deletingId, reload]
   );
 
   // Gom hợp đồng theo đối tác một lần, thay vì filter lại trong mỗi thẻ.
@@ -284,6 +332,9 @@ export default function FinancePartnerCatalog() {
               <span className={`${labelCls} w-44 shrink-0 hidden xl:block`}>Ngân hàng · Chi nhánh</span>
               <span className={`${labelCls} w-16 shrink-0 text-center hidden sm:block`}>HĐ</span>
               <span className={`${labelCls} w-36 shrink-0 hidden lg:block`}>Dự án</span>
+              {user.isAdmin && (
+                <span className={`${labelCls} w-14 shrink-0 text-center`}>Thao tác</span>
+              )}
             </div>
 
             <div className="divide-y divide-slate-100">
@@ -293,6 +344,9 @@ export default function FinancePartnerCatalog() {
                   partner={p}
                   contracts={contractsByPartner.get(p.id) || []}
                   onOpen={() => setEditId(p.id)}
+                  canDelete={user.isAdmin}
+                  deleting={deletingId === p.id}
+                  onDelete={removePartner}
                 />
               ))}
             </div>
@@ -306,6 +360,7 @@ export default function FinancePartnerCatalog() {
           contracts={contractsByPartner.get(editing.id) || []}
           projects={projects}
           saving={saving}
+          canDelete={user.isAdmin}
           runWrite={runWrite}
           onClose={() => setEditId(null)}
         />
@@ -346,8 +401,13 @@ function KpiCard({ label, value, icon: Icon, grad }: {
 // Các cột dùng CHUNG bề rộng cố định với header dính ở trên (w-28/w-32/w-44/
 // w-16/w-36) — đổi số ở đây phải đổi cả trên đó, nếu không cột lệch khỏi tiêu đề.
 // Cột phụ tự ẩn dần theo bề ngang màn hình, cột tên đối tác luôn còn.
-function PartnerRow({ partner: p, contracts, onOpen }: {
-  partner: FinancePartner; contracts: FinancePartnerContract[]; onOpen: () => void;
+function PartnerRow({ partner: p, contracts, onOpen, canDelete, deleting, onDelete }: {
+  partner: FinancePartner;
+  contracts: FinancePartnerContract[];
+  onOpen: () => void;
+  canDelete: boolean;
+  deleting: boolean;
+  onDelete: (p: FinancePartner, contractCount: number) => void;
 }) {
   const st = TYPE_STYLE[p.party_type];
   const projectNames = Array.from(
@@ -356,9 +416,16 @@ function PartnerRow({ partner: p, contracts, onOpen }: {
   const bankLine = [p.bank_name, p.bank_branch].filter(Boolean).join(" · ");
 
   return (
-    <button
-      type="button"
+    // <div role="button"> chứ không phải <button>: dòng có nút Xoá lồng bên
+    // trong, mà <button> lồng <button> là HTML sai — trình duyệt sẽ nuốt cú bấm
+    // của nút con.
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); }
+      }}
       className={`w-full text-left flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50/80 transition-colors cursor-pointer ${
         p.active ? "" : "opacity-55"
       }`}
@@ -406,7 +473,21 @@ function PartnerRow({ partner: p, contracts, onOpen }: {
         {projectNames.length > 2 ? ` +${projectNames.length - 2}` : ""}
         {projectNames.length === 0 && "—"}
       </span>
-    </button>
+
+      {canDelete && (
+        <span className="w-14 shrink-0 flex items-center justify-center">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onDelete(p, contracts.length); }}
+            disabled={deleting}
+            title={`Xoá đối tác ${p.name}`}
+            className="p-1.5 rounded-lg text-slate-300 hover:text-rose-600 hover:bg-rose-50 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {deleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+          </button>
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -663,11 +744,14 @@ function AddPartnerModal({ saving, nextSort, projects, defaultProjectCode, runWr
 }
 
 // ─── Modal sửa đối tác + hợp đồng ───
-function PartnerModal({ partner: p, contracts, projects, saving, runWrite, onClose }: {
+function PartnerModal({ partner: p, contracts, projects, saving, canDelete, runWrite, onClose }: {
   partner: FinancePartner;
   contracts: FinancePartnerContract[];
   projects: { id: string; code: string; name: string }[];
   saving: boolean;
+  // Cùng một luật với icon thùng rác ngoài danh sách: chỉ Admin. Hai chỗ cùng
+  // đọc `user.isAdmin` ở component cha nên không thể lệch nhau.
+  canDelete: boolean;
   runWrite: (fn: () => Promise<{ error: unknown }>, msg: string) => Promise<boolean>;
   onClose: () => void;
 }) {
@@ -764,10 +848,12 @@ function PartnerModal({ partner: p, contracts, projects, saving, runWrite, onClo
       onClose={onClose}
       footer={
         <>
-          <button type="button" onClick={removePartner} disabled={saving}
-            className="mr-auto inline-flex items-center gap-1.5 px-3 py-2 text-[11px] text-rose-500 hover:bg-rose-50 font-bold rounded-xl border border-transparent hover:border-rose-100 transition-all cursor-pointer disabled:opacity-50">
-            <Trash2 size={13} /> Xoá đối tác
-          </button>
+          {canDelete && (
+            <button type="button" onClick={removePartner} disabled={saving}
+              className="mr-auto inline-flex items-center gap-1.5 px-3 py-2 text-[11px] text-rose-500 hover:bg-rose-50 font-bold rounded-xl border border-transparent hover:border-rose-100 transition-all cursor-pointer disabled:opacity-50">
+              <Trash2 size={13} /> Xoá đối tác
+            </button>
+          )}
           <button type="button" onClick={onClose}
             className="px-4 py-2 text-slate-500 hover:bg-slate-200/60 font-bold rounded-xl text-xs transition-all cursor-pointer">
             Đóng

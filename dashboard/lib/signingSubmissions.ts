@@ -301,6 +301,32 @@ export async function fetchSubmissions(): Promise<SigningSubmission[]> {
   return (data || []).map(normalizeRow);
 }
 
+/**
+ * Xoá hẳn một phiếu trình ký.
+ *
+ * Chốt chặn thật là policy `signing_delete` (migration 050): chỉ Admin, hoặc
+ * người lập xoá phiếu còn ở 'nhap'/'tra_lai'. Nút trên UI chỉ hiện với Admin —
+ * ẩn nút là cho gọn mắt, không phải cơ chế bảo vệ.
+ *
+ * RLS chặn thì Postgres KHÔNG báo lỗi, chỉ xoá 0 dòng. Vì vậy phải yêu cầu trả
+ * dòng vừa xoá về (`select()`) rồi tự kiểm tra — nếu rỗng thì báo không đủ
+ * quyền, đừng để người dùng tưởng đã xoá xong.
+ *
+ * Tệp hồ sơ trong bucket signing-dossiers KHÔNG xoá theo — cố ý giữ, dọn kho
+ * là việc riêng.
+ */
+export async function deleteSubmission(id: string): Promise<void> {
+  const { data, error } = await supabase
+    .from("signing_submissions")
+    .delete()
+    .eq("id", id)
+    .select("id");
+  if (error) throw error;
+  if (!data || data.length === 0) {
+    throw new Error("Không xoá được phiếu — tài khoản của bạn không đủ quyền xoá.");
+  }
+}
+
 function normalizeRow(r: Record<string, unknown>): SigningSubmission {
   return {
     ...(r as unknown as SigningSubmission),
