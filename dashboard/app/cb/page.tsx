@@ -366,10 +366,14 @@ const getEmployeeLevel = (role: string): string => {
   return "CBNV";
 };
 
+// Mốc tính thâm niên là NGÀY HÔM NAY. Trước đây đóng cứng new Date("2026-06-19")
+// nên thâm niên toàn công ty đứng yên từ 19/6 — và công thức phép năm bên dưới
+// tính theo tháng hiện tại nên bắt buộc phải chạy theo ngày thật.
 const getEmployeeTenureYears = (emp: any): number => {
   if (!emp || !emp.created_at) return 1.5;
   const joinDate = new Date(emp.created_at);
-  const now = new Date("2026-06-19");
+  if (isNaN(joinDate.getTime())) return 1.5;
+  const now = new Date();
   const diffTime = Math.max(0, now.getTime() - joinDate.getTime());
   const diffDays = diffTime / (1000 * 60 * 60 * 24);
   return diffDays / 365.25;
@@ -378,7 +382,12 @@ const getEmployeeTenureYears = (emp: any): number => {
 const getEmployeeTenureStr = (emp: any): string => {
   if (!emp || !emp.created_at) return "1 năm 6 tháng";
   const joinDate = new Date(emp.created_at);
-  const now = new Date("2026-06-19");
+  if (isNaN(joinDate.getTime())) return "1 năm 6 tháng";
+  const now = new Date();
+  // Ngày nhận việc nằm ở TƯƠNG LAI (thường là hồ sơ nhập liệu chưa sửa ngày thật):
+  // phép trừ ra số âm, mà nhánh months < 0 bên dưới sẽ bẻ -2 tháng thành "10 tháng".
+  // Chặn ngay từ đầu để không hiện thâm niên ma.
+  if (joinDate.getTime() > now.getTime()) return "Chưa nhận việc";
   let years = now.getFullYear() - joinDate.getFullYear();
   let months = now.getMonth() - joinDate.getMonth();
   if (months < 0) {
@@ -389,6 +398,46 @@ const getEmployeeTenureStr = (emp: any): string => {
     return "Mới gia nhập";
   }
   return `${years > 0 ? `${years} năm ` : ""}${months > 0 ? `${months} tháng` : ""}`.trim();
+};
+
+// ─── Phép năm TÍCH LUỸ THEO THÁNG, không ứng trước cả 12 ngày ───
+// Trả về số ngày phép cơ bản đã tích luỹ tính đến tháng hiện tại (chưa cộng
+// phép thâm niên).
+//
+//  • Vào việc từ NĂM TRƯỚC  -> mỗi tháng đã qua trong năm nay là 1 ngày.
+//    Tháng 8 = 8 ngày, tháng 12 = 12 ngày.
+//
+//  • Vào việc TRONG NĂM NAY -> 2 tháng đầu là thử việc, tính 0. Qua chính thức
+//    (từ tháng thứ 3) mới được bù 2 tháng đó vào, trong đó THÁNG VÀO VIỆC chỉ
+//    được 1 ngày nếu nhận việc từ ngày 1–15; từ ngày 16 trở đi tháng đó là 0.
+//    Từ tháng chính thức trở đi mỗi tháng thêm 1 ngày.
+//
+//    VD nhận việc 10/3 -> tháng 8: (1 + 1) + (T5,6,7,8) = 6 ngày
+//       nhận việc 20/3 -> tháng 8: (0 + 1) + (T5,6,7,8) = 5 ngày
+//       nhận việc 10/7 -> tháng 8: còn thử việc            = 0 ngày
+const getAccruedBaseLeave = (emp: any, ref: Date = new Date()): number => {
+  const year = ref.getFullYear();
+  const month = ref.getMonth() + 1;
+
+  const joinDate = emp?.created_at ? new Date(emp.created_at) : null;
+  // Không có ngày nhận việc -> coi như người cũ, hưởng đủ số tháng đã qua.
+  // Thà rộng tay còn hơn cắt oan phép của người có hồ sơ thiếu ngày.
+  if (!joinDate || isNaN(joinDate.getTime())) return month;
+
+  const joinYear = joinDate.getFullYear();
+  if (joinYear < year) return month;
+  // Ngày nhận việc ở tương lai -> chưa phát sinh phép.
+  if (joinYear > year) return 0;
+
+  const joinMonth = joinDate.getMonth() + 1;
+  // Hết 2 tháng thử việc thì tháng kế tiếp là tháng chính thức đầu tiên.
+  const officialMonth = joinMonth + 2;
+  if (month < officialMonth) return 0; // còn trong thời gian thử việc
+
+  const firstMonthCredit = joinDate.getDate() <= 15 ? 1 : 0;
+  const probationCredit = firstMonthCredit + 1; // tháng thử việc thứ 2 luôn được 1
+  const officialMonths = month - officialMonth + 1;
+  return probationCredit + officialMonths;
 };
 
 const getProposedHolidayBonus = (years: number): number => {
@@ -4000,24 +4049,36 @@ export default function CBPage() {
   };
 
   const annualLeaveData = useMemo(() => {
+    const currentYear = new Date().getFullYear();
     return employees.map(emp => {
       const isConcurrent = isConcurrentOrSupport(emp);
       const tenureYears = getEmployeeTenureYears(emp);
       const tenureStr = getEmployeeTenureStr(emp);
       
-      const baseLeave = 12;
+      // Phép cơ bản KHÔNG còn cố định 12 ngày: tích luỹ dần theo tháng (xem
+      // getAccruedBaseLeave). Phép thâm niên vẫn cộng nguyên: cứ đủ 5 năm +1 ngày.
+      const baseLeave = getAccruedBaseLeave(emp);
       const seniorLeave = Math.floor(tenureYears / 5);
       // Admin nhập tay được (migration 054): có số ghi đè thì lấy số đó, bỏ trống
-      // thì quay lại công thức 12 + thâm niên. Kiêm nhiệm/hỗ trợ vẫn là 0 tuyệt đối.
+      // thì quay lại số tích luỹ + thâm niên. Kiêm nhiệm/hỗ trợ vẫn là 0 tuyệt đối.
       const override = emp.annual_leave_override;
       const hasOverride = override !== null && override !== undefined;
       const totalLeave = isConcurrent
         ? 0
         : (hasOverride ? Number(override) : baseLeave + seniorLeave);
       
-      // Calculate used leave: sum of approved leave days of type "Phép năm"
+      // Ngày đã nghỉ CHỈ tính trong NĂM NAY. Trước đây cộng toàn bộ lịch sử từ
+      // trước tới nay — chưa lộ vì hệ thống mới chạy trong 2026, nhưng đúng ngày
+      // 1/1/2027 là Tổng phép về 1 ngày trong khi "Đã nghỉ" vẫn giữ số của năm cũ,
+      // "Còn lại" kẹt ở 0 gần hết năm. Phép năm không cộng dồn qua năm nên số ngày
+      // đã nghỉ cũng phải làm mới theo năm.
       const usedLeave = leaves
-        .filter(l => l.name === emp.name && l.type === "Phép năm" && l.status === "Đã duyệt")
+        .filter(l =>
+          l.name === emp.name &&
+          l.type === "Phép năm" &&
+          l.status === "Đã duyệt" &&
+          new Date(l.from).getFullYear() === currentYear
+        )
         .reduce((sum, l) => sum + (l.days || 0), 0);
         
       const remainingLeave = Math.max(0, totalLeave - usedLeave);
@@ -6042,7 +6103,14 @@ export default function CBPage() {
                             <th className="py-3 px-3">Phòng ban & Chức danh</th>
                             <th className="py-3 px-3 text-center">Ngày nhận việc</th>
                             <th className="py-3 px-3 text-center">Thâm niên</th>
-                            <th className="py-3 px-3 text-center">Phép cơ bản</th>
+                            {/* Phép cơ bản KHÔNG còn là định mức 12 ngày cả năm mà là
+                                số đã tích luỹ tới tháng này — ghi rõ để HCNS khỏi hiểu nhầm. */}
+                            <th className="py-3 px-3 text-center">
+                              Phép cơ bản
+                              <div className="normal-case tracking-normal text-[9px] font-bold text-slate-400 mt-0.5">
+                                tích luỹ đến tháng {new Date().getMonth() + 1}
+                              </div>
+                            </th>
                             <th className="py-3 px-3 text-center">Phép thâm niên</th>
                             <th className="py-3 px-3 text-center">Tổng phép</th>
                             <th className="py-3 px-3 text-center">Đã nghỉ</th>
