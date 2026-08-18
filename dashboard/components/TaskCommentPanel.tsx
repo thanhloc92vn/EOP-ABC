@@ -198,20 +198,12 @@ export default function TaskCommentPanel({ taskId, me, onCountChange }: Props) {
           Ý kiến trao đổi &amp; bình luận nội bộ
         </h4>
       </div>
-      <p className="text-[11px] text-slate-400 font-medium mt-1 leading-snug">
-        Trao đổi nhanh giữa người giao việc và người thực hiện. Mọi ý kiến đều được lưu lại,
-        không sửa và không xoá được.
-      </p>
 
       {/* Danh sách ý kiến */}
       <div ref={listRef} className="mt-4 space-y-3 max-h-64 overflow-y-auto pr-1">
         {loading ? (
           <div className="flex items-center gap-2 text-slate-400 italic py-3">
             <Loader2 size={13} className="animate-spin" /> Đang tải ý kiến...
-          </div>
-        ) : comments.length === 0 ? (
-          <div className="text-slate-400 italic py-3">
-            Chưa có ý kiến nào. Hãy là người mở lời trước.
           </div>
         ) : (
           comments.map((c) => {
