@@ -2136,15 +2136,44 @@ export default function CBPage() {
     alert("Đăng ký nghỉ phép thành công!");
   };
 
-  const handleDeleteLeave = (leaveId: string) => {
+  // Đơn nghỉ phép là MỘT DÒNG trong bảng `tasks` (title chứa "Nghỉ phép"), xem
+  // fetchLeavesFromSupabase. Trước đây hàm này chỉ lọc dòng ra khỏi state rồi ghi
+  // localStorage — mà localStorage đó KHÔNG có chỗ nào đọc lại. Nên F5 là
+  // fetchLeavesFromSupabase nạp lại từ CSDL và đơn "đã xoá" hiện nguyên.
+  // Giờ xoá thật dưới CSDL rồi mới bỏ khỏi state.
+  //
+  // AI ĐƯỢC XOÁ: Admin / C&B (hasFullAccess) xoá được mọi đơn. Nhân viên thường
+  // chỉ xoá được đơn CHƯA DUYỆT của chính mình — đơn đã duyệt mà tự xoá được thì
+  // số ngày "Đã nghỉ" tụt xuống và quota phép năm tự phình ra.
+  const canDeleteLeave = (leave: any) => hasFullAccess || leave?.status !== "Đã duyệt";
+
+  const handleDeleteLeave = async (leave: any) => {
+    const leaveId = leave?.id;
+    if (!leaveId) return;
+    if (!canDeleteLeave(leave)) {
+      alert("Đơn nghỉ phép đã được duyệt — bạn không thể tự xóa. Vui lòng liên hệ HCNS.");
+      return;
+    }
     if (!confirm("Bạn có chắc chắn muốn xóa yêu cầu nghỉ phép này không?")) return;
-    setLeaves(prev => {
-      const updated = prev.filter(l => l.id !== leaveId);
-      if (typeof window !== "undefined") {
-        localStorage.setItem("tnec_cb_leaves", JSON.stringify(updated));
+    try {
+      // `.select()` là phần QUAN TRỌNG: RLS chặn thì Supabase trả về error = null
+      // và 0 dòng, không báo lỗi gì. Không đếm lại số dòng đã xoá thì người không
+      // đủ quyền vẫn thấy đơn biến mất rồi F5 lại hiện ra — đúng cái lỗi cũ.
+      const { data, error } = await supabase
+        .from("tasks")
+        .delete()
+        .eq("id", leaveId)
+        .select("id");
+      if (error) throw error;
+      if (!data || data.length === 0) {
+        alert("Bạn không có quyền xóa yêu cầu nghỉ phép này!");
+        return;
       }
-      return updated;
-    });
+      setLeaves(prev => prev.filter(l => l.id !== leaveId));
+    } catch (err) {
+      console.error("Error deleting leave:", err);
+      alert("Không xóa được yêu cầu nghỉ phép. Kiểm tra lại quyền hoặc kết nối!");
+    }
   };
 
   // Ghi mức duyệt thưởng lễ lên Supabase (bảng holiday_bonus_approvals) — trước
@@ -6138,13 +6167,22 @@ export default function CBPage() {
                                   }`}>{l.status}</span>
                                 </td>
                                 <td className="py-3.5 px-3 text-center">
-                                  <button
-                                    onClick={() => handleDeleteLeave(l.id)}
-                                    className="p-1 hover:bg-rose-50 text-rose-500 rounded-lg hover:text-rose-700 transition-all cursor-pointer inline-flex items-center justify-center active:scale-95"
-                                    title="Xóa yêu cầu nghỉ phép"
-                                  >
-                                    <Trash2 size={14} />
-                                  </button>
+                                  {canDeleteLeave(l) ? (
+                                    <button
+                                      onClick={() => handleDeleteLeave(l)}
+                                      className="p-1 hover:bg-rose-50 text-rose-500 rounded-lg hover:text-rose-700 transition-all cursor-pointer inline-flex items-center justify-center active:scale-95"
+                                      title="Xóa yêu cầu nghỉ phép"
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  ) : (
+                                    <span
+                                      className="text-slate-300 inline-flex items-center justify-center"
+                                      title="Đơn đã duyệt — chỉ HCNS xóa được"
+                                    >
+                                      <Trash2 size={14} />
+                                    </span>
+                                  )}
                                 </td>
                               </tr>
                             ))

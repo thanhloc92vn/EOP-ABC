@@ -178,6 +178,11 @@ function CalendarContent() {
 
   // Leave specific states
   const [isHalfDay, setIsHalfDay] = useState(false);
+  // Chống bấm trùng nút "Gửi đơn nghỉ phép": mỗi cú bấm là một dòng đơn mới, mà
+  // đơn phép trùng bị trừ hai lần vào quota phép năm ở C&B. Chốt chặn nằm ở ref
+  // vì hai cú bấm sát nhau có thể lọt cùng một nhịp trước khi React vẽ lại nút.
+  const [submittingLeave, setSubmittingLeave] = useState(false);
+  const submittingLeaveRef = useRef(false);
   const [halfDayPeriod, setHalfDayPeriod] = useState<"Sáng" | "Chiều">("Sáng");
   // Toàn bộ nhân sự — dùng để tra người duyệt ĐẶC CÁCH nghỉ 1 ngày trong
   // resolveCap1Approver. Ô chọn người duyệt đã bỏ: hệ thống tự suy ra.
@@ -966,6 +971,7 @@ function CalendarContent() {
   // Handle Request Leave
   const handleRequestLeave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submittingLeaveRef.current) return;
     if (!modalName || !modalStart || !modalEnd) {
       showNotice("warning", "Chưa điền đủ thông tin", "Vui lòng nhập họ tên và khoảng thời gian nghỉ.");
       return;
@@ -997,6 +1003,8 @@ function CalendarContent() {
     // getCleanDept đều đọc chuỗi này, đổi dạng là gãy cả hai.
     const notesStr = `Loại nghỉ phép: ${leaveType}.${cap1Approver ? ` Người duyệt: ${cap1Approver}.` : ""} ${modalNotes ? `Lý do: ${modalNotes}` : ""}`;
 
+    submittingLeaveRef.current = true;
+    setSubmittingLeave(true);
     try {
       const { error } = await supabase
         .from("tasks")
@@ -1053,6 +1061,10 @@ function CalendarContent() {
     } catch (err: any) {
       console.error(err);
       showNotice("error", "Không gửi được đơn nghỉ phép", err.message || String(err));
+    } finally {
+      // Mở khoá kể cả khi lỗi, để người dùng sửa rồi gửi lại được.
+      submittingLeaveRef.current = false;
+      setSubmittingLeave(false);
     }
   };
 
@@ -1841,15 +1853,20 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                 <button
                   type="button"
                   onClick={() => setIsLeaveModalOpen(false)}
-                  className="flex-1 py-2.5 bg-indigo-50/60 hover:bg-slate-150 border border-slate-100 text-slate-700 font-bold rounded-xl transition-colors cursor-pointer text-xs text-center"
+                  disabled={submittingLeave}
+                  className="flex-1 py-2.5 bg-indigo-50/60 hover:bg-slate-150 border border-slate-100 text-slate-700 font-bold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer text-xs text-center"
                 >
                   Hủy
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-colors cursor-pointer shadow-md shadow-indigo-500/10 text-xs text-center"
+                  disabled={submittingLeave}
+                  className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl transition-colors cursor-pointer shadow-md shadow-indigo-500/10 text-xs text-center inline-flex items-center justify-center gap-2"
                 >
-                  Gửi đơn nghỉ phép
+                  {submittingLeave && (
+                    <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                  )}
+                  {submittingLeave ? "Đang gửi..." : "Gửi đơn nghỉ phép"}
                 </button>
               </div>
             </form>
