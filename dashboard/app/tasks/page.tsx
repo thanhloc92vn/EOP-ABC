@@ -13,6 +13,7 @@ import { normalizeName } from "@/lib/approvers";
 import { useDepartments } from "@/lib/departments";
 import { useProjectCatalog } from "@/lib/projectCatalog";
 import TaskTrackingPanel from "@/components/TaskTrackingPanel";
+import TaskCommentPanel from "@/components/TaskCommentPanel";
 import {
   Calendar,
   Paperclip,
@@ -457,9 +458,33 @@ export default function TaskManagementPage() {
     }
   };
 
+  // ─── SỐ Ý KIẾN TRAO ĐỔI TRÊN THẺ (migration 057) ───
+  // Thẻ Kanban đã vẽ sẵn biểu tượng 💬 theo `tasks.comments` từ lâu, nhưng cột
+  // đó chưa ai ghi nên luôn bằng 0. CỐ Ý không ghi ngược vào `tasks.comments`:
+  // người bình luận có thể KHÔNG có quyền UPDATE task của người khác, ghi vào
+  // sẽ hỏng im lặng. Đếm ở đây bằng MỘT truy vấn duy nhất — RLS của
+  // task_comments đã lọc sẵn, nên chỉ về những việc mình được thấy.
+  const [commentCounts, setCommentCounts] = useState<Record<string, number>>({});
+
+  const fetchCommentCounts = async () => {
+    try {
+      const { data, error } = await supabase.from("task_comments").select("task_id");
+      if (error) throw error;
+      const counts: Record<string, number> = {};
+      (data || []).forEach((r: any) => {
+        counts[r.task_id] = (counts[r.task_id] || 0) + 1;
+      });
+      setCommentCounts(counts);
+    } catch (err) {
+      // Chưa chạy migration 057 -> bảng chưa tồn tại. Bảng Kanban vẫn phải chạy.
+      console.warn("Không đếm được số ý kiến trao đổi:", err);
+    }
+  };
+
   useEffect(() => {
     fetchTasks();
     fetchEmployeesList();
+    fetchCommentCounts();
   }, []);
 
   // Bấm ra ngoài thì đóng dropdown "Người nhận"
@@ -829,6 +854,24 @@ export default function TaskManagementPage() {
     setFileErr("");
     setIsEditModalOpen(true);
   };
+
+  // ─── MỞ THẲNG MỘT VIỆC TỪ CHUÔNG THÔNG BÁO ───
+  // Chuông ở Header trỏ về /tasks?taskId=... khi có ý kiến trao đổi mới. Đọc
+  // tham số bằng window.location thay vì useSearchParams: hook đó bắt cả trang
+  // phải bọc trong <Suspense>, tức phải mổ lại hàm export default của một file
+  // 2400 dòng — không đáng cho một việc chỉ chạy đúng một lần lúc mở trang.
+  const deepLinkDoneRef = useRef(false);
+  useEffect(() => {
+    if (deepLinkDoneRef.current || tasks.length === 0) return;
+    const wanted = new URLSearchParams(window.location.search).get("taskId");
+    if (!wanted) return;
+    const found = tasks.find((t) => t.id === wanted);
+    // fetchTasks() lấy TOÀN BỘ task (bộ lọc tháng chạy ở client), nên tới đây
+    // mà không thấy nghĩa là việc đã bị xoá hoặc RLS không cho mình đọc.
+    if (!found) return;
+    deepLinkDoneRef.current = true;
+    handleOpenEditModal(found);
+  }, [tasks]);
 
   // `overrides` phục vụ nút "Phê duyệt hoàn thành": lưu nguyên mọi chỉnh sửa đang
   // có trên form RỒI mới ép status/progress, để cấp quản lý vừa sửa vừa duyệt chỉ
@@ -1608,7 +1651,7 @@ export default function TaskManagementPage() {
                                       </span>
                                     )}
                                     {task.attachments > 0 && <span className="flex items-center gap-0.5 shrink-0"><Paperclip size={10} /> {task.attachments}</span>}
-                                    {task.comments > 0 && <span className="flex items-center gap-0.5 shrink-0"><MessageSquare size={10} /> {task.comments}</span>}
+                                    {(commentCounts[task.id] ?? task.comments) > 0 && <span className="flex items-center gap-0.5 shrink-0"><MessageSquare size={10} /> {commentCounts[task.id] ?? task.comments}</span>}
                                   </div>
                                 </div>
                               </div>
@@ -2027,12 +2070,15 @@ export default function TaskManagementPage() {
       {/* Edit Task Modal */}
       {isEditModalOpen && editingTask && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          {/* max-w-3xl thay cho max-w-lg: form đã lên 12 trường, để 512px thì các
-              lưới 2-3 cột bị bóp thành một cột dài lê thê phải cuộn nhiều.
+          {/* max-w-5xl — BẰNG ĐÚNG modal "Tạo Task" ở trên: hai khung cùng một bộ
+              trường mà rộng khác nhau thì bấm qua lại thấy giật. Đường đi:
+              max-w-lg (512px) -> 3xl -> 5xl (1024px); 512px bóp các lưới 2-3 cột
+              thành một cột dài lê thê, còn 3xl thì khối "Ý kiến trao đổi" ở cuối
+              bị hẹp so với phần form.
               max-h + overflow-y-auto là phần QUAN TRỌNG cho màn hình nhỏ: trước
               đây modal không giới hạn chiều cao, laptop 13" hoặc cửa sổ thấp là
-              nút "Tạo Task" nằm ngoài màn hình và KHÔNG cuộn tới được. */}
-          <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto p-6 shadow-2xl border border-slate-100 space-y-4 animate-in fade-in-50 zoom-in-95 duration-150">
+              nút "Lưu thay đổi" nằm ngoài màn hình và KHÔNG cuộn tới được. */}
+          <div className="bg-white rounded-2xl w-full max-w-5xl max-h-[90vh] overflow-y-auto p-6 shadow-2xl border border-slate-100 space-y-4 animate-in fade-in-50 zoom-in-95 duration-150">
             {/* Header */}
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="font-heading font-extrabold text-sm text-slate-800">Chỉnh sửa công việc</h3>
@@ -2369,6 +2415,17 @@ export default function TaskManagementPage() {
                 </div>
               </div>
             </form>
+
+            {/* Ý KIẾN TRAO ĐỔI — NẰM NGOÀI </form> LÀ CỐ Ý: ô nhập ý kiến đặt
+                trong form sẽ khiến nút gửi/phím Enter submit nhầm "Lưu thay đổi".
+                Chỉ có ở modal SỬA, không có ở modal TẠO — lúc tạo chưa có id. */}
+            <TaskCommentPanel
+              taskId={editingTask.id}
+              me={currentUser ? { email: currentUser.email, name: currentUser.name, role: currentUser.role } : null}
+              onCountChange={(id, count) =>
+                setCommentCounts((prev) => (prev[id] === count ? prev : { ...prev, [id]: count }))
+              }
+            />
           </div>
         </div>
       )}

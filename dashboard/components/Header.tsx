@@ -490,11 +490,98 @@ export default function Header({ title, subtitle }: Props) {
         perms.canApproveSigningDirector || perms.canApproveSigningAccounting ||
         perms.canCreateSigning;
 
+      // 7. Ý KIẾN TRAO ĐỔI TRONG CÔNG VIỆC (migration 057).
+      // Giống ghi chú lịch ở mục 6: đây KHÔNG phải việc chờ duyệt, nên phải tính
+      // TRƯỚC hàng rào hasApprovalPrivileges và đi kèm ở CẢ HAI nhánh — nhân
+      // viên thường bị `return` sớm ngay dưới đây, thiếu vế này thì chính người
+      // nhận việc lại không bao giờ thấy ý kiến gửi cho mình.
+      //
+      // AI ĐƯỢC BÁO (chốt 18/08/2026): người nhận việc + quản lý cùng phòng với
+      // người nhận + ai đã từng bình luận trong chính việc đó. Bình luận của
+      // CHÍNH MÌNH thì không báo.
+      // RLS của task_comments kế thừa luật đọc của bảng `tasks`, nên truy vấn
+      // này vốn đã không trả về việc của phòng khác; lọc dưới đây là để chuông
+      // khỏi ồn, không phải để chặn.
+      let mappedComments: any[] = [];
+      try {
+        const meLower = (userObj.email || "").toLowerCase();
+        // Cửa sổ 30 ngày: ý kiến cũ hơn thế mà chưa đọc thì cũng không còn là
+        // việc cần xử lý nữa, giữ lại chỉ làm chuông dày đặc.
+        const sinceIso = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+        const [cmtRes, readRes] = await Promise.all([
+          supabase
+            .from("task_comments")
+            .select("id, task_id, body, author_email, author_name, created_at, tasks(title, assignee)")
+            .gte("created_at", sinceIso)
+            .order("created_at", { ascending: false })
+            .limit(200),
+          supabase
+            .from("task_comment_reads")
+            .select("task_id, last_read_at")
+            .eq("user_email", meLower),
+        ]);
+
+        const rows: any[] = cmtRes.data || [];
+        const lastRead = new Map<string, number>();
+        (readRes.data || []).forEach((r: any) => {
+          lastRead.set(r.task_id, new Date(r.last_read_at).getTime());
+        });
+
+        // Những luồng mình đã từng nói vào — đã tham gia thì có quyền biết
+        // người sau trả lời gì.
+        const myThreads = new Set(
+          rows.filter((c) => (c.author_email || "").toLowerCase() === meLower).map((c) => c.task_id)
+        );
+
+        const myNameKey = normalizeName(userObj.name || "");
+        const myDeptKey = normalizeName(userObj.department || "");
+
+        mappedComments = rows
+          .filter((c) => {
+            if ((c.author_email || "").toLowerCase() === meLower) return false; // của chính mình
+            // PostgREST trả quan hệ 1-1 có khi là object, có khi là mảng một phần tử.
+            const t = Array.isArray(c.tasks) ? c.tasks[0] : c.tasks;
+            const assigneeKey = normalizeName(t?.assignee || "");
+            // So tên kiểu "chứa 2 chiều" — assignee lúc là tên đầy đủ, lúc là tên
+            // ngắn, đúng quy ước của lib/approvers.ts và migration 045.
+            const isMine = !!myNameKey && !!assigneeKey &&
+              (assigneeKey.includes(myNameKey) || myNameKey.includes(assigneeKey));
+            const sameDept = !!myDeptKey &&
+              normalizeName(deptOfName.get(assigneeKey) || "") === myDeptKey;
+            const inScope = isUserAdmin || isMine || (isUserManager && sameDept) || myThreads.has(c.task_id);
+            if (!inScope) return false;
+            // Đã mở việc đó ra xem sau khi ý kiến được gửi -> coi như đã đọc.
+            return new Date(c.created_at).getTime() > (lastRead.get(c.task_id) || 0);
+          })
+          .map((c) => {
+            const t = Array.isArray(c.tasks) ? c.tasks[0] : c.tasks;
+            const body = (c.body || "").replace(/\s+/g, " ").trim();
+            return {
+              id: `comment-${c.id}`,
+              type: "comment",
+              typeText: "Ý kiến mới",
+              taskId: c.task_id,
+              message: `${c.author_name || "Ai đó"} trao đổi trong "${t?.title || "công việc"}": `
+                + (body.length > 90 ? body.slice(0, 90) + "..." : body),
+              time: new Date(c.created_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })
+                + " " + new Date(c.created_at).toLocaleDateString("vi-VN"),
+              timestamp: new Date(c.created_at).getTime(),
+            };
+          });
+      } catch (err) {
+        // Chưa chạy migration 057 -> hai bảng chưa tồn tại. Chuông vẫn phải kêu
+        // cho các mục còn lại.
+        console.warn("Could not fetch task comments for header:", err);
+      }
+
       const hasApprovalPrivileges = isUserAdmin || isUserManager || isUserHR || hasAnyApprovalPermission(perms) || perms.canApproveBenefit || perms.canManageVpp || hasSigningRole || isMarketingTeamLeader(userObj.name);
       if (!hasApprovalPrivileges) {
         // Không có quyền duyệt gì cả thì chuông vẫn phải kêu cho ghi chú của
-        // chính họ — đó là toàn bộ nội dung chuông của một nhân viên thường.
-        setNotifications(mappedNotes);
+        // chính họ và ý kiến trao đổi trong việc của họ — đó là toàn bộ nội dung
+        // chuông của một nhân viên thường.
+        setNotifications(
+          [...mappedNotes, ...mappedComments].sort((a, b) => b.timestamp - a.timestamp)
+        );
         return;
       }
 
@@ -737,7 +824,7 @@ export default function Header({ title, subtitle }: Props) {
         }));
 
       // Combine and sort by timestamp descending
-      const allNotifications = [...mappedTasks, ...mappedJustifications, ...mappedBookings, ...mappedBenefitClaims, ...mappedVppRequests, ...mappedSigning, ...mappedNotes].sort((a, b) => b.timestamp - a.timestamp);
+      const allNotifications = [...mappedTasks, ...mappedJustifications, ...mappedBookings, ...mappedBenefitClaims, ...mappedVppRequests, ...mappedSigning, ...mappedNotes, ...mappedComments].sort((a, b) => b.timestamp - a.timestamp);
       setNotifications(allNotifications);
     } catch (err) {
       console.error("Error fetching notifications for header:", err);
@@ -804,6 +891,23 @@ export default function Header({ title, subtitle }: Props) {
         .on(
           "postgres_changes",
           { event: "*", schema: "public", table: "benefit_claims" },
+          () => {
+            fetchNotifications(currentUser);
+          }
+        )
+        // Ý kiến trao đổi trong công việc: có người bình luận là chuông hiện
+        // ngay, không phải F5. Nghe cả bảng dấu-đã-đọc để khi mình mở việc đó ra
+        // xem thì thông báo tự tắt luôn trên mọi tab đang mở.
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "task_comments" },
+          () => {
+            fetchNotifications(currentUser);
+          }
+        )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "task_comment_reads" },
           () => {
             fetchNotifications(currentUser);
           }
@@ -918,6 +1022,9 @@ export default function Header({ title, subtitle }: Props) {
                           : notif.type === "benefit"
                           // Mở thẳng tab Phúc lợi > Hiếu hỷ & Trợ cấp bên trang C&B
                           ? "/cb?subtab=funeral_wedding"
+                          : notif.type === "comment"
+                          // Mở thẳng bảng công việc và bung sẵn modal của đúng việc đó
+                          ? `/tasks?taskId=${notif.taskId}`
                           : notif.type === "signing"
                           // Mở thẳng tab Kế hoạch thu chi > Phiếu trình ký
                           ? "/bao-cao"
@@ -944,6 +1051,9 @@ export default function Header({ title, subtitle }: Props) {
                             ? "bg-violet-50 text-violet-700"
                             : notif.type === "signing"
                             ? "bg-amber-50 text-amber-700"
+                            : notif.type === "comment"
+                            // Xanh dương nhạt — cùng tông với nút "Gửi ý kiến"
+                            ? "bg-blue-50 text-blue-700"
                             : notif.type === "note"
                             // Vàng hổ phách, trùng màu thẻ ghi chú trên lịch
                             ? "bg-amber-100 text-amber-800"
