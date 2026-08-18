@@ -5,7 +5,7 @@
 //
 // Mục đích: chỗ chat nhanh giữa người giao việc và người nhận việc, thay cho
 // Zalo. Mỗi ý kiến là một dòng trong `task_comments` (migration 057), hiện kèm
-// tên + chức danh người viết.
+// HỌ TÊN người viết (chức danh vẫn lưu xuống CSDL nhưng không hiện ra).
 //
 // ─── VÌ SAO ĐẶT NGOÀI THẺ <form> CỦA MODAL ───
 // Modal sửa việc là một <form> có nút submit "Lưu thay đổi". Nhét ô nhập ý kiến
@@ -215,14 +215,10 @@ export default function TaskCommentPanel({ taskId, me, onCountChange }: Props) {
                 </div>
                 <div className="flex-1 bg-slate-50 border border-slate-100 rounded-xl px-3 py-2">
                   <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="font-bold text-slate-800">{name}</span>
-                      {c.author_role && (
-                        <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded-full bg-slate-200/70 text-slate-600">
-                          {c.author_role}
-                        </span>
-                      )}
-                    </div>
+                    {/* CHỈ hiện họ tên, KHÔNG hiện chức danh (user chốt 18/08/2026).
+                        Cột author_role vẫn được ghi xuống CSDL để giữ vết ai nói
+                        với tư cách gì — chỉ là không phơi ra trên giao diện. */}
+                    <span className="font-bold text-slate-800">{name}</span>
                     <span className="text-[10px] text-slate-400 font-semibold shrink-0">
                       {formatDate(c.created_at)}
                     </span>
