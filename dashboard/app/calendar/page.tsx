@@ -1738,9 +1738,13 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
 
       {/* Xin nghỉ phép modal */}
       {isLeaveModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl border border-slate-100 space-y-4 animate-in fade-in-50 zoom-in-95 duration-150">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-2 sm:p-4">
+          {/* Màn hình thấp (laptop 768px, cửa sổ nhỏ) trước đây bị mất nút "Gửi đơn"
+              vì thẻ modal không giới hạn chiều cao và không cuộn được. Nay: cao tối đa
+              92vh, phần giữa cuộn, đầu và chân luôn dính -> nút Gửi không bao giờ khuất.
+              Từ 768px trở lên form dàn 2 cột cho thấp bớt chiều dọc. */}
+          <div className="bg-white rounded-2xl w-full max-w-md md:max-w-2xl max-h-[92vh] flex flex-col shadow-2xl border border-slate-100 animate-in fade-in-50 zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 sm:px-6 pt-5 pb-3 shrink-0">
               <div className="flex items-center gap-2">
                 <span className="text-lg">🌴</span>
                 <h3 className="font-heading font-extrabold text-sm text-slate-800">Xin nghỉ phép</h3>
@@ -1750,7 +1754,10 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
               </button>
             </div>
 
-            <form onSubmit={handleRequestLeave} className="space-y-4 text-xs font-semibold text-slate-700">
+            <form onSubmit={handleRequestLeave} className="flex flex-col min-h-0 text-xs font-semibold text-slate-700">
+              <div className="overflow-y-auto px-5 sm:px-6 py-4 grid md:grid-cols-2 gap-x-6 gap-y-4 items-start">
+              {/* Cột trái: chọn loại phép + khoảng ngày + hạn mức phép năm */}
+              <div className="space-y-4">
               {/* Chọn loại nghỉ phép */}
               <div className="space-y-1.5">
                 <label className="text-slate-500 text-[11px] font-bold">Loại nghỉ phép <span className="text-rose-500">*</span></label>
@@ -1837,6 +1844,10 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                 </div>
               )}
 
+              </div>
+
+              {/* Cột phải: kết quả tính ngày, chọn buổi, người duyệt và lý do */}
+              <div className="space-y-4">
               <div className="space-y-1.5">
                 <label className="text-slate-500 text-[11px] font-bold">Số ngày nghỉ</label>
                 <div className="flex items-baseline gap-1">
@@ -1937,7 +1948,10 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                 />
               </div>
 
-              <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
+              </div>
+              </div>
+
+              <div className="shrink-0 flex justify-end gap-3 px-5 sm:px-6 py-4 border-t border-slate-100 bg-white rounded-b-2xl">
                 <button
                   type="button"
                   onClick={() => setIsLeaveModalOpen(false)}
