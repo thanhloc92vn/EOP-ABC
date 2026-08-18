@@ -1756,8 +1756,7 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
 
             <form onSubmit={handleRequestLeave} className="flex flex-col min-h-0 text-xs font-semibold text-slate-700">
               <div className="overflow-y-auto px-5 sm:px-6 py-4 grid md:grid-cols-2 gap-x-6 gap-y-4 items-start">
-              {/* Cột trái: chọn loại phép + khoảng ngày + hạn mức phép năm */}
-              <div className="space-y-4">
+              {/* Hàng 1: loại phép | số ngày + cả ngày/nửa ngày */}
               {/* Chọn loại nghỉ phép */}
               <div className="space-y-1.5">
                 <label className="text-slate-500 text-[11px] font-bold">Loại nghỉ phép <span className="text-rose-500">*</span></label>
@@ -1776,7 +1775,46 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                 </select>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              {/* Số ngày nghỉ + chọn cả ngày / nửa ngày — gộp một ô cho thẳng
+                  hàng với ô "Loại nghỉ phép" bên trái, không còn lệch dòng. */}
+              <div className="space-y-1.5">
+                <label className="text-slate-500 text-[11px] font-bold">Số ngày nghỉ</label>
+                <div className="flex items-center gap-2">
+                  <span className="shrink-0 inline-flex items-baseline gap-1 rounded-xl border border-indigo-100 bg-indigo-50/50 px-3 py-2">
+                    <span className="text-xl font-black text-indigo-600 tracking-tight leading-none">{leaveDaysCount}</span>
+                    <span className="text-[11px] font-bold text-slate-500">ngày</span>
+                  </span>
+                  {isSingleDay && (
+                    <div className="grid grid-cols-2 gap-2 flex-1">
+                      <button
+                        type="button"
+                        onClick={() => setIsHalfDay(false)}
+                        className={`py-2 px-3 font-bold rounded-xl border text-center transition-all cursor-pointer text-xs ${
+                          !isHalfDay
+                            ? "border-indigo-600 bg-indigo-50/40 text-indigo-600 shadow-sm shadow-indigo-500/5"
+                            : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
+                        }`}
+                      >
+                        Cả ngày (1)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsHalfDay(true)}
+                        className={`py-2 px-3 font-bold rounded-xl border text-center transition-all cursor-pointer text-xs ${
+                          isHalfDay
+                            ? "border-indigo-600 bg-indigo-50/40 text-indigo-600 shadow-sm shadow-indigo-500/5"
+                            : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
+                        }`}
+                      >
+                        Nửa ngày (0.5)
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Hàng 2: ngày bắt đầu | ngày kết thúc */}
+              <div className="grid grid-cols-2 gap-4 md:contents">
                 <div className="space-y-1.5">
                   <label className="text-slate-500 text-[11px] font-bold">Ngày bắt đầu <span className="text-rose-500">*</span></label>
                   <input
@@ -1802,7 +1840,7 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
               {/* Phép năm còn lại + chặn đăng ký vượt hạn mức. Chỉ hiện khi đang
                   chọn loại nghỉ có trừ phép năm — các loại khác không liên quan. */}
               {isAnnualLeaveType && leaveQuota && (
-                <div className={`rounded-xl border p-3 space-y-2 ${
+                <div className={`md:col-span-2 rounded-xl border p-3 space-y-2 ${
                   leaveOverQuota ? "border-rose-200 bg-rose-50/60" : "border-slate-200 bg-slate-50/60"
                 }`}>
                   <div className="grid grid-cols-4 gap-2 text-center">
@@ -1844,49 +1882,11 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                 </div>
               )}
 
-              </div>
-
-              {/* Cột phải: kết quả tính ngày, chọn buổi, người duyệt và lý do */}
-              <div className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="text-slate-500 text-[11px] font-bold">Số ngày nghỉ</label>
-                <div className="flex items-baseline gap-1">
-                  <span className="text-3xl font-black text-indigo-600 tracking-tight">{leaveDaysCount}</span>
-                  <span className="text-xs font-semibold text-slate-500">ngày</span>
-                </div>
-              </div>
-
-              {isSingleDay && (
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setIsHalfDay(false)}
-                    className={`py-3 px-4 font-bold rounded-xl border text-center transition-all cursor-pointer text-xs ${
-                      !isHalfDay
-                        ? "border-indigo-600 bg-indigo-50/40 text-indigo-600 shadow-sm shadow-indigo-500/5"
-                        : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
-                    }`}
-                  >
-                    Cả ngày (1)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setIsHalfDay(true)}
-                    className={`py-3 px-4 font-bold rounded-xl border text-center transition-all cursor-pointer text-xs ${
-                      isHalfDay
-                        ? "border-indigo-600 bg-indigo-50/40 text-indigo-600 shadow-sm shadow-indigo-500/5"
-                        : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
-                    }`}
-                  >
-                    Nửa ngày (0.5)
-                  </button>
-                </div>
-              )}
 
               {isSingleDay && isHalfDay && (
-                <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1 duration-200">
+                <div className="md:col-span-2 space-y-1.5 animate-in fade-in slide-in-from-top-1 duration-200">
                   <label className="text-slate-500 text-[11px] font-bold">Chọn buổi nghỉ</label>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-2 gap-3 md:max-w-sm">
                     <button
                       type="button"
                       onClick={() => setHalfDayPeriod("Sáng")}
@@ -1917,7 +1917,7 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                   biết đơn sẽ tới tay ai, không phải ô nhập liệu. Nửa ngày cũng phải
                   qua duyệt nên khối này hiện với mọi độ dài đơn. */}
               {leaveDaysCount > 0 && (
-                <div className="bg-indigo-50/40 border border-indigo-100 rounded-xl p-3 flex items-start gap-2 animate-in fade-in duration-200">
+                <div className="md:col-span-2 bg-indigo-50/40 border border-indigo-100 rounded-xl p-3 flex items-start gap-2 animate-in fade-in duration-200">
                   <CheckCircle2 size={14} className="text-indigo-500 shrink-0 mt-0.5" />
                   <div className="text-[11px] leading-relaxed">
                     {resolveCap1Approver(modalName, leaveDaysCount <= 1) ? (
@@ -1937,18 +1937,17 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                 </div>
               )}
 
-              <div className="space-y-1.5">
+              <div className="md:col-span-2 space-y-1.5">
                 <label className="text-slate-500 text-[11px] font-bold">Lý do</label>
                 <textarea
                   placeholder="Nhập lý do nghỉ phép (không bắt buộc)..."
                   value={modalNotes}
                   onChange={(e) => setModalNotes(e.target.value)}
-                  rows={3}
+                  rows={2}
                   className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-indigo-500/20 font-semibold text-slate-800 text-xs placeholder:text-slate-400 bg-white resize-none"
                 />
               </div>
 
-              </div>
               </div>
 
               <div className="shrink-0 flex justify-end gap-3 px-5 sm:px-6 py-4 border-t border-slate-100 bg-white rounded-b-2xl">
@@ -2216,9 +2215,13 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
       )}
 
       {isTripModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-2xl p-6 shadow-2xl border border-slate-100 space-y-4 animate-in fade-in-50 zoom-in-95 duration-150 max-h-[90vh] overflow-y-auto scrollbar-thin">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-2 sm:p-4">
+          {/* Form công tác dài và nhiều cột (lộ trình 4 ô, chi phí 3 ô) nên chật ở
+              672px. Nay nới tới 896px từ 1024px màn hình trở lên, và cho phần giữa
+              cuộn riêng để hàng nút "Gửi đơn công tác" luôn dính đáy, khỏi phải
+              cuộn hết form mới bấm được. */}
+          <div className="bg-white rounded-2xl w-full max-w-2xl lg:max-w-4xl max-h-[92vh] flex flex-col shadow-2xl border border-slate-100 animate-in fade-in-50 zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 sm:px-6 pt-5 pb-3 shrink-0">
               <div className="flex items-center gap-2">
                 <span className="text-lg">💼</span>
                 <h3 className="font-heading font-extrabold text-sm text-slate-800">Đăng ký lịch đi công tác</h3>
@@ -2228,10 +2231,11 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
               </button>
             </div>
 
-            <form onSubmit={handleRequestTrip} className="space-y-4 text-xs font-semibold text-slate-700">
-              
+            <form onSubmit={handleRequestTrip} className="flex flex-col min-h-0 text-xs font-semibold text-slate-700">
+              <div className="overflow-y-auto scrollbar-thin px-5 sm:px-6 py-4 space-y-4">
+
               {/* Row 1 */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <label className="text-slate-500 text-[11px] font-bold">Điểm công tác chính <span className="text-rose-500">*</span></label>
                   <input
@@ -2262,7 +2266,7 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
               </div>
 
               {/* Row 2 */}
-              <div className="grid grid-cols-3 gap-4 items-end">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 items-end">
                 <div className="space-y-1.5">
                   <label className="text-slate-500 text-[11px] font-bold">Từ ngày <span className="text-rose-500">*</span></label>
                   <input
@@ -2334,7 +2338,7 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                       )}
 
                       {/* Sub-row 1 */}
-                      <div className="grid grid-cols-4 gap-2.5">
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
                         <div className="space-y-1">
                           <label className="text-[10px] text-slate-450 font-bold uppercase">Nơi đi</label>
                           <input
@@ -2380,7 +2384,7 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                       </div>
 
                       {/* Sub-row 2 */}
-                      <div className="grid grid-cols-3 gap-2.5">
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5">
                         <div className="space-y-1">
                           <label className="text-[10px] text-slate-455 font-bold uppercase">Phương tiện</label>
                           <input
@@ -2424,7 +2428,7 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                   <Coins size={14} className="text-indigo-600" /> Chi phí và Phụ cấp công tác
                 </span>
 
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   {/* Phụ cấp phí */}
                   <div className="p-3 bg-slate-50/50 border border-slate-100 rounded-xl space-y-1">
                     <span className="text-[9px] text-slate-450 font-bold uppercase block">Phụ cấp công tác phí</span>
@@ -2484,7 +2488,7 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                 {tripOtherExpenses.length > 0 && (
                   <div className="space-y-2">
                     {tripOtherExpenses.map((exp, idx) => (
-                      <div key={idx} className="flex gap-2 items-center bg-slate-50/30 p-2 border border-slate-100 rounded-xl relative animate-in fade-in duration-100">
+                      <div key={idx} className="flex flex-wrap gap-2 items-center bg-slate-50/30 p-2 border border-slate-100 rounded-xl relative animate-in fade-in duration-100">
                         <input
                           type="text"
                           required
@@ -2547,8 +2551,10 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                 </div>
               </div>
 
+              </div>
+
               {/* Action Buttons */}
-              <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
+              <div className="shrink-0 flex justify-end gap-3 px-5 sm:px-6 py-4 border-t border-slate-100 bg-white rounded-b-2xl">
                 <button
                   type="button"
                   onClick={() => setIsTripModalOpen(false)}
