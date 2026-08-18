@@ -136,6 +136,38 @@ function toDateKey(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
+// Các NGÀY mà một lịch book chiếm chỗ, dạng "YYYY-MM-DD" (giờ địa phương).
+// Nền cho tính năng "bỏ bớt ngày": đơn 18/8 07:30 -> 19/8 17:30 ra 2 ngày.
+function listBookingDays(startISO: string, endISO: string): string[] {
+  const s = new Date(startISO);
+  const e = new Date(endISO);
+  if (isNaN(s.getTime()) || isNaN(e.getTime())) return [];
+  const cur = new Date(s.getFullYear(), s.getMonth(), s.getDate());
+  const last = new Date(e.getFullYear(), e.getMonth(), e.getDate());
+  // Kết thúc đúng 00:00 = ngày cuối không thực sự dùng đến (trả xe từ đêm hôm trước).
+  if (e.getHours() === 0 && e.getMinutes() === 0 && last.getTime() > cur.getTime()) {
+    last.setDate(last.getDate() - 1);
+  }
+  const days: string[] = [];
+  while (cur.getTime() <= last.getTime()) {
+    days.push(toDateKey(cur));
+    cur.setDate(cur.getDate() + 1);
+  }
+  return days;
+}
+
+// "2026-08-19" -> "19/08/2026"
+function formatDayKey(key: string) {
+  const [y, m, d] = key.split("-");
+  return `${d}/${m}/${y}`;
+}
+
+// "HH:mm" của một mốc thời gian ISO (giờ địa phương)
+function clockOf(iso: string) {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
 function clamp(n: number, min: number, max: number) {
   return Math.min(Math.max(n, min), max);
 }
@@ -170,6 +202,12 @@ function BookingContent() {
   const [selectedBooking, setSelectedBooking] = useState<BookingRow | null>(null);
   const [modalResourceName, setModalResourceName] = useState("");
   const [processingAction, setProcessingAction] = useState(false);
+
+  // Popup "bỏ bớt ngày" — chỉ bật khi lịch kéo dài từ 2 ngày trở lên. Ví dụ đơn
+  // 18->19/8 nay không dùng ngày 19: bỏ ngày 19, ngày 18 vẫn giữ nguyên lịch bận.
+  const [trimTarget, setTrimTarget] = useState<BookingRow | null>(null);
+  const [trimRemovedDays, setTrimRemovedDays] = useState<string[]>([]);
+  const [trimNote, setTrimNote] = useState("");
 
   // Form state
   const [hostName, setHostName] = useState("");
@@ -793,10 +831,34 @@ function BookingContent() {
     }
   };
 
+  // ━━━ Bỏ bớt ngày trong lịch nhiều ngày ━━━
+  const trimDays = useMemo(
+    () => (trimTarget ? listBookingDays(trimTarget.start_time, trimTarget.end_time) : []),
+    [trimTarget]
+  );
+  const trimKeptDays = useMemo(
+    () => trimDays.filter((d) => !trimRemovedDays.includes(d)),
+    [trimDays, trimRemovedDays]
+  );
+  // Phần giữ lại phải LIỀN MẠCH: mỗi đơn chỉ lưu một khoảng thời gian duy nhất,
+  // bỏ ngày ở giữa (18-19-20 mà bỏ 19) sẽ thành 2 mảnh rời -> chặn, báo rõ lý do.
+  const trimKeptIsContiguous = useMemo(() => {
+    if (trimKeptDays.length === 0) return true;
+    const first = trimDays.indexOf(trimKeptDays[0]);
+    return trimKeptDays.every((d, i) => trimDays[first + i] === d);
+  }, [trimDays, trimKeptDays]);
+
   // Xoá hẳn lịch book (dùng khi lỡ book nhầm) — Trưởng bộ phận và Hành chính đều có quyền, mọi trạng thái
   // Vẫn báo email cho người đăng ký như khi Từ chối/Phê duyệt, để họ biết lịch không còn hiệu lực.
   const handleDeleteFromModal = async (b: BookingRow) => {
     if (!currentUser || processingAction) return;
+    // Lịch từ 2 ngày trở lên: hỏi bỏ ngày nào trước, thay vì xoá sạch cả đơn.
+    if (listBookingDays(b.start_time, b.end_time).length >= 2) {
+      setTrimTarget(b);
+      setTrimRemovedDays([]);
+      setTrimNote("");
+      return;
+    }
     if (!window.confirm(`Xoá hẳn lịch book "${b.host_name}" (${b.resource_name})? Hành động này không thể hoàn tác.`)) return;
     const defaultNote = `${isVehicle ? "Xe" : "Phòng họp"} ưu tiên Ban lãnh đạo`;
     const note = window.prompt("Ghi chú lý do xoá (sẽ gửi kèm email báo cho người đăng ký):", defaultNote) || "";
@@ -822,6 +884,80 @@ function BookingContent() {
     } catch (err: any) {
       console.error("Error deleting booking from modal:", err);
       showToast("error", "Lỗi khi xoá lịch book!");
+    } finally {
+      setProcessingAction(false);
+    }
+  };
+
+  // Xác nhận bỏ ngày: bỏ HẾT ngày = xoá cả đơn (như cũ); bỏ bớt = rút ngắn khoảng
+  // thời gian, các ngày còn lại vẫn giữ nguyên lịch bận, ngày đã bỏ trống ngay lập tức.
+  const handleConfirmTrim = async () => {
+    if (!currentUser || !trimTarget || processingAction) return;
+    if (trimRemovedDays.length === 0 || !trimKeptIsContiguous) return;
+    const b = trimTarget;
+    const removedLabel = trimRemovedDays.map(formatDayKey).join(", ");
+    const note = trimNote.trim();
+
+    try {
+      setProcessingAction(true);
+
+      // Bỏ toàn bộ ngày -> xoá hẳn đơn
+      if (trimKeptDays.length === 0) {
+        const { error } = await supabase.from("resource_bookings").delete().eq("id", b.id);
+        if (error) throw error;
+        showToast("success", "Đã xoá lịch book. Đang gửi email báo người đăng ký...");
+        setTrimTarget(null);
+        closeBookingModal();
+        fetchBookings();
+        sendBookingEmailInBackground(
+          {
+            smtpConfig: readSmtpConfig(),
+            booking: b,
+            decision: "deleted",
+            rejectReason: note,
+            approverName: currentUser.name,
+          },
+          "Chưa gửi được email báo xoá lịch"
+        );
+        return;
+      }
+
+      // Giữ nguyên giờ bắt đầu/kết thúc trong ngày, chỉ dời ngày đầu và ngày cuối.
+      const newStart = new Date(`${trimKeptDays[0]}T${clockOf(b.start_time)}:00`);
+      const newEnd = new Date(`${trimKeptDays[trimKeptDays.length - 1]}T${clockOf(b.end_time)}:00`);
+      // Đơn kết thúc đúng 00:00 (qua nửa đêm) thì mốc kết thúc rơi sang ngày kế tiếp.
+      if (newEnd.getTime() <= newStart.getTime()) newEnd.setDate(newEnd.getDate() + 1);
+
+      const { error } = await supabase
+        .from("resource_bookings")
+        .update({ start_time: newStart.toISOString(), end_time: newEnd.toISOString() })
+        .eq("id", b.id);
+      if (error) throw error;
+
+      showToast("success", `Đã bỏ ngày ${removedLabel} khỏi lịch. Đang gửi email báo người đăng ký...`);
+      setTrimTarget(null);
+      closeBookingModal();
+      fetchBookings();
+
+      sendBookingEmailInBackground(
+        {
+          smtpConfig: readSmtpConfig(),
+          booking: { ...b, start_time: newStart.toISOString(), end_time: newEnd.toISOString() },
+          decision: "trimmed",
+          removedDaysLabel: removedLabel,
+          rejectReason: note,
+          approverName: currentUser.name,
+        },
+        "Chưa gửi được email báo điều chỉnh lịch"
+      );
+    } catch (err: any) {
+      console.error("Error trimming booking days:", err);
+      showToast(
+        "error",
+        isOverlapDbError(err)
+          ? `Không đổi được lịch — khung giờ còn lại trùng với đăng ký khác của ${isVehicle ? "xe" : "phòng"} này.`
+          : "Lỗi khi điều chỉnh lịch book!"
+      );
     } finally {
       setProcessingAction(false);
     }
@@ -1056,7 +1192,10 @@ function BookingContent() {
                       onClick={() => handleDeleteFromModal(selectedBooking)}
                       className="inline-flex items-center gap-1.5 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 text-[11px] font-bold px-3.5 py-2 rounded-xl transition-all active:scale-95 cursor-pointer disabled:opacity-50"
                     >
-                      <Trash2 size={13} /> Xoá lịch (book nhầm)
+                      <Trash2 size={13} />{" "}
+                      {listBookingDays(selectedBooking.start_time, selectedBooking.end_time).length >= 2
+                        ? "Bỏ bớt ngày / Xoá lịch"
+                        : "Xoá lịch (book nhầm)"}
                     </button>
                   )}
 
@@ -1094,6 +1233,135 @@ function BookingContent() {
                       <ShieldCheck size={13} /> Điều phối
                     </button>
                   )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Popup "bỏ bớt ngày" — lịch kéo dài nhiều ngày mà chỉ huỷ một vài ngày.
+              Ví dụ đơn 18->19/8 không đi ngày 19 nữa: bỏ ngày 19, ngày 18 vẫn bận,
+              xe trống ngày 19 ngay lập tức cho phòng khác đăng ký. */}
+          {trimTarget && (
+            <div
+              className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4"
+              onClick={() => !processingAction && setTrimTarget(null)}
+            >
+              <div
+                className="bg-white w-full max-w-md rounded-2xl shadow-premium overflow-hidden animate-in zoom-in-95 duration-150 max-h-[90vh] flex flex-col"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="bg-rose-600 text-white px-6 py-4 flex items-center justify-between gap-3 shrink-0">
+                  <h3 className="font-heading font-bold text-sm flex items-center gap-2">
+                    <CalendarDays size={16} /> Bỏ ngày khỏi lịch
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => setTrimTarget(null)}
+                    className="text-white/80 hover:text-white cursor-pointer"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+
+                <div className="p-6 space-y-4 text-xs overflow-y-auto">
+                  <p className="text-slate-600 font-semibold leading-relaxed">
+                    Lịch <b className="text-slate-800">{trimTarget.host_name}</b> ({trimTarget.resource_name}) kéo dài{" "}
+                    <b className="text-slate-800">{trimDays.length} ngày</b>. Tích vào ngày <b>không dùng nữa</b> — các
+                    ngày còn lại vẫn giữ nguyên lịch bận.
+                  </p>
+
+                  <div className="space-y-1.5">
+                    {trimDays.map((d) => {
+                      const checked = trimRemovedDays.includes(d);
+                      return (
+                        <label
+                          key={d}
+                          className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl border cursor-pointer transition-all ${
+                            checked ? "border-rose-300 bg-rose-50" : "border-slate-200 hover:bg-slate-50"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() =>
+                              setTrimRemovedDays((prev) =>
+                                prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d]
+                              )
+                            }
+                            className="w-4 h-4 accent-rose-600 cursor-pointer"
+                          />
+                          <span className={`font-bold ${checked ? "text-rose-700 line-through" : "text-slate-700"}`}>
+                            {formatDayKey(d)}
+                          </span>
+                          {checked && (
+                            <span className="ml-auto text-[10px] font-extrabold text-rose-600 uppercase">Bỏ ngày này</span>
+                          )}
+                        </label>
+                      );
+                    })}
+                  </div>
+
+                  {!trimKeptIsContiguous && (
+                    <p className="rounded-xl border-2 border-amber-300 bg-amber-50 p-3 text-[11px] font-bold text-amber-700 flex gap-1.5">
+                      <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                      Chỉ bỏ được ngày ở đầu hoặc ở cuối lịch. Muốn bỏ ngày ở giữa, hãy bỏ hết rồi đăng ký lại thành
+                      hai lịch riêng.
+                    </p>
+                  )}
+
+                  {trimRemovedDays.length > 0 && trimKeptIsContiguous && (
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-[11px] font-semibold text-slate-600 leading-relaxed">
+                      {trimKeptDays.length === 0 ? (
+                        <>
+                          Bỏ hết ngày → <b className="text-rose-600">xoá luôn cả lịch này</b>.
+                        </>
+                      ) : (
+                        <>
+                          Lịch còn lại:{" "}
+                          <b className="text-slate-800 font-mono">
+                            {clockOf(trimTarget.start_time)} {formatDayKey(trimKeptDays[0])} ➔{" "}
+                            {clockOf(trimTarget.end_time)} {formatDayKey(trimKeptDays[trimKeptDays.length - 1])}
+                          </b>
+                          . {isVehicle ? "Xe" : "Phòng họp"} trống ngày {trimRemovedDays.map(formatDayKey).join(", ")} —
+                          phòng khác đăng ký được ngay.
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="space-y-1">
+                    <label className="text-slate-500 font-bold">Ghi chú (gửi kèm email báo người đăng ký)</label>
+                    <input
+                      value={trimNote}
+                      onChange={(e) => setTrimNote(e.target.value)}
+                      placeholder="VD: Phòng báo không sử dụng ngày 19 nữa"
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40 font-semibold text-slate-700"
+                    />
+                  </div>
+                </div>
+
+                <div className="p-4 border-t border-slate-100 flex items-center justify-end gap-2 bg-slate-50/60 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setTrimTarget(null)}
+                    disabled={processingAction}
+                    className="text-[11px] font-bold text-slate-500 hover:text-slate-700 px-3.5 py-2 rounded-xl cursor-pointer disabled:opacity-50"
+                  >
+                    Đóng
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmTrim}
+                    disabled={processingAction || trimRemovedDays.length === 0 || !trimKeptIsContiguous}
+                    className="inline-flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold px-3.5 py-2 rounded-xl transition-all active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                  >
+                    <Trash2 size={13} />
+                    {trimRemovedDays.length === 0
+                      ? "Chọn ngày cần bỏ"
+                      : trimKeptDays.length === 0
+                      ? "Xoá cả lịch"
+                      : `Bỏ ${trimRemovedDays.length} ngày đã chọn`}
+                  </button>
                 </div>
               </div>
             </div>
