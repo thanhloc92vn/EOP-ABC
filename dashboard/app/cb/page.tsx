@@ -1,7 +1,7 @@
 "use client";
 
 import { apiFetch } from "@/lib/apiClient";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
@@ -88,6 +88,8 @@ interface Employee {
   emergency_contact_relationship?: string;
   emergency_contact_phone?: string;
   notes?: string;
+  /** Tổng phép năm do Admin nhập tay (migration 054). null = để hệ thống tự tính. */
+  annual_leave_override?: number | null;
 }
 
 interface Contract {
@@ -3976,7 +3978,13 @@ export default function CBPage() {
       
       const baseLeave = 12;
       const seniorLeave = Math.floor(tenureYears / 5);
-      const totalLeave = isConcurrent ? 0 : (baseLeave + seniorLeave);
+      // Admin nhập tay được (migration 054): có số ghi đè thì lấy số đó, bỏ trống
+      // thì quay lại công thức 12 + thâm niên. Kiêm nhiệm/hỗ trợ vẫn là 0 tuyệt đối.
+      const override = emp.annual_leave_override;
+      const hasOverride = override !== null && override !== undefined;
+      const totalLeave = isConcurrent
+        ? 0
+        : (hasOverride ? Number(override) : baseLeave + seniorLeave);
       
       // Calculate used leave: sum of approved leave days of type "Phép năm"
       const usedLeave = leaves
@@ -3996,11 +4004,52 @@ export default function CBPage() {
         baseLeave: isConcurrent ? 0 : baseLeave,
         seniorLeave: isConcurrent ? 0 : seniorLeave,
         totalLeave,
+        hasOverride,
         usedLeave,
         remainingLeave
       };
     });
   }, [employees, leaves]);
+
+  // ─── Sửa tay cột "Tổng phép" (chỉ Admin) ───
+  // Ghi thẳng vào employees.annual_leave_override. RLS (migration 007) đã chặn
+  // sẵn ở tầng CSDL nên người không có quyền có gọi tay cũng không ghi được.
+  const [editingLeaveQuotaId, setEditingLeaveQuotaId] = useState<string | null>(null);
+  const [leaveQuotaDraft, setLeaveQuotaDraft] = useState("");
+  const [savingLeaveQuota, setSavingLeaveQuota] = useState(false);
+  // Bấm Esc là bỏ, nhưng thao tác đó cũng làm ô mất focus -> onBlur chạy và lưu
+  // mất số vừa gõ. Cờ này để onBlur biết mà đứng yên.
+  const cancelLeaveQuotaRef = useRef(false);
+
+  const handleSaveLeaveQuota = async (empId: string) => {
+    if (cancelLeaveQuotaRef.current) {
+      cancelLeaveQuotaRef.current = false;
+      return;
+    }
+    if (savingLeaveQuota) return;
+    const raw = leaveQuotaDraft.trim();
+    // Bỏ trống = gỡ ghi đè, trả về cho hệ thống tự tính.
+    const value = raw === "" ? null : Number(raw);
+    if (value !== null && (!Number.isFinite(value) || value < 0)) {
+      alert("Số ngày phép không hợp lệ!");
+      return;
+    }
+    setSavingLeaveQuota(true);
+    try {
+      const { error } = await supabase
+        .from("employees")
+        .update({ annual_leave_override: value })
+        .eq("id", empId);
+      if (error) throw error;
+      setEmployees(prev => prev.map(e => e.id === empId ? { ...e, annual_leave_override: value } : e));
+      setEditingLeaveQuotaId(null);
+    } catch (err) {
+      console.error("Error saving leave quota:", err);
+      alert("Không lưu được số phép. Kiểm tra lại quyền hoặc kết nối!");
+    } finally {
+      setSavingLeaveQuota(false);
+    }
+  };
 
   const searchedAnnualLeaveData = useMemo(() => {
     if (!leaveSearchQuery) return annualLeaveData;
@@ -5989,9 +6038,46 @@ export default function CBPage() {
                               <td className="py-3.5 px-3 text-center text-slate-500">
                                 {d.isConcurrent ? "0 ngày" : `+${d.seniorLeave} ngày`}
                               </td>
+                              {/* Admin bấm vào số để sửa tay. Bỏ trống ô rồi lưu là
+                                  gỡ ghi đè, quay về công thức 12 + thâm niên. */}
                               <td className="py-3.5 px-3 text-center font-bold text-slate-800">
                                 {d.isConcurrent ? (
                                   <span className="px-2 py-0.5 bg-slate-100 text-slate-400 border border-slate-200/40 rounded text-[9px] font-bold">Kiêm nhiệm/Hỗ trợ</span>
+                                ) : editingLeaveQuotaId === d.id ? (
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    autoFocus
+                                    disabled={savingLeaveQuota}
+                                    value={leaveQuotaDraft}
+                                    onChange={(e) => setLeaveQuotaDraft(e.target.value)}
+                                    onBlur={() => handleSaveLeaveQuota(d.id)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") e.currentTarget.blur();
+                                      if (e.key === "Escape") {
+                                        cancelLeaveQuotaRef.current = true;
+                                        setEditingLeaveQuotaId(null);
+                                      }
+                                    }}
+                                    placeholder="Tự tính"
+                                    className="w-20 px-2 py-1 text-center text-xs font-bold border border-[#005BAC] rounded-lg outline-none disabled:opacity-50"
+                                  />
+                                ) : currentUser?.isAdmin ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setLeaveQuotaDraft(d.hasOverride ? String(d.totalLeave) : "");
+                                      setEditingLeaveQuotaId(d.id);
+                                    }}
+                                    title="Bấm để sửa tay số phép năm"
+                                    className={`px-2 py-0.5 rounded-lg border border-dashed transition-colors cursor-pointer ${
+                                      d.hasOverride
+                                        ? "border-[#005BAC] text-[#005BAC] bg-blue-50/60"
+                                        : "border-slate-300 text-slate-800 hover:bg-slate-100"
+                                    }`}
+                                  >
+                                    {d.totalLeave} ngày
+                                  </button>
                                 ) : (
                                   `${d.totalLeave} ngày`
                                 )}
