@@ -214,6 +214,13 @@ export default function TaskManagementPage() {
   const [editFiles, setEditFiles] = useState<TaskFile[]>([]);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [fileErr, setFileErr] = useState("");
+  // Khoá nút trong lúc ghi task xuống DB. Mạng chậm là cú bấm thứ hai lọt vào
+  // trước khi cú thứ nhất ghi xong -> một loạt task trùng. Email báo đã tách ra
+  // chạy ngầm nên khoảng khoá này chỉ còn đúng thời gian ghi DB.
+  const [creatingTask, setCreatingTask] = useState(false);
+  // Chốt chặn thật nằm ở ref chứ không ở state: hai cú bấm sát nhau có thể lọt
+  // vào cùng một nhịp trước khi React vẽ lại và khoá được cái nút.
+  const creatingTaskRef = useRef(false);
   // Khung xem tệp giữa màn hình. Giữ luôn URL đã ký để không phải ký lại mỗi
   // lần React vẽ lại.
   const [preview, setPreview] = useState<{ file: TaskFile; url: string } | null>(null);
@@ -667,6 +674,8 @@ export default function TaskManagementPage() {
   // Create Task
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Đang tạo dở thì bỏ qua mọi cú bấm sau — đây là chỗ chặn task trùng.
+    if (creatingTaskRef.current) return;
     if (!newTitle.trim()) {
       alert("Vui lòng điền Tên công việc!");
       return;
@@ -683,6 +692,8 @@ export default function TaskManagementPage() {
       return;
     }
 
+    creatingTaskRef.current = true;
+    setCreatingTask(true);
     try {
       // MỖI NGƯỜI MỘT DÒNG task, nội dung y hệt nhau. Mỗi người có tiến độ riêng,
       // tự kéo thẻ của mình, và mọi luật lọc quyền xem (tra phòng ban từ tên
@@ -711,32 +722,17 @@ export default function TaskManagementPage() {
 
       if (error) throw error;
 
-      // ─── Báo email cho nhân viên khi CẤP QUẢN LÝ giao việc ───
-      // Nhân viên tự tạo việc cho mình -> KHÔNG gửi. Chỉ gửi khi người tạo là
-      // Trưởng/Phó phòng, Tổ trưởng, Ban lãnh đạo hoặc Admin, VÀ giao cho người khác.
-      // Người gửi luôn là email hệ thống cấu hình ở Cài đặt hệ thống; người nhận lấy
-      // email trong Danh sách nhân viên (ưu tiên email công ty).
-      // Mỗi người MỘT lá thư riêng (thư xưng hô đích danh); lỗi gom về một hộp thoại.
-      const mailProblems: string[] = [];
-      for (const assigneeName of newAssignees) {
-        const problem = await notifyAssignee({
-          title: newTitle,
-          assignee: assigneeName,
-          priority: newPriority,
-          due_date: newDueDate,
-          start_date: newStartDate,
-          description: newDescription,
-          link: newLink,
-        });
-        if (problem) mailProblems.push(problem);
-      }
-      if (mailProblems.length > 0) {
-        alert(
-          `Đã tạo công việc, nhưng KHÔNG gửi được email báo:\n\n` +
-          mailProblems.map(p => `• ${p}`).join("\n") +
-          `\n\nVào Danh sách nhân viên bổ sung email công ty cho họ để lần sau hệ thống gửi được.`
-        );
-      }
+      // Chốt lại nội dung thư TRƯỚC khi reset form, vì phần gửi mail chạy ngầm
+      // sau khi các ô nhập đã bị xoá trắng.
+      const mailRecipients = [...newAssignees];
+      const mailContent = {
+        title: newTitle,
+        priority: newPriority,
+        due_date: newDueDate,
+        start_date: newStartDate,
+        description: newDescription,
+        link: newLink,
+      };
 
       // Reset Form & Close Modal
       setNewTitle("");
@@ -759,9 +755,38 @@ export default function TaskManagementPage() {
 
       // Refresh tasks
       fetchTasks();
+
+      // ─── Báo email cho nhân viên khi CẤP QUẢN LÝ giao việc ───
+      // Nhân viên tự tạo việc cho mình -> KHÔNG gửi. Chỉ gửi khi người tạo là
+      // Trưởng/Phó phòng, Tổ trưởng, Ban lãnh đạo hoặc Admin, VÀ giao cho người khác.
+      // Người gửi luôn là email hệ thống cấu hình ở Cài đặt hệ thống; người nhận lấy
+      // email trong Danh sách nhân viên (ưu tiên email công ty).
+      // Mỗi người MỘT lá thư riêng (thư xưng hô đích danh); lỗi gom về một hộp thoại.
+      //
+      // KHÔNG await: task đã nằm trong DB rồi, thư chỉ là báo kèm. Gửi lần lượt
+      // vài người mất mấy giây — bắt người dùng ngồi nhìn cái form đơ chờ gửi thư
+      // xong mới đóng là lý do trước đây họ bấm nhiều lần và tạo task trùng.
+      void (async () => {
+        const mailProblems: string[] = [];
+        for (const assigneeName of mailRecipients) {
+          const problem = await notifyAssignee({ ...mailContent, assignee: assigneeName });
+          if (problem) mailProblems.push(problem);
+        }
+        if (mailProblems.length > 0) {
+          alert(
+            `Đã tạo công việc, nhưng KHÔNG gửi được email báo:\n\n` +
+            mailProblems.map(p => `• ${p}`).join("\n") +
+            `\n\nVào Danh sách nhân viên bổ sung email công ty cho họ để lần sau hệ thống gửi được.`
+          );
+        }
+      })();
     } catch (err) {
       console.error("Error creating task:", err);
       alert("Lỗi khi tạo công việc!");
+    } finally {
+      // Mở khoá kể cả khi lỗi, để người dùng sửa rồi bấm lại được.
+      creatingTaskRef.current = false;
+      setCreatingTask(false);
     }
   };
 
@@ -1674,7 +1699,13 @@ export default function TaskManagementPage() {
             {/* Header */}
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="font-heading font-extrabold text-sm text-slate-800">Tạo công việc mới</h3>
-              <button onClick={closeCreateModal} className="text-slate-400 hover:text-slate-600 transition-colors">
+              {/* Đang tạo mà bấm X thì closeCreateModal xoá luôn tệp vừa tải lên
+                  trong khi task đang được ghi -> việc mất tệp đính kèm. */}
+              <button
+                onClick={closeCreateModal}
+                disabled={creatingTask}
+                className="text-slate-400 hover:text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
                 <X size={16} />
               </button>
             </div>
@@ -1966,18 +1997,27 @@ export default function TaskManagementPage() {
                 <button
                   type="button"
                   onClick={closeCreateModal}
-                  className="flex-1 py-2.5 border border-slate-200 text-slate-600 font-bold rounded-xl hover:bg-slate-50 transition-colors cursor-pointer"
+                  disabled={creatingTask}
+                  className="flex-1 py-2.5 border border-slate-200 text-slate-600 font-bold rounded-xl hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
                 >
                   Hủy
                 </button>
                 {/* Khoá khi tệp đang lên: bấm Tạo giữa chừng thì việc được lưu
-                    với danh sách tệp còn thiếu. */}
+                    với danh sách tệp còn thiếu.
+                    Khoá khi đang ghi: chặn cú bấm thứ hai tạo task trùng. */}
                 <button
                   type="submit"
-                  disabled={uploadingFile}
-                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl transition-colors cursor-pointer shadow-md shadow-blue-500/10"
+                  disabled={uploadingFile || creatingTask}
+                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl transition-colors cursor-pointer shadow-md shadow-blue-500/10 flex items-center justify-center gap-2"
                 >
-                  {uploadingFile ? "Đang tải tệp..." : "Tạo Task"}
+                  {creatingTask && (
+                    <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                  )}
+                  {creatingTask
+                    ? "Đang lưu..."
+                    : uploadingFile
+                    ? "Đang tải tệp..."
+                    : "Tạo Task"}
                 </button>
               </div>
             </form>
