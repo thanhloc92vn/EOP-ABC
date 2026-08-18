@@ -6,7 +6,6 @@ import { useState, useEffect, useRef, Fragment } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
-import { isManagerRole } from "@/lib/approvers";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import { useDepartments } from "@/lib/departments";
 import { useTenantConfig, invalidateTenantConfig } from "@/lib/tenantConfig";
@@ -992,16 +991,22 @@ export default function EmployeeManagementPage() {
                   Danh sách nhân sự
                 </button>
               )}
-              <button
-                onClick={openSettings}
-                className="p-2.5 bg-white border border-slate-200 text-slate-500 rounded-xl hover:bg-slate-50 transition-all shadow-sm cursor-pointer inline-flex items-center justify-center"
-                title="Cấu hình OpenAI API Key & Model AI"
-              >
-                <Settings size={14} />
-              </button>
-              {currentUser && (currentUser.isAdmin ||
-                               currentUser.role.toLowerCase() === "admin" ||
-                               isManagerRole(currentUser.role)) && (
+              {/* Cấu hình OpenAI API Key: trước đây KHÔNG gác quyền, ai đăng nhập cũng
+                  mở được hộp thoại khoá API. Nay theo cùng cờ quản lý hồ sơ nhân sự. */}
+              {canEdit && (
+                <button
+                  onClick={openSettings}
+                  className="p-2.5 bg-white border border-slate-200 text-slate-500 rounded-xl hover:bg-slate-50 transition-all shadow-sm cursor-pointer inline-flex items-center justify-center"
+                  title="Cấu hình OpenAI API Key & Model AI"
+                >
+                  <Settings size={14} />
+                </button>
+              )}
+              {/* Trước đây gác bằng isManagerRole(role) — check CHỨC DANH hardcode, nên
+                  mọi "Giám đốc/Phó Giám đốc/Trưởng phòng" đều thêm được nhân sự dù
+                  không có cờ. Nay dùng canEdit: Admin + cờ can_manage_employees, đúng
+                  nguyên tắc "cờ là nguồn quyền duy nhất". */}
+              {canEdit && (
                 <button
                   onClick={() => setShowAddModal(true)}
                   className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2.5 rounded-xl shadow-md shadow-blue-500/10 hover:shadow-blue-500/20 hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer"
