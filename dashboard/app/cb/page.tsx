@@ -10,6 +10,12 @@ import { useDepartments } from "@/lib/departments";
 import { useTenantConfig } from "@/lib/tenantConfig";
 import { fetchAvatarMap, pickAvatar } from "@/lib/avatar";
 import {
+  getTenureYears,
+  getTenureStr,
+  parseLeaveTask,
+  computeLeaveQuota,
+} from "@/lib/annualLeave";
+import {
   User,
   Clock,
   DollarSign,
@@ -366,79 +372,11 @@ const getEmployeeLevel = (role: string): string => {
   return "CBNV";
 };
 
-// Mốc tính thâm niên là NGÀY HÔM NAY. Trước đây đóng cứng new Date("2026-06-19")
-// nên thâm niên toàn công ty đứng yên từ 19/6 — và công thức phép năm bên dưới
-// tính theo tháng hiện tại nên bắt buộc phải chạy theo ngày thật.
-const getEmployeeTenureYears = (emp: any): number => {
-  if (!emp || !emp.created_at) return 1.5;
-  const joinDate = new Date(emp.created_at);
-  if (isNaN(joinDate.getTime())) return 1.5;
-  const now = new Date();
-  const diffTime = Math.max(0, now.getTime() - joinDate.getTime());
-  const diffDays = diffTime / (1000 * 60 * 60 * 24);
-  return diffDays / 365.25;
-};
-
-const getEmployeeTenureStr = (emp: any): string => {
-  if (!emp || !emp.created_at) return "1 năm 6 tháng";
-  const joinDate = new Date(emp.created_at);
-  if (isNaN(joinDate.getTime())) return "1 năm 6 tháng";
-  const now = new Date();
-  // Ngày nhận việc nằm ở TƯƠNG LAI (thường là hồ sơ nhập liệu chưa sửa ngày thật):
-  // phép trừ ra số âm, mà nhánh months < 0 bên dưới sẽ bẻ -2 tháng thành "10 tháng".
-  // Chặn ngay từ đầu để không hiện thâm niên ma.
-  if (joinDate.getTime() > now.getTime()) return "Chưa nhận việc";
-  let years = now.getFullYear() - joinDate.getFullYear();
-  let months = now.getMonth() - joinDate.getMonth();
-  if (months < 0) {
-    years--;
-    months += 12;
-  }
-  if (years === 0 && months === 0) {
-    return "Mới gia nhập";
-  }
-  return `${years > 0 ? `${years} năm ` : ""}${months > 0 ? `${months} tháng` : ""}`.trim();
-};
-
-// ─── Phép năm TÍCH LUỸ THEO THÁNG, không ứng trước cả 12 ngày ───
-// Trả về số ngày phép cơ bản đã tích luỹ tính đến tháng hiện tại (chưa cộng
-// phép thâm niên).
-//
-//  • Vào việc từ NĂM TRƯỚC  -> mỗi tháng đã qua trong năm nay là 1 ngày.
-//    Tháng 8 = 8 ngày, tháng 12 = 12 ngày.
-//
-//  • Vào việc TRONG NĂM NAY -> 2 tháng đầu là thử việc, tính 0. Qua chính thức
-//    (từ tháng thứ 3) mới được bù 2 tháng đó vào, trong đó THÁNG VÀO VIỆC chỉ
-//    được 1 ngày nếu nhận việc từ ngày 1–15; từ ngày 16 trở đi tháng đó là 0.
-//    Từ tháng chính thức trở đi mỗi tháng thêm 1 ngày.
-//
-//    VD nhận việc 10/3 -> tháng 8: (1 + 1) + (T5,6,7,8) = 6 ngày
-//       nhận việc 20/3 -> tháng 8: (0 + 1) + (T5,6,7,8) = 5 ngày
-//       nhận việc 10/7 -> tháng 8: còn thử việc            = 0 ngày
-const getAccruedBaseLeave = (emp: any, ref: Date = new Date()): number => {
-  const year = ref.getFullYear();
-  const month = ref.getMonth() + 1;
-
-  const joinDate = emp?.created_at ? new Date(emp.created_at) : null;
-  // Không có ngày nhận việc -> coi như người cũ, hưởng đủ số tháng đã qua.
-  // Thà rộng tay còn hơn cắt oan phép của người có hồ sơ thiếu ngày.
-  if (!joinDate || isNaN(joinDate.getTime())) return month;
-
-  const joinYear = joinDate.getFullYear();
-  if (joinYear < year) return month;
-  // Ngày nhận việc ở tương lai -> chưa phát sinh phép.
-  if (joinYear > year) return 0;
-
-  const joinMonth = joinDate.getMonth() + 1;
-  // Hết 2 tháng thử việc thì tháng kế tiếp là tháng chính thức đầu tiên.
-  const officialMonth = joinMonth + 2;
-  if (month < officialMonth) return 0; // còn trong thời gian thử việc
-
-  const firstMonthCredit = joinDate.getDate() <= 15 ? 1 : 0;
-  const probationCredit = firstMonthCredit + 1; // tháng thử việc thứ 2 luôn được 1
-  const officialMonths = month - officialMonth + 1;
-  return probationCredit + officialMonths;
-};
+// Công thức phép năm (thâm niên, tích luỹ theo tháng, đọc đơn từ bảng tasks)
+// nằm ở lib/annualLeave.ts — trang Lịch dùng chung để chặn đăng ký vượt hạn
+// mức; hai nơi tính lệch nhau là chặn một đằng trừ một nẻo.
+const getEmployeeTenureYears = (emp: any): number => getTenureYears(emp);
+const getEmployeeTenureStr = (emp: any): string => getTenureStr(emp);
 
 const getProposedHolidayBonus = (years: number): number => {
   if (years < 1) return 300000;
@@ -664,6 +602,8 @@ export default function CBPage() {
   // --- LEAVE & ANNUAL LEAVE STATES ---
   const [leaves, setLeaves] = useState<any[]>([]);
   const [showCreateLeaveModal, setShowCreateLeaveModal] = useState(false);
+  // Khoá nút trong lúc ghi đơn xuống CSDL — chống bấm trùng tạo hai đơn giống nhau.
+  const [creatingLeave, setCreatingLeave] = useState(false);
   const [leaveTabMode, setLeaveTabMode] = useState<"quota" | "history">("quota");
   const [leaveSearchQuery, setLeaveSearchQuery] = useState("");
   const [leaveForm, setLeaveForm] = useState({
@@ -2138,8 +2078,9 @@ export default function CBPage() {
     }
   };
 
-  const handleCreateLeave = (e: React.FormEvent) => {
+  const handleCreateLeave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (creatingLeave) return;
     if (!leaveForm.employeeId) {
       alert("Vui lòng chọn nhân viên!");
       return;
@@ -2156,33 +2097,69 @@ export default function CBPage() {
     }
     const days = Math.round(diffTime / (1000 * 60 * 60 * 24)) + 1;
 
-    const newLeave = {
-      id: `leave_${Date.now()}`,
-      name: emp.name,
-      type: leaveForm.type,
-      from: leaveForm.from,
-      to: leaveForm.to,
-      days,
-      reason: leaveForm.reason || "Nghỉ phép năm",
-      status: "Đã duyệt"
-    };
-
-    setLeaves(prev => {
-      const updated = [newLeave, ...prev];
-      if (typeof window !== "undefined") {
-        localStorage.setItem("tnec_cb_leaves", JSON.stringify(updated));
+    // ─── Chặn đăng ký phép năm vượt hạn mức ───
+    // Một luật duy nhất cho mọi đường vào (đây và trang Lịch). Cần vượt hạn mức
+    // thì Admin sửa tay cột "Tổng phép" trước — có dấu vết, không đi cửa sau.
+    if (leaveForm.type === "Phép năm") {
+      const empLeave = annualLeaveData.find(d => d.id === leaveForm.employeeId);
+      if (empLeave && days > empLeave.remainingLeave) {
+        alert(
+          `Không đủ phép năm!\n\n` +
+          `Còn lại: ${empLeave.remainingLeave} ngày — đăng ký: ${days} ngày.\n` +
+          (empLeave.pendingLeave > 0
+            ? `(Đã trừ ${empLeave.pendingLeave} ngày của đơn đang chờ duyệt.)\n`
+            : "") +
+          `\nVui lòng chuyển sang "Nghỉ không hưởng lương" rồi đăng ký lại.`
+        );
+        return;
       }
-      return updated;
-    });
-    setShowCreateLeaveModal(false);
-    setLeaveForm({
-      employeeId: "",
-      type: "Phép năm",
-      from: new Date().toISOString().split("T")[0],
-      to: new Date().toISOString().split("T")[0],
-      reason: ""
-    });
-    alert("Đăng ký nghỉ phép thành công!");
+    }
+
+    // Đơn nghỉ phép được lưu thành MỘT DÒNG trong bảng `tasks`. Tiêu đề phải đúng
+    // khuôn "Nghỉ phép (loại): Tên (N ngày)" vì parseLeaveTask đọc ngược lại từ
+    // chuỗi này ra loại nghỉ và số ngày.
+    const typeLabel =
+      leaveForm.type === "Phép năm"
+        ? "Nghỉ phép năm hưởng lương"
+        : leaveForm.type === "Nghỉ không lương"
+        ? "Nghỉ việc riêng không hưởng lương"
+        : "Nghỉ việc riêng hưởng nguyên lương";
+
+    setCreatingLeave(true);
+    try {
+      // HCNS đăng ký hộ nên đơn vào thẳng trạng thái đã duyệt (status completed).
+      const { error } = await supabase.from("tasks").insert([{
+        title: `Nghỉ phép (${typeLabel}): ${emp.name} (${days} ngày)`,
+        assignee: emp.name,
+        start_date: leaveForm.from,
+        due_date: leaveForm.to,
+        priority: "Thấp",
+        progress: 100,
+        status: "completed",
+        notes: `Loại nghỉ phép: ${typeLabel}.${leaveForm.reason ? ` Lý do: ${leaveForm.reason}` : ""} (HCNS đăng ký hộ: ${currentUser?.name || "—"})`,
+        approval_stage: "approved",
+      }]);
+      if (error) throw error;
+
+      // Nạp lại từ CSDL thay vì tự thêm vào state: số ngày, loại nghỉ và trạng
+      // thái đều do parseLeaveTask suy ra từ dòng vừa ghi, tự dựng tay là lệch.
+      await fetchLeavesFromSupabase();
+
+      setShowCreateLeaveModal(false);
+      setLeaveForm({
+        employeeId: "",
+        type: "Phép năm",
+        from: new Date().toISOString().split("T")[0],
+        to: new Date().toISOString().split("T")[0],
+        reason: ""
+      });
+      alert("Đăng ký nghỉ phép thành công!");
+    } catch (err: any) {
+      console.error("Error creating leave:", err);
+      alert("Không đăng ký được nghỉ phép: " + (err.message || "Lỗi không xác định"));
+    } finally {
+      setCreatingLeave(false);
+    }
   };
 
   // Đơn nghỉ phép là MỘT DÒNG trong bảng `tasks` (title chứa "Nghỉ phép"), xem
@@ -3154,63 +3131,8 @@ export default function CBPage() {
     else if (tabId === "org_chart") setActiveSubTab("chart");
   };
 
-  const parseTaskToLeave = (t: any) => {
-    let type = "Phép năm";
-    const title = t.title || "";
-    
-    if (title.includes("Nghỉ phép")) {
-      const match = title.match(/Nghỉ phép \((.*?)\)/);
-      if (match && match[1]) {
-        const ext = match[1].toLowerCase();
-        if (ext.includes("phép năm") || ext.includes("phep nam")) {
-          type = "Phép năm";
-        } else if (ext.includes("không hưởng lương") || ext.includes("khong huong luong")) {
-          type = "Nghỉ không lương";
-        } else if (ext.includes("việc riêng") || ext.includes("viec rieng")) {
-          type = "Việc riêng";
-        } else {
-          type = match[1];
-        }
-      }
-    }
-    
-    let days = 1;
-    const daysMatch = title.match(/(\d+(\.\d+)?)\s*ngày/);
-    if (daysMatch && daysMatch[1]) {
-      days = parseFloat(daysMatch[1]);
-    } else if (title.toLowerCase().includes("nửa ngày") || title.toLowerCase().includes("nua ngay")) {
-      days = 0.5;
-    } else {
-      if (t.start_date && t.due_date) {
-        const dFrom = new Date(t.start_date);
-        const dTo = new Date(t.due_date);
-        const diffTime = dTo.getTime() - dFrom.getTime();
-        if (diffTime >= 0) {
-          days = Math.round(diffTime / (1000 * 60 * 60 * 24)) + 1;
-        }
-      }
-    }
-
-    let status = "Chờ duyệt";
-    if (t.status === "completed") {
-      status = "Đã duyệt";
-    } else if (t.status === "rejected") {
-      status = "Từ chối";
-    } else if (t.status === "pending_approval") {
-      status = "Chờ duyệt";
-    }
-    
-    return {
-      id: t.id,
-      name: t.assignee || "Chưa rõ",
-      type,
-      from: t.start_date || new Date().toISOString().split("T")[0],
-      to: t.due_date || new Date().toISOString().split("T")[0],
-      days,
-      reason: t.notes || "Nghỉ phép",
-      status
-    };
-  };
+  // Đọc dòng `tasks` thành đơn nghỉ phép — dùng chung với trang Lịch.
+  const parseTaskToLeave = parseLeaveTask;
 
   const fetchLeavesFromSupabase = async () => {
     try {
@@ -4049,40 +3971,17 @@ export default function CBPage() {
   };
 
   const annualLeaveData = useMemo(() => {
-    const currentYear = new Date().getFullYear();
     return employees.map(emp => {
       const isConcurrent = isConcurrentOrSupport(emp);
-      const tenureYears = getEmployeeTenureYears(emp);
       const tenureStr = getEmployeeTenureStr(emp);
-      
-      // Phép cơ bản KHÔNG còn cố định 12 ngày: tích luỹ dần theo tháng (xem
-      // getAccruedBaseLeave). Phép thâm niên vẫn cộng nguyên: cứ đủ 5 năm +1 ngày.
-      const baseLeave = getAccruedBaseLeave(emp);
-      const seniorLeave = Math.floor(tenureYears / 5);
-      // Admin nhập tay được (migration 054): có số ghi đè thì lấy số đó, bỏ trống
-      // thì quay lại số tích luỹ + thâm niên. Kiêm nhiệm/hỗ trợ vẫn là 0 tuyệt đối.
-      const override = emp.annual_leave_override;
-      const hasOverride = override !== null && override !== undefined;
-      const totalLeave = isConcurrent
-        ? 0
-        : (hasOverride ? Number(override) : baseLeave + seniorLeave);
-      
-      // Ngày đã nghỉ CHỈ tính trong NĂM NAY. Trước đây cộng toàn bộ lịch sử từ
-      // trước tới nay — chưa lộ vì hệ thống mới chạy trong 2026, nhưng đúng ngày
-      // 1/1/2027 là Tổng phép về 1 ngày trong khi "Đã nghỉ" vẫn giữ số của năm cũ,
-      // "Còn lại" kẹt ở 0 gần hết năm. Phép năm không cộng dồn qua năm nên số ngày
-      // đã nghỉ cũng phải làm mới theo năm.
-      const usedLeave = leaves
-        .filter(l =>
-          l.name === emp.name &&
-          l.type === "Phép năm" &&
-          l.status === "Đã duyệt" &&
-          new Date(l.from).getFullYear() === currentYear
-        )
-        .reduce((sum, l) => sum + (l.days || 0), 0);
-        
-      const remainingLeave = Math.max(0, totalLeave - usedLeave);
-      
+
+      // Toàn bộ phép tính nằm ở lib/annualLeave.ts — trang Lịch dùng đúng hàm này
+      // để chặn đăng ký vượt hạn mức. "Đã nghỉ"/"Chờ duyệt" chỉ đếm trong NĂM NAY
+      // vì phép năm không cộng dồn qua năm.
+      const quota = computeLeaveQuota(emp, leaves.filter(l => l.name === emp.name), {
+        isConcurrent,
+      });
+
       return {
         id: emp.id,
         name: emp.name,
@@ -4091,12 +3990,13 @@ export default function CBPage() {
         created_at: emp.created_at,
         tenureStr,
         isConcurrent,
-        baseLeave: isConcurrent ? 0 : baseLeave,
-        seniorLeave: isConcurrent ? 0 : seniorLeave,
-        totalLeave,
-        hasOverride,
-        usedLeave,
-        remainingLeave
+        baseLeave: quota.base,
+        seniorLeave: quota.senior,
+        totalLeave: quota.total,
+        hasOverride: quota.hasOverride,
+        usedLeave: quota.used,
+        pendingLeave: quota.pending,
+        remainingLeave: quota.remaining
       };
     });
   }, [employees, leaves]);
@@ -6313,7 +6213,7 @@ export default function CBPage() {
                                   )}
                                 </div>
                                 
-                                <div className="grid grid-cols-3 gap-2 text-center">
+                                <div className="grid grid-cols-4 gap-2 text-center">
                                   <div className="p-2 bg-white rounded-lg border border-slate-100">
                                     <div className="text-[9px] font-bold text-slate-400">Tổng hạn mức</div>
                                     <div className="text-sm font-black text-slate-800 mt-0.5">{empLeave.totalLeave} ngày</div>
@@ -6321,6 +6221,14 @@ export default function CBPage() {
                                   <div className="p-2 bg-white rounded-lg border border-slate-100">
                                     <div className="text-[9px] font-bold text-slate-400">Đã nghỉ phép năm</div>
                                     <div className="text-sm font-black text-emerald-600 mt-0.5">{empLeave.usedLeave} ngày</div>
+                                  </div>
+                                  {/* Đơn chờ duyệt cũng giữ chỗ — không hiện ra thì người dùng
+                                      không hiểu vì sao còn lại ít hơn hạn mức trừ đã nghỉ. */}
+                                  <div className="p-2 bg-white rounded-lg border border-slate-100">
+                                    <div className="text-[9px] font-bold text-slate-400">Đang chờ duyệt</div>
+                                    <div className={`text-sm font-black mt-0.5 ${
+                                      empLeave.pendingLeave > 0 ? "text-amber-600" : "text-slate-400"
+                                    }`}>{empLeave.pendingLeave} ngày</div>
                                   </div>
                                   <div className="p-2 bg-white rounded-lg border border-slate-100">
                                     <div className="text-[9px] font-bold text-slate-400">Còn lại khả dụng</div>
@@ -6419,10 +6327,12 @@ export default function CBPage() {
                                 )}
 
                                 {isOverLimit && !isConcurrentWarning && (
-                                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-700 flex items-start gap-2">
+                                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 flex items-start gap-2">
                                     <AlertTriangle size={14} className="shrink-0 mt-0.5" />
                                     <span>
-                                      <strong>Cảnh báo hạn mức:</strong> Số ngày đăng ký ({days} ngày) vượt quá số phép năm còn lại khả dụng ({empLeave.remainingLeave} ngày).
+                                      <strong>Không đủ phép năm:</strong> đăng ký {days} ngày nhưng chỉ còn {empLeave.remainingLeave} ngày
+                                      {empLeave.pendingLeave > 0 && ` (đã trừ ${empLeave.pendingLeave} ngày của đơn đang chờ duyệt)`}.
+                                      {" "}Vui lòng chuyển sang <strong>Nghỉ không hưởng lương</strong> để tiếp tục.
                                     </span>
                                   </div>
                                 )}
@@ -6443,21 +6353,40 @@ export default function CBPage() {
                           </div>
 
                           {/* Buttons */}
-                          <div className="flex justify-end gap-2 pt-2">
-                            <button
-                              type="button"
-                              onClick={() => setShowCreateLeaveModal(false)}
-                              className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 font-bold rounded-xl active:scale-95 transition-all cursor-pointer"
-                            >
-                              Hủy bỏ
-                            </button>
-                            <button
-                              type="submit"
-                              className="px-5 py-2 bg-[#005BAC] hover:bg-blue-700 text-white font-bold rounded-xl active:scale-95 transition-all cursor-pointer shadow-premium"
-                            >
-                              Đăng ký phép
-                            </button>
-                          </div>
+                          {(() => {
+                            // Khoá nút khi phép năm không đủ: người dùng phải đổi loại
+                            // nghỉ chứ không ép gửi được. Hàm submit cũng chặn lần nữa.
+                            const empLeave = annualLeaveData.find(d => d.id === leaveForm.employeeId);
+                            const dF = new Date(leaveForm.from);
+                            const dT = new Date(leaveForm.to);
+                            const gap = dT.getTime() - dF.getTime();
+                            const reqDays = gap >= 0 ? Math.round(gap / (1000 * 60 * 60 * 24)) + 1 : 0;
+                            const blocked =
+                              leaveForm.type === "Phép năm" &&
+                              !!empLeave &&
+                              reqDays > empLeave.remainingLeave;
+
+                            return (
+                              <div className="flex justify-end gap-2 pt-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setShowCreateLeaveModal(false)}
+                                  disabled={creatingLeave}
+                                  className="px-4 py-2 border border-slate-200 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed text-slate-600 font-bold rounded-xl active:scale-95 transition-all cursor-pointer"
+                                >
+                                  Hủy bỏ
+                                </button>
+                                <button
+                                  type="submit"
+                                  disabled={blocked || creatingLeave}
+                                  title={blocked ? "Không đủ phép năm — hãy chuyển sang Nghỉ không hưởng lương" : undefined}
+                                  className="px-5 py-2 bg-[#005BAC] hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl active:scale-95 transition-all cursor-pointer shadow-premium"
+                                >
+                                  {creatingLeave ? "Đang lưu..." : blocked ? "Không đủ phép năm" : "Đăng ký phép"}
+                                </button>
+                              </div>
+                            );
+                          })()}
                         </form>
                       </div>
                     </div>

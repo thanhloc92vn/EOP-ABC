@@ -18,6 +18,7 @@ import {
   normalizeName,
 } from "@/lib/approvers";
 import { useCurrentUser } from "@/lib/useCurrentUser";
+import { parseLeaveTask, computeLeaveQuota } from "@/lib/annualLeave";
 import {
   Search,
   ChevronLeft,
@@ -188,7 +189,12 @@ function CalendarContent() {
   // resolveCap1Approver. Ô chọn người duyệt đã bỏ: hệ thống tự suy ra.
   const [allStaffList, setAllStaffList] = useState<{ id: string; name: string; role: string }[]>([]);
   // Danh bạ email/phòng ban tra theo tên — dùng để gửi email thông báo duyệt (tasks không có cột email)
-  const [employeeDirectory, setEmployeeDirectory] = useState<{ name: string; email: string; department: string; role: string }[]>([]);
+  // `created_at` (= ngày nhận việc) và `annual_leave_override` phục vụ tính phép
+  // năm còn lại ngay tại form đăng ký — xem lib/annualLeave.ts.
+  const [employeeDirectory, setEmployeeDirectory] = useState<{
+    name: string; email: string; department: string; role: string;
+    created_at?: string; annual_leave_override?: number | null;
+  }[]>([]);
 
   // Business trip specific states
   const [tripDestination, setTripDestination] = useState("");
@@ -295,7 +301,10 @@ function CalendarContent() {
           name: e.name,
           email: e.email || "",
           department: e.department || "",
-          role: e.role || ""
+          role: e.role || "",
+          created_at: e.created_at || "",
+          // Có sau migration 056; chưa chạy thì undefined -> tính theo công thức.
+          annual_leave_override: e.annual_leave_override ?? null
         })));
 
         // Toàn bộ nhân sự — dùng để đối chiếu người duyệt ĐẶC CÁCH nghỉ 1 ngày.
@@ -669,6 +678,25 @@ function CalendarContent() {
     return diffDays;
   }, [modalStart, modalEnd, isHalfDay]);
 
+  // ─── Phép năm còn lại của người đang đứng tên đơn ───
+  // Dùng chung lib/annualLeave.ts với trang C&B để hai nơi không tính lệch.
+  // Đơn CHỜ DUYỆT cũng bị giữ chỗ, nếu không thì gửi liên tiếp 10 đơn đều lọt.
+  const leaveQuota = useMemo(() => {
+    if (!modalName) return null;
+    const nameKey = normalizeName(modalName);
+    const emp = employeeDirectory.find(e => normalizeName(e.name) === nameKey);
+    if (!emp) return null;
+    const entries = tasks
+      .filter(t => (t.title || "").includes("Nghỉ phép") && normalizeName(t.assignee || "") === nameKey)
+      .map(parseLeaveTask);
+    return computeLeaveQuota(emp, entries);
+  }, [modalName, employeeDirectory, tasks]);
+
+  // Chỉ loại "Nghỉ phép năm hưởng lương" mới trừ vào hạn mức phép năm.
+  const isAnnualLeaveType = leaveType === "Nghỉ phép năm hưởng lương";
+  const leaveOverQuota =
+    isAnnualLeaveType && !!leaveQuota && leaveDaysCount > 0 && leaveDaysCount > leaveQuota.remaining;
+
   const isSingleDay = useMemo(() => {
     if (!modalStart || !modalEnd) return false;
     return modalStart === modalEnd;
@@ -980,6 +1008,21 @@ function CalendarContent() {
     const duration = leaveDaysCount;
     if (duration <= 0) {
       showNotice("warning", "Khoảng ngày chưa hợp lệ", "Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu.");
+      return;
+    }
+
+    // ─── Chặn đăng ký phép năm vượt hạn mức ───
+    // Nút gửi đã bị khoá sẵn, đây là lớp chặn thứ hai (nút có thể bị bỏ qua bằng
+    // phím Enter trong ô nhập). Không có kiểu "trừ được bao nhiêu hay bấy nhiêu":
+    // thiếu phép thì phải đổi hẳn sang nghỉ không hưởng lương.
+    if (isAnnualLeaveType && leaveQuota && duration > leaveQuota.remaining) {
+      showNotice(
+        "warning",
+        "Không đủ phép năm",
+        `Còn lại ${leaveQuota.remaining} ngày nhưng đơn xin nghỉ ${duration} ngày` +
+        (leaveQuota.pending > 0 ? ` (đã trừ ${leaveQuota.pending} ngày của đơn đang chờ duyệt)` : "") +
+        `. Vui lòng chọn loại "Nghỉ việc riêng không hưởng lương" rồi gửi lại.`
+      );
       return;
     }
 
@@ -1749,6 +1792,44 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                 </div>
               </div>
 
+              {/* Phép năm còn lại + chặn đăng ký vượt hạn mức. Chỉ hiện khi đang
+                  chọn loại nghỉ có trừ phép năm — các loại khác không liên quan. */}
+              {isAnnualLeaveType && leaveQuota && (
+                <div className={`rounded-xl border p-3 space-y-2 ${
+                  leaveOverQuota ? "border-rose-200 bg-rose-50/60" : "border-slate-200 bg-slate-50/60"
+                }`}>
+                  <div className="grid grid-cols-4 gap-2 text-center">
+                    <div>
+                      <div className="text-[9px] font-bold text-slate-400 uppercase">Hạn mức</div>
+                      <div className="text-sm font-black text-slate-800 mt-0.5">{leaveQuota.total}</div>
+                    </div>
+                    <div>
+                      <div className="text-[9px] font-bold text-slate-400 uppercase">Đã nghỉ</div>
+                      <div className="text-sm font-black text-emerald-600 mt-0.5">{leaveQuota.used}</div>
+                    </div>
+                    <div>
+                      <div className="text-[9px] font-bold text-slate-400 uppercase">Chờ duyệt</div>
+                      <div className={`text-sm font-black mt-0.5 ${
+                        leaveQuota.pending > 0 ? "text-amber-600" : "text-slate-400"
+                      }`}>{leaveQuota.pending}</div>
+                    </div>
+                    <div>
+                      <div className="text-[9px] font-bold text-slate-400 uppercase">Còn lại</div>
+                      <div className={`text-sm font-black mt-0.5 ${
+                        leaveQuota.remaining > 0 ? "text-indigo-600" : "text-rose-500"
+                      }`}>{leaveQuota.remaining}</div>
+                    </div>
+                  </div>
+                  {leaveOverQuota && (
+                    <div className="text-[11px] font-bold text-rose-600 leading-snug border-t border-rose-200/70 pt-2">
+                      Không đủ phép năm: xin nghỉ {leaveDaysCount} ngày nhưng chỉ còn {leaveQuota.remaining} ngày
+                      {leaveQuota.pending > 0 && ` (đã trừ ${leaveQuota.pending} ngày của đơn đang chờ duyệt)`}.
+                      {" "}Hãy đổi loại nghỉ phép sang <span className="underline">Nghỉ việc riêng không hưởng lương</span> để gửi đơn.
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="space-y-1.5">
                 <label className="text-slate-500 text-[11px] font-bold">Số ngày nghỉ</label>
                 <div className="flex items-baseline gap-1">
@@ -1860,13 +1941,14 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                 </button>
                 <button
                   type="submit"
-                  disabled={submittingLeave}
+                  disabled={submittingLeave || leaveOverQuota}
+                  title={leaveOverQuota ? "Không đủ phép năm — hãy chuyển sang nghỉ không hưởng lương" : undefined}
                   className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl transition-colors cursor-pointer shadow-md shadow-indigo-500/10 text-xs text-center inline-flex items-center justify-center gap-2"
                 >
                   {submittingLeave && (
                     <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
                   )}
-                  {submittingLeave ? "Đang gửi..." : "Gửi đơn nghỉ phép"}
+                  {submittingLeave ? "Đang gửi..." : leaveOverQuota ? "Không đủ phép năm" : "Gửi đơn nghỉ phép"}
                 </button>
               </div>
             </form>
