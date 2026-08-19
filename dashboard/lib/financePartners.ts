@@ -55,19 +55,50 @@ export type FinancePartnerContract = {
   sort_order: number;
 };
 
+// ─── Tài khoản ngân hàng (migration 059) ───
+// Một đối tác có N tài khoản; một dòng hợp đồng dùng 1 hoặc nhiều tài khoản
+// trong số đó (gói thầu thỉnh thoảng chia tiền về 2 nơi). Ba cột bank_* còn lại
+// trên `finance_partners` là dữ liệu chết, giữ để đối chiếu — đừng đọc nữa.
+export type FinancePartnerAccount = {
+  id: string;
+  partner_id: string;
+  label: string | null;
+  bank_account: string;
+  bank_name: string | null;
+  bank_branch: string | null;
+  is_default: boolean;
+  active: boolean;
+  sort_order: number;
+};
+
+export type ContractAccountLink = {
+  contract_id: string;
+  account_id: string;
+};
+
 export type FinancePartnerData = {
   partners: FinancePartner[];
   contracts: FinancePartnerContract[];
+  accounts: FinancePartnerAccount[];
+  contractAccounts: ContractAccountLink[];
   loading: boolean;
   error: string;
+  /** Lỗi RIÊNG của 2 bảng ở 059. Tách khỏi `error` vì nó KHÔNG chặn màn hình:
+   *  chưa chạy migration thì danh mục cũ vẫn xem được, chỉ mất phần tài khoản. */
+  accountsError: string;
 };
 
-const EMPTY: FinancePartnerData = { partners: [], contracts: [], loading: true, error: "" };
+const EMPTY: FinancePartnerData = {
+  partners: [], contracts: [], accounts: [], contractAccounts: [],
+  loading: true, error: "", accountsError: "",
+};
 
 const PARTNER_COLS =
   "id, name, short_name, party_type, tax_code, bank_account, bank_name, bank_branch, note, active, sort_order";
 const CONTRACT_COLS =
   "id, partner_id, project_code, project_name, contract_no, default_content, flow, department, active, sort_order";
+const ACCOUNT_COLS =
+  "id, partner_id, label, bank_account, bank_name, bank_branch, is_default, active, sort_order";
 
 let cached: FinancePartnerData | null = null;
 let inflight: Promise<FinancePartnerData> | null = null;
@@ -78,8 +109,8 @@ export async function fetchFinancePartners(): Promise<FinancePartnerData> {
 
   inflight = (async () => {
     try {
-      // Hai truy vấn song song — danh mục nhỏ, đừng bắt màn hình chờ nối tiếp.
-      const [pRes, cRes] = await Promise.all([
+      // Bốn truy vấn song song — danh mục nhỏ, đừng bắt màn hình chờ nối tiếp.
+      const [pRes, cRes, aRes, lRes] = await Promise.all([
         supabase
           .from("finance_partners")
           .select(PARTNER_COLS)
@@ -90,21 +121,39 @@ export async function fetchFinancePartners(): Promise<FinancePartnerData> {
           .select(CONTRACT_COLS)
           .order("project_code", { ascending: true })
           .order("sort_order", { ascending: true }),
+        supabase
+          .from("finance_partner_accounts")
+          .select(ACCOUNT_COLS)
+          // Tài khoản mặc định luôn đứng đầu danh sách của đối tác đó.
+          .order("is_default", { ascending: false })
+          .order("sort_order", { ascending: true }),
+        supabase
+          .from("finance_contract_accounts")
+          .select("contract_id, account_id"),
       ]);
 
+      // Hai bảng của 059 CHƯA CHẠY MIGRATION thì chỉ trả rỗng, KHÔNG tính là
+      // lỗi: màn hình vẫn xem được danh mục cũ thay vì đỏ rực toàn trang.
       const error = pRes.error || cRes.error;
       const result: FinancePartnerData = {
         partners: (pRes.error ? [] : pRes.data || []) as FinancePartner[],
         contracts: (cRes.error ? [] : cRes.data || []) as FinancePartnerContract[],
+        accounts: (aRes.error ? [] : aRes.data || []) as unknown as FinancePartnerAccount[],
+        contractAccounts: (lRes.error ? [] : lRes.data || []) as unknown as ContractAccountLink[],
         loading: false,
         error: error ? error.message : "",
+        accountsError: aRes.error?.message || lRes.error?.message || "",
       };
       // Lỗi thì KHÔNG cache — để lần mở sau còn thử lại, thay vì kẹt màn hình
       // lỗi suốt phiên chỉ vì một cú mạng chập.
       if (!error) cached = result;
       return result;
     } catch (e) {
-      return { ...EMPTY, loading: false, error: e instanceof Error ? e.message : String(e) };
+      return {
+        ...EMPTY,
+        loading: false,
+        error: e instanceof Error ? e.message : String(e),
+      };
     } finally {
       inflight = null;
     }

@@ -8,6 +8,11 @@
 // thanh toán mẫu. Mục đích là lập kế hoạch tài chính tháng bằng cách CHỌN thay
 // vì gõ lại — file Excel cũ có 95 cách gõ tên cho 49 đơn vị.
 //
+// TÀI KHOẢN NGÂN HÀNG NẰM Ở BẢNG RIÊNG (migration 059), không phải 3 cột bank_*
+// trên `finance_partners` nữa: một nhà thầu dùng tài khoản khác nhau cho từng
+// gói thầu, và một gói thỉnh thoảng chia tiền về 2 tài khoản. Ba cột cũ vẫn còn
+// trong CSDL để đối chiếu nhưng màn hình này KHÔNG đọc, KHÔNG ghi chúng nữa.
+//
 // BỐ CỤC: dải KPI -> bộ lọc -> LƯỚI thẻ đối tác. Bản đầu xếp 49 đối tác thành
 // dãy ngang full-width, mỗi dòng chỉ có tên + một badge nên màn hình rỗng tuếch
 // và phải cuộn rất dài. Lưới 2–3 cột nhét được đủ thông tin ngân hàng ngay trên
@@ -33,6 +38,7 @@ import {
   PARTY_TYPE_LABELS,
   type FinancePartner,
   type FinancePartnerContract,
+  type FinancePartnerAccount,
   type PartyType,
 } from "@/lib/financePartners";
 import { useProjectCatalog } from "@/lib/projectCatalog";
@@ -48,6 +54,8 @@ const inputCls =
   "border border-slate-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 font-semibold text-slate-800 text-xs bg-white transition-all";
 
 const labelCls = "text-[10px] font-bold text-slate-400 uppercase tracking-wider";
+// Nhãn cột trên thanh tiêu đề nền xanh — cùng cỡ chữ với labelCls, khác mỗi màu.
+const headCls = "text-[10px] font-extrabold text-white uppercase tracking-wider";
 
 const PARTY_TYPES = Object.keys(PARTY_TYPE_LABELS) as PartyType[];
 
@@ -60,7 +68,7 @@ const TYPE_STYLE: Record<PartyType, { chip: string; grad: string }> = {
 };
 
 export default function FinancePartnerCatalog() {
-  const { partners, contracts, loading, error, reload } = useFinancePartners();
+  const { partners, contracts, accounts, contractAccounts, loading, error, accountsError, reload } = useFinancePartners();
   const { projects } = useProjectCatalog();
 
   const [saving, setSaving] = useState(false);
@@ -145,6 +153,29 @@ export default function FinancePartnerCatalog() {
     [deletingId, reload]
   );
 
+  // Gom tài khoản theo đối tác (migration 059). Thứ tự đã do truy vấn xếp sẵn:
+  // tài khoản mặc định đứng đầu.
+  const accountsByPartner = useMemo(() => {
+    const m = new Map<string, FinancePartnerAccount[]>();
+    for (const a of accounts) {
+      const arr = m.get(a.partner_id);
+      if (arr) arr.push(a);
+      else m.set(a.partner_id, [a]);
+    }
+    return m;
+  }, [accounts]);
+
+  // Tra nhanh "dòng hợp đồng này đang trỏ vào những tài khoản nào".
+  const accountIdsByContract = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const l of contractAccounts) {
+      const arr = m.get(l.contract_id);
+      if (arr) arr.push(l.account_id);
+      else m.set(l.contract_id, [l.account_id]);
+    }
+    return m;
+  }, [contractAccounts]);
+
   // Gom hợp đồng theo đối tác một lần, thay vì filter lại trong mỗi thẻ.
   const contractsByPartner = useMemo(() => {
     const m = new Map<string, FinancePartnerContract[]>();
@@ -177,10 +208,26 @@ export default function FinancePartnerCatalog() {
     total: partners.length,
     thau: partners.filter(p => p.party_type === "nha_thau_phu").length,
     cdt: partners.filter(p => p.party_type === "chu_dau_tu").length,
-    noBank: partners.filter(p => !p.bank_account).length,
-  }), [partners]);
+    // Đếm theo BẢNG TÀI KHOẢN, không đọc cột bank_account cũ nữa (059).
+    noBank: partners.filter(p => (accountsByPartner.get(p.id) || []).length === 0).length,
+  }), [partners, accountsByPartner]);
 
   const editing = editId ? partners.find(p => p.id === editId) || null : null;
+
+  // Chưa chạy 059: KHÔNG để màn hình lặng lẽ báo mọi đối tác "Chưa có số TK".
+  // Người dùng sẽ tưởng dữ liệu bay mất, trong khi thật ra bảng chưa tồn tại.
+  const accountsBanner = accountsError ? (
+    <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-start gap-3">
+      <AlertTriangle size={15} className="text-amber-500 shrink-0 mt-0.5" />
+      <p className="text-[11px] font-semibold text-amber-800 leading-relaxed">
+        <strong>Chưa bật phần nhiều tài khoản.</strong> Cột &ldquo;Số tài khoản&rdquo; đang trống
+        với mọi đối tác vì bảng tài khoản chưa tồn tại — số tài khoản cũ vẫn còn nguyên
+        trong cơ sở dữ liệu. Chạy{" "}
+        <code className="bg-white px-1 rounded">059_finance_partner_accounts.sql</code>{" "}
+        trong Supabase SQL Editor là hiện lại đủ.
+      </p>
+    </div>
+  ) : null;
 
   // ─── Bảng chưa tạo / không đọc được ───
   if (error) {
@@ -192,7 +239,8 @@ export default function FinancePartnerCatalog() {
           <p className="font-medium text-rose-600 mt-1.5">
             Nếu báo bảng không tồn tại: chạy{" "}
             <code className="bg-white px-1 rounded">048_finance_partner_catalog.sql</code>{" "}
-            trong Supabase SQL Editor trước.
+            rồi <code className="bg-white px-1 rounded">059_finance_partner_accounts.sql</code>{" "}
+            trong Supabase SQL Editor.
           </p>
         </div>
       </div>
@@ -212,6 +260,8 @@ export default function FinancePartnerCatalog() {
     /* Giới hạn bề ngang: màn hình 2000px mà để tràn thì cột tên đối tác giãn ra
        vài trăm pixel trống, mắt phải quét ngang rất xa mới tới cột dự án. */
     <div className="space-y-6 max-w-6xl animate-in fade-in duration-300">
+      {accountsBanner}
+
       {writeErr && (
         <div className="bg-rose-50 border border-rose-200 rounded-2xl px-4 py-3 flex items-center gap-3 animate-in fade-in duration-200">
           <AlertTriangle size={15} className="text-rose-500 shrink-0" />
@@ -332,16 +382,20 @@ export default function FinancePartnerCatalog() {
         <div className="bg-white rounded-2xl border border-slate-200/60 shadow-premium overflow-hidden">
           <div className="max-h-[560px] overflow-y-auto">
             {/* Header dính để cuộn xuống vẫn biết cột nào là cột nào */}
-            <div className="sticky top-0 z-10 flex items-center gap-3 px-4 py-2.5 bg-slate-50 border-b border-slate-200">
+            {/* Nền xanh, chữ trắng — cùng một thanh tiêu đề với Phiếu trình ký và
+                Kế hoạch TC. Nền xám nhạt + chữ slate-400 của bản cũ chìm nghỉm
+                vào dòng dữ liệu. Màu đặc nên đúng ở cả nền sáng lẫn nền tối,
+                không phải nhờ bảng remap dark mode. */}
+            <div className="sticky top-0 z-10 flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-[#005BAC] to-blue-500 shadow-sm">
               <span className="w-7 shrink-0" />
-              <span className={`${labelCls} flex-1 min-w-0`}>Đối tác</span>
-              <span className={`${labelCls} w-28 shrink-0 hidden lg:block`}>Loại</span>
-              <span className={`${labelCls} w-32 shrink-0 hidden md:block`}>Số tài khoản</span>
-              <span className={`${labelCls} w-44 shrink-0 hidden xl:block`}>Ngân hàng · Chi nhánh</span>
-              <span className={`${labelCls} w-16 shrink-0 text-center hidden sm:block`}>HĐ</span>
-              <span className={`${labelCls} w-36 shrink-0 hidden lg:block`}>Dự án</span>
+              <span className={`${headCls} flex-1 min-w-0`}>Đối tác</span>
+              <span className={`${headCls} w-28 shrink-0 hidden lg:block`}>Loại</span>
+              <span className={`${headCls} w-32 shrink-0 hidden md:block`}>Số tài khoản</span>
+              <span className={`${headCls} w-44 shrink-0 hidden xl:block`}>Ngân hàng · Chi nhánh</span>
+              <span className={`${headCls} w-16 shrink-0 text-center hidden sm:block`}>HĐ</span>
+              <span className={`${headCls} w-36 shrink-0 hidden lg:block`}>Dự án</span>
               {user.isAdmin && (
-                <span className={`${labelCls} w-14 shrink-0 text-center`}>Thao tác</span>
+                <span className={`${headCls} w-14 shrink-0 text-center`}>Thao tác</span>
               )}
             </div>
 
@@ -351,6 +405,7 @@ export default function FinancePartnerCatalog() {
                   key={p.id}
                   partner={p}
                   contracts={contractsByPartner.get(p.id) || []}
+                  accounts={accountsByPartner.get(p.id) || []}
                   onOpen={() => setEditId(p.id)}
                   canDelete={user.isAdmin}
                   deleting={deletingId === p.id}
@@ -366,6 +421,8 @@ export default function FinancePartnerCatalog() {
         <PartnerModal
           partner={editing}
           contracts={contractsByPartner.get(editing.id) || []}
+          accounts={accountsByPartner.get(editing.id) || []}
+          accountIdsByContract={accountIdsByContract}
           projects={projects}
           saving={saving}
           canDelete={user.isAdmin}
@@ -409,9 +466,10 @@ function KpiCard({ label, value, icon: Icon, grad }: {
 // Các cột dùng CHUNG bề rộng cố định với header dính ở trên (w-28/w-32/w-44/
 // w-16/w-36) — đổi số ở đây phải đổi cả trên đó, nếu không cột lệch khỏi tiêu đề.
 // Cột phụ tự ẩn dần theo bề ngang màn hình, cột tên đối tác luôn còn.
-function PartnerRow({ partner: p, contracts, onOpen, canDelete, deleting, onDelete }: {
+function PartnerRow({ partner: p, contracts, accounts, onOpen, canDelete, deleting, onDelete }: {
   partner: FinancePartner;
   contracts: FinancePartnerContract[];
+  accounts: FinancePartnerAccount[];
   onOpen: () => void;
   canDelete: boolean;
   deleting: boolean;
@@ -421,7 +479,10 @@ function PartnerRow({ partner: p, contracts, onOpen, canDelete, deleting, onDele
   const projectNames = Array.from(
     new Set(contracts.map(c => c.project_name).filter(Boolean))
   ) as string[];
-  const bankLine = [p.bank_name, p.bank_branch].filter(Boolean).join(" · ");
+  // Tài khoản mặc định đứng đầu mảng (truy vấn đã xếp). Đọc từ bảng tài khoản
+  // chứ không đọc 3 cột bank_* cũ trên đối tác nữa — xem migration 059.
+  const main = accounts[0] || null;
+  const bankLine = main ? [main.bank_name, main.bank_branch].filter(Boolean).join(" · ") : "";
 
   return (
     // <div role="button"> chứ không phải <button>: dòng có nút Xoá lồng bên
@@ -457,10 +518,17 @@ function PartnerRow({ partner: p, contracts, onOpen, canDelete, deleting, onDele
       </span>
 
       <span className="w-32 shrink-0 hidden md:block">
-        {p.bank_account ? (
+        {main ? (
           <span className="flex items-center gap-1 font-mono font-bold text-slate-700 text-[11px] truncate">
             <Landmark size={11} className="text-emerald-600 shrink-0" />
-            {p.bank_account}
+            {main.bank_account}
+            {/* Còn bao nhiêu tài khoản nữa — không liệt kê hết trên dòng, mở
+                đối tác ra là thấy đủ. */}
+            {accounts.length > 1 && (
+              <span className="shrink-0 px-1 rounded bg-emerald-50 text-emerald-700 font-sans font-extrabold text-[9px]">
+                +{accounts.length - 1}
+              </span>
+            )}
           </span>
         ) : (
           <span className="flex items-center gap-1 text-[10px] font-bold text-amber-600">
@@ -594,14 +662,34 @@ function AddPartnerModal({ saving, nextSort, projects, defaultProjectCode, runWr
             name: name.trim(),
             short_name: short.trim() || null,
             party_type: type,
-            bank_account: account.trim() || null,
-            bank_name: bank.trim() || null,
-            bank_branch: branch.trim() || null,
+            // KHÔNG ghi 3 cột bank_* nữa — tài khoản nằm ở bảng riêng (059).
             sort_order: nextSort,
           }])
           .select("id")
           .single();
         if (error) return { error };
+
+        // Tài khoản đầu tiên của đơn vị, tự đặt làm mặc định.
+        let accountId: string | null = null;
+        if (account.trim()) {
+          const accRes = await supabase
+            .from("finance_partner_accounts")
+            .insert([{
+              partner_id: data.id,
+              label: "Tài khoản chính",
+              bank_account: account.trim(),
+              bank_name: bank.trim() || null,
+              bank_branch: branch.trim() || null,
+              is_default: true,
+            }])
+            .select("id")
+            .single();
+          if (accRes.error) {
+            const m = accRes.error.message;
+            return { error: new Error(`đã tạo "${name.trim()}" nhưng chưa lưu được tài khoản (${m}). Mở đối tác đó ra thêm tài khoản thủ công.`) };
+          }
+          accountId = (accRes.data as { id: string }).id;
+        }
 
         // Không chọn dự án thì thôi — đơn vị vẫn được tạo, gắn hợp đồng sau.
         if (!projectCode && !contractNo.trim() && !content.trim()) return { error: null };
@@ -614,13 +702,23 @@ function AddPartnerModal({ saving, nextSort, projects, defaultProjectCode, runWr
           default_content: content.trim() || null,
           flow,
           department: department.trim() || null,
-        }]);
+        }]).select("id").single();
         // Đơn vị ĐÃ tạo xong ở bước trên rồi, nên nếu hỏng ở đây thì nói đúng
         // chuyện đang hỏng — báo "không thêm được đối tác" sẽ khiến người dùng
         // thêm lại lần nữa và dính lỗi trùng tên.
         if (res.error) {
           const m = res.error instanceof Error ? res.error.message : String(res.error);
           return { error: new Error(`đã tạo "${name.trim()}" nhưng chưa gắn được hợp đồng (${m}). Mở đối tác đó ra thêm hợp đồng thủ công.`) };
+        }
+
+        // Nối hợp đồng vừa tạo với tài khoản vừa tạo. Hỏng bước này KHÔNG báo
+        // lỗi đỏ: đối tác và hợp đồng đều đã có, người dùng chỉ cần tick lại ô
+        // tài khoản trong modal sửa — dựng lại từ đầu còn phiền hơn.
+        if (accountId && res.data) {
+          await supabase.from("finance_contract_accounts").insert([{
+            contract_id: (res.data as { id: string }).id,
+            account_id: accountId,
+          }]);
         }
         return { error: null };
       },
@@ -758,9 +856,11 @@ function AddPartnerModal({ saving, nextSort, projects, defaultProjectCode, runWr
 }
 
 // ─── Modal sửa đối tác + hợp đồng ───
-function PartnerModal({ partner: p, contracts, projects, saving, canDelete, runWrite, onClose }: {
+function PartnerModal({ partner: p, contracts, accounts, accountIdsByContract, projects, saving, canDelete, runWrite, onClose }: {
   partner: FinancePartner;
   contracts: FinancePartnerContract[];
+  accounts: FinancePartnerAccount[];
+  accountIdsByContract: Map<string, string[]>;
   projects: { id: string; code: string; name: string }[];
   saving: boolean;
   // Cùng một luật với icon thùng rác ngoài danh sách: chỉ Admin. Hai chỗ cùng
@@ -771,6 +871,8 @@ function PartnerModal({ partner: p, contracts, projects, saving, canDelete, runW
 }) {
   const [d, setD] = useState<Partial<FinancePartner>>({});
   const [cd, setCd] = useState<Record<string, Partial<FinancePartnerContract>>>({});
+  const [ad, setAd] = useState<Record<string, Partial<FinancePartnerAccount>>>({});
+  const [newAcc, setNewAcc] = useState({ label: "", bank_account: "", bank_name: "", bank_branch: "" });
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const dirty = Object.keys(d).length > 0;
@@ -784,9 +886,8 @@ function PartnerModal({ partner: p, contracts, projects, saving, canDelete, runW
         short_name: (d.short_name ?? p.short_name)?.trim() || null,
         party_type: d.party_type ?? p.party_type,
         tax_code: (d.tax_code ?? p.tax_code)?.trim() || null,
-        bank_account: (d.bank_account ?? p.bank_account)?.trim() || null,
-        bank_name: (d.bank_name ?? p.bank_name)?.trim() || null,
-        bank_branch: (d.bank_branch ?? p.bank_branch)?.trim() || null,
+        // 3 cột bank_* KHÔNG còn được ghi: tài khoản đã chuyển sang bảng riêng
+        // ở migration 059. Cột cũ giữ lại để đối chiếu, coi như dữ liệu chết.
         note: (d.note ?? p.note)?.trim() || null,
         active: d.active ?? p.active,
       }).eq("id", p.id),
@@ -807,6 +908,83 @@ function PartnerModal({ partner: p, contracts, projects, saving, canDelete, runW
     );
     if (ok) onClose();
   };
+
+  // ─── Tài khoản ngân hàng (059) ───
+  const addAccount = async () => {
+    if (!newAcc.bank_account.trim()) return;
+    const ok = await runWrite(
+      async () => supabase.from("finance_partner_accounts").insert([{
+        partner_id: p.id,
+        label: newAcc.label.trim() || null,
+        bank_account: newAcc.bank_account.trim(),
+        bank_name: newAcc.bank_name.trim() || null,
+        bank_branch: newAcc.bank_branch.trim() || null,
+        // Tài khoản đầu tiên của đối tác tự thành mặc định — không thì dòng
+        // hợp đồng mới chẳng biết trỏ vào đâu.
+        is_default: accounts.length === 0,
+        sort_order: (accounts.at(-1)?.sort_order ?? 0) + 10,
+      }]),
+      "Không thêm được tài khoản"
+    );
+    if (ok) setNewAcc({ label: "", bank_account: "", bank_name: "", bank_branch: "" });
+  };
+
+  const saveAccount = async (a: FinancePartnerAccount) => {
+    const x = ad[a.id];
+    if (!x) return;
+    const acc = (x.bank_account ?? a.bank_account).trim();
+    if (!acc) return;
+    const ok = await runWrite(
+      async () => supabase.from("finance_partner_accounts").update({
+        label: (x.label ?? a.label)?.trim() || null,
+        bank_account: acc,
+        bank_name: (x.bank_name ?? a.bank_name)?.trim() || null,
+        bank_branch: (x.bank_branch ?? a.bank_branch)?.trim() || null,
+      }).eq("id", a.id),
+      "Không lưu được tài khoản"
+    );
+    if (ok) setAd(prev => { const n = { ...prev }; delete n[a.id]; return n; });
+  };
+
+  // Đặt mặc định phải HẠ cờ của tài khoản cũ trước. CSDL có unique index
+  // (partner_id) where is_default — bật cái thứ hai lên là bị từ chối thẳng.
+  const makeDefault = (a: FinancePartnerAccount) =>
+    runWrite(
+      async () => {
+        const off = await supabase.from("finance_partner_accounts")
+          .update({ is_default: false }).eq("partner_id", p.id).eq("is_default", true);
+        if (off.error) return { error: off.error };
+        return supabase.from("finance_partner_accounts")
+          .update({ is_default: true }).eq("id", a.id);
+      },
+      "Không đặt được tài khoản mặc định"
+    );
+
+  const removeAccount = (a: FinancePartnerAccount) => {
+    const dung = contracts.filter(c => (accountIdsByContract.get(c.id) || []).includes(a.id));
+    if (!confirm(
+      `Xoá tài khoản ${a.bank_account}?` +
+      (dung.length ? `
+
+${dung.length} dòng hợp đồng đang trỏ vào tài khoản này sẽ mất liên kết.` : "")
+    )) return;
+    runWrite(
+      async () => supabase.from("finance_partner_accounts").delete().eq("id", a.id),
+      "Không xoá được tài khoản"
+    );
+  };
+
+  // Bật/tắt một tài khoản cho một dòng hợp đồng. Bấm là ghi luôn, không có
+  // trạng thái nháp: đây là một ô tick, không phải cả biểu mẫu.
+  const toggleContractAccount = (c: FinancePartnerContract, a: FinancePartnerAccount, on: boolean) =>
+    runWrite(
+      async () => on
+        ? supabase.from("finance_contract_accounts")
+            .insert([{ contract_id: c.id, account_id: a.id }])
+        : supabase.from("finance_contract_accounts")
+            .delete().eq("contract_id", c.id).eq("account_id", a.id),
+      "Không đổi được tài khoản nhận tiền"
+    );
 
   const addContract = () =>
     runWrite(
@@ -901,25 +1079,9 @@ function PartnerModal({ partner: p, contracts, projects, saving, canDelete, runW
         </div>
       </div>
 
-      {/* Ngân hàng */}
+      {/* Mã số thuế / ghi chú / trạng thái */}
       <div className="space-y-3">
-        <h5 className={labelCls}>Tài khoản nhận tiền</h5>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
-          <label className="flex flex-col gap-1.5">
-            <span className={labelCls}>Số tài khoản</span>
-            <input value={val("bank_account")} onChange={e => set("bank_account", e.target.value)}
-              placeholder="VD 0942870512" className={`${inputCls} font-mono`} />
-          </label>
-          <label className="flex flex-col gap-1.5">
-            <span className={labelCls}>Ngân hàng</span>
-            <input value={val("bank_name")} onChange={e => set("bank_name", e.target.value)}
-              placeholder="VD Ngân hàng ACB" className={inputCls} />
-          </label>
-          <label className="flex flex-col gap-1.5">
-            <span className={labelCls}>Chi nhánh / PGD</span>
-            <input value={val("bank_branch")} onChange={e => set("bank_branch", e.target.value)}
-              placeholder="VD CN Tân Bình" className={inputCls} />
-          </label>
           <label className="flex flex-col gap-1.5">
             <span className={labelCls}>Mã số thuế</span>
             <input value={val("tax_code")} onChange={e => set("tax_code", e.target.value)} className={`${inputCls} font-mono`} />
@@ -934,6 +1096,94 @@ function PartnerModal({ partner: p, contracts, projects, saving, canDelete, runW
             onChange={e => set("active", e.target.checked)} />
           Đang dùng (bỏ tick để ẩn khỏi danh sách chọn mà vẫn giữ dữ liệu)
         </label>
+      </div>
+
+      {/* ─── Tài khoản ngân hàng (migration 059) ───
+          Một đơn vị giữ nhiều tài khoản. Sửa/xoá từng dòng lưu NGAY tại dòng đó,
+          không đi qua nút "Lưu thay đổi" ở chân modal — nút đó chỉ lo phần thông
+          tin đơn vị, gộp vào sẽ không rõ bấm một cái thì những gì được ghi. */}
+      <div className="space-y-3">
+        <div className="flex items-baseline justify-between gap-2 flex-wrap">
+          <h5 className={labelCls}>Tài khoản nhận tiền ({accounts.length})</h5>
+          <span className="text-[10px] text-slate-400 font-medium">
+            Dấu ★ là tài khoản mặc định — dòng hợp đồng mới tự dùng tài khoản này
+          </span>
+        </div>
+
+        {accounts.length === 0 && (
+          <p className="text-amber-600 text-[11px] font-bold flex items-center gap-1.5">
+            <CreditCard size={13} /> Chưa có tài khoản nào. Thêm ít nhất một tài khoản để lập phiếu chuyển tiền.
+          </p>
+        )}
+
+        <div className="space-y-2">
+          {accounts.map(a => {
+            const x = ad[a.id] || {};
+            const aDirty = Object.keys(x).length > 0;
+            const aSet = (k: keyof FinancePartnerAccount, v: unknown) =>
+              setAd(prev => ({ ...prev, [a.id]: { ...prev[a.id], [k]: v } }));
+            const aVal = <K extends keyof FinancePartnerAccount>(k: K) => (x[k] ?? a[k] ?? "") as string;
+
+            return (
+              <div key={a.id}
+                className={`flex flex-wrap items-center gap-2 border rounded-xl p-2.5 transition-all ${
+                  aDirty ? "border-blue-300 bg-blue-50/30"
+                  : a.is_default ? "border-emerald-200 bg-emerald-50/40"
+                  : "border-slate-200/70 bg-slate-50/60"
+                }`}>
+                <button type="button" onClick={() => makeDefault(a)}
+                  disabled={saving || a.is_default}
+                  title={a.is_default ? "Đang là tài khoản mặc định" : "Đặt làm tài khoản mặc định"}
+                  className={`shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-sm font-bold transition-all ${
+                    a.is_default
+                      ? "bg-emerald-500 text-white cursor-default"
+                      : "bg-white border border-slate-200 text-slate-300 hover:text-amber-500 hover:border-amber-300 cursor-pointer"
+                  }`}>
+                  ★
+                </button>
+                <input value={aVal("label")} onChange={e => aSet("label", e.target.value)}
+                  placeholder="Nhãn — VD TK thi công Vàm Lẽo"
+                  className={`${inputCls} flex-1 min-w-[170px]`} />
+                <input value={aVal("bank_account")} onChange={e => aSet("bank_account", e.target.value)}
+                  placeholder="Số tài khoản" className={`${inputCls} w-40 font-mono`} />
+                <input value={aVal("bank_name")} onChange={e => aSet("bank_name", e.target.value)}
+                  placeholder="Ngân hàng" className={`${inputCls} flex-1 min-w-[150px]`} />
+                <input value={aVal("bank_branch")} onChange={e => aSet("bank_branch", e.target.value)}
+                  placeholder="Chi nhánh / PGD" className={`${inputCls} w-36`} />
+                <button type="button" onClick={() => saveAccount(a)} disabled={saving || !aDirty}
+                  title="Lưu tài khoản"
+                  className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-all cursor-pointer disabled:opacity-30">
+                  <Save size={14} />
+                </button>
+                <button type="button" onClick={() => removeAccount(a)} disabled={saving}
+                  title="Xoá tài khoản"
+                  className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg transition-all cursor-pointer disabled:opacity-50">
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Dòng thêm mới — số tài khoản là trường bắt buộc nên không thể chèn
+            một dòng trắng rồi sửa sau như bên hợp đồng. */}
+        <div className="flex flex-wrap items-center gap-2 border border-dashed border-slate-300 rounded-xl p-2.5">
+          <span className="shrink-0 w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center text-slate-400">
+            <Landmark size={13} />
+          </span>
+          <input value={newAcc.label} onChange={e => setNewAcc(v => ({ ...v, label: e.target.value }))}
+            placeholder="Nhãn — VD TK chính" className={`${inputCls} flex-1 min-w-[170px]`} />
+          <input value={newAcc.bank_account} onChange={e => setNewAcc(v => ({ ...v, bank_account: e.target.value }))}
+            placeholder="Số tài khoản *" className={`${inputCls} w-40 font-mono`} />
+          <input value={newAcc.bank_name} onChange={e => setNewAcc(v => ({ ...v, bank_name: e.target.value }))}
+            placeholder="Ngân hàng" className={`${inputCls} flex-1 min-w-[150px]`} />
+          <input value={newAcc.bank_branch} onChange={e => setNewAcc(v => ({ ...v, bank_branch: e.target.value }))}
+            placeholder="Chi nhánh / PGD" className={`${inputCls} w-36`} />
+          <button type="button" onClick={addAccount} disabled={saving || !newAcc.bank_account.trim()}
+            className="inline-flex items-center gap-1 px-3 py-2 bg-white border border-slate-200 hover:border-blue-300 hover:text-blue-600 text-slate-600 font-bold rounded-lg text-[11px] transition-all cursor-pointer disabled:opacity-40">
+            <Plus size={12} /> Thêm
+          </button>
+        </div>
       </div>
 
       {/* Hợp đồng */}
@@ -990,6 +1240,46 @@ function PartnerModal({ partner: p, contracts, projects, saving, canDelete, runW
                     </select>
                     <input value={cVal("department")} onChange={e => cSet("department", e.target.value)}
                       placeholder="Phòng ban" className={`${inputCls} w-36`} />
+                  </div>
+
+                  {/* Tài khoản nhận tiền của riêng gói thầu này.
+                      TICK NHIỀU ĐƯỢC vì một gói thỉnh thoảng chia tiền về 2 tài
+                      khoản — đó là lý do dùng bảng nối thay vì một cột account_id.
+                      Bấm là ghi ngay, không chờ nút Lưu của dòng hợp đồng: đây là
+                      ô tick, gộp vào nút Lưu thì người dùng không biết cái nào đã
+                      vào CSDL cái nào chưa. */}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider shrink-0">
+                      Tài khoản nhận
+                    </span>
+                    {accounts.length === 0 ? (
+                      <span className="text-[10px] font-semibold text-amber-600">
+                        Đối tác chưa có tài khoản nào — thêm ở khối phía trên
+                      </span>
+                    ) : (
+                      accounts.map(a => {
+                        const on = (accountIdsByContract.get(c.id) || []).includes(a.id);
+                        return (
+                          <button
+                            key={a.id}
+                            type="button"
+                            disabled={saving}
+                            onClick={() => toggleContractAccount(c, a, !on)}
+                            title={[a.label, a.bank_name, a.bank_branch].filter(Boolean).join(" · ") || a.bank_account}
+                            className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[10px] font-bold transition-all cursor-pointer disabled:opacity-50 ${
+                              on
+                                ? "bg-emerald-500/20 border-emerald-400 text-emerald-700"
+                                : "bg-white border-slate-200 text-slate-400 hover:border-emerald-300 hover:text-emerald-600"
+                            }`}
+                          >
+                            {on ? <Check size={11} className="shrink-0" /> : <Plus size={11} className="shrink-0" />}
+                            <span className="font-mono">{a.bank_account}</span>
+                            {a.label && <span className="font-sans opacity-70 truncate max-w-[110px]">{a.label}</span>}
+                            {a.is_default && <span className="text-amber-500">★</span>}
+                          </button>
+                        );
+                      })
+                    )}
                   </div>
 
                   <div className="flex gap-2 items-start">

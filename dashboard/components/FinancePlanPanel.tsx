@@ -23,8 +23,10 @@
 //   - Dự án      -> lib/projectCatalog (bảng `projects`, 16 dự án seed ở 048)
 //   - Khách hàng -> lib/financePartners (danh mục đối tác thanh toán)
 //
-// Ô "Khách hàng" dùng <datalist> chứ KHÔNG phải ô search tự lọc bằng React:
-// gõ tiếng Việt có dấu vào ô tự lọc thì bộ gõ bị ngắt giữa chừng.
+// Ô "Khách hàng" dựng theo ĐÚNG khuôn ô "Người nhận" ở trang Giao việc —
+// avatar chữ cái, tìm bỏ dấu, chọn xong thành thẻ. Bê nguyên một cách đã chạy
+// tốt sẵn trong repo thay vì tự nghĩ ô search mới: ô tự lọc viết ẩu làm bộ gõ
+// tiếng Việt bị ngắt giữa chừng.
 //
 // MÀU TRONG BẢNG CÓ NGHĨA, không phải trang trí: xanh lá = tiền vào, đỏ = tiền
 // ra. Bản đầu để cả tên khách hàng lẫn số tiền màu đỏ (bắt chước file Excel) —
@@ -32,23 +34,31 @@
 // khoản thu đâu là khoản chi.
 // ============================================================
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   Plus, X, Save, Trash2, Wallet, ArrowDownCircle, ArrowUpCircle,
-  Calendar, Download, Loader2, AlertTriangle,
+  Calendar, Download, Loader2, AlertTriangle, Search, Building2,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { apiFetch } from "@/lib/apiClient";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import { useDepartments } from "@/lib/departments";
 import { useProjectCatalog } from "@/lib/projectCatalog";
-import { useFinancePartners } from "@/lib/financePartners";
+import {
+  useFinancePartners,
+  foldVi,
+  PARTY_TYPE_LABELS,
+  type FinancePartnerContract,
+} from "@/lib/financePartners";
 
 const inputCls =
   "border border-slate-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 font-semibold text-slate-800 text-xs bg-white transition-all w-full";
 const labelCls = "text-[10px] font-bold text-slate-400 uppercase tracking-wider";
-const thCls = "px-3 py-3 font-bold uppercase tracking-wider text-[10px] text-slate-400";
+// Nhãn cột trên thanh tiêu đề nền xanh. Nền đặt trên <tr> chứ không trên từng
+// <th>: bảng để border-collapse mặc định là `separate` nên nền của hàng phủ liền
+// một dải, còn tô từng ô thì chỗ giáp nhau hở ra khe sáng.
+const thCls = "px-3 py-3 font-extrabold uppercase tracking-wider text-[10px] text-white";
 
 const COLS =
   "id, department, flow, customer, content, amount, project_code, project_name, " +
@@ -144,6 +154,7 @@ export default function FinancePlanPanel() {
   // Khoảng lọc — mở màn hình ra là trọn tháng chứa ngày hôm nay.
   const [from, setFrom] = useState(() => monthBounds(todayISO()).from);
   const [to, setTo] = useState(() => monthBounds(todayISO()).to);
+  const [search, setSearch] = useState("");
   const [exporting, setExporting] = useState("");
   const [deleting, setDeleting] = useState("");
   const [err, setErr] = useState("");
@@ -208,13 +219,29 @@ export default function FinancePlanPanel() {
 
   // So sánh chuỗi yyyy-mm-dd trực tiếp: định dạng này xếp theo thứ tự chữ cái
   // đúng bằng thứ tự thời gian, không cần dựng Date (và không dính lệch múi giờ).
-  const visible = useMemo(
-    () => rows.filter(r => {
+  // Lọc theo khoảng ngày TRƯỚC, rồi mới lọc theo từ khoá. `foldVi` bỏ dấu hai
+  // đầu nên gõ "minh khang" ra "MINH KHANG", "vam leo" ra "Vàm Lẽo".
+  //
+  // Số tiền cũng nằm trong diện tìm, so trên chuỗi đã bỏ dấu chấm: gõ "2149"
+  // hay "2.149.008.744" đều ra đúng dòng đó.
+  const visible = useMemo(() => {
+    const inRange = rows.filter(r => {
       const d = effectiveDate(r);
       return !!d && d >= from && d <= to;
-    }),
-    [rows, from, to]
-  );
+    });
+    const q = foldVi(search);
+    if (!q) return inRange;
+    const qDigits = q.replace(/\D/g, "");
+    return inRange.filter(r =>
+      foldVi(r.customer).includes(q) ||
+      foldVi(r.content).includes(q) ||
+      foldVi(r.project_name).includes(q) ||
+      foldVi(r.project_code).includes(q) ||
+      foldVi(r.department).includes(q) ||
+      foldVi(r.fund_source).includes(q) ||
+      (!!qDigits && String(r.amount).includes(qDigits))
+    );
+  }, [rows, from, to, search]);
 
   const tong = useMemo(() => {
     let thu = 0, chi = 0;
@@ -375,6 +402,7 @@ export default function FinancePlanPanel() {
           <h3 className={labelCls}>Kế hoạch tài chính</h3>
           <p className="text-[11px] text-slate-400 font-medium mt-1">
             Hiện <strong className="text-slate-600">{visible.length}</strong> dòng · {periodLabel}
+            {search.trim() && <> · lọc theo &ldquo;{search.trim()}&rdquo;</>}
           </p>
         </div>
         <div className="flex items-center gap-2.5 flex-wrap">
@@ -428,6 +456,25 @@ export default function FinancePlanPanel() {
         </div>
       </div>
 
+      {/* Ô tìm kiếm — để riêng một hàng, không nhét chung hàng với ô ngày và hai
+          nút: hàng đó đã chật, thêm nữa là xuống dòng lộn xộn ở màn hình hẹp. */}
+      <div className="relative">
+        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+        <input
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Tìm theo khách hàng, nội dung, dự án, phòng ban, nguồn tiền hoặc số tiền…"
+          className="w-full pl-9 pr-9 py-2 bg-slate-100/50 hover:bg-slate-100 focus:bg-white text-xs font-semibold text-slate-700 placeholder:text-slate-400 placeholder:font-medium border border-slate-200/60 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
+        />
+        {search && (
+          <button type="button" onClick={() => setSearch("")}
+            title="Xoá từ khoá"
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-lg transition-all cursor-pointer">
+            <X size={13} />
+          </button>
+        )}
+      </div>
+
       {/* Bảng */}
       {visible.length === 0 ? (
         <div className="flex flex-col items-center justify-center text-center py-16 px-6 space-y-3 bg-white rounded-2xl border border-slate-200/60 shadow-premium">
@@ -435,7 +482,9 @@ export default function FinancePlanPanel() {
             <Wallet size={26} />
           </div>
           <p className="font-heading font-extrabold text-slate-700 text-xs">
-            Chưa có dòng kế hoạch nào trong {periodLabel}
+            {search.trim()
+              ? `Không có dòng nào khớp “${search.trim()}” trong ${periodLabel}`
+              : `Chưa có dòng kế hoạch nào trong ${periodLabel}`}
           </p>
           <button
             type="button"
@@ -451,7 +500,7 @@ export default function FinancePlanPanel() {
           <div className="overflow-x-auto">
             <table className="w-full text-[11px]">
               <thead>
-                <tr className="bg-slate-50 border-b border-slate-200/60">
+                <tr className="bg-gradient-to-r from-[#005BAC] to-blue-500 shadow-sm">
                   <th className={`${thCls} text-center w-12`}>STT</th>
                   <th className={`${thCls} text-left`}>Phòng ban</th>
                   <th className={`${thCls} text-center`}>Loại</th>
@@ -646,11 +695,90 @@ function PlanRowModal({ row, onSave, onClose }: {
 }) {
   const departments = useDepartments();
   const { projects } = useProjectCatalog();
-  const { partners } = useFinancePartners();
+  const { partners, contracts } = useFinancePartners();
 
   const [d, setD] = useState<FinancePlanRow>(row);
   const [amountText, setAmountText] = useState(fmtMoney(row.amount));
   const [saving, setSaving] = useState(false);
+  // Hợp đồng đang lấy nội dung — chỉ để tô đậm ô đang chọn, không lưu xuống CSDL.
+  const [contractId, setContractId] = useState("");
+  const [filled, setFilled] = useState("");
+  // Ô chọn nhà thầu — dựng theo ĐÚNG ô "Người nhận" ở trang Giao việc: gõ để
+  // tìm, danh sách xổ xuống có avatar chữ cái, chọn xong thành thẻ có nút gỡ.
+  const [custSearch, setCustSearch] = useState("");
+  const [showCust, setShowCust] = useState(false);
+  const custRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (custRef.current && !custRef.current.contains(e.target as Node)) {
+        setShowCust(false);
+      }
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, []);
+
+  // Đối tác khớp ĐÚNG TÊN với ô "Khách hàng". Gõ tay một tên chưa có trong danh
+  // mục thì không khớp ai — vẫn nhập bình thường, chỉ là không có gì để điền hộ.
+  const partner = useMemo(() => {
+    const q = d.customer.trim().toLowerCase();
+    if (!q) return null;
+    return partners.find(p => p.name.trim().toLowerCase() === q) || null;
+  }, [partners, d.customer]);
+
+  const partnerContracts = useMemo(
+    () => (partner ? contracts.filter(c => c.partner_id === partner.id) : []),
+    [contracts, partner]
+  );
+
+  // `foldVi` bỏ dấu hai đầu nên gõ "minh khang" ra "MINH KHANG", gõ "yen phuc"
+  // ra "Yên Phúc". Cắt 30 dòng: danh mục có thể lên hàng trăm đơn vị, đổ hết ra
+  // thì danh sách xổ xuống dài lê thê mà 25 dòng cuối không ai đọc.
+  const custResults = useMemo(() => {
+    const q = foldVi(custSearch);
+    return partners
+      .filter(p => !q || foldVi(p.name).includes(q) || foldVi(p.short_name || "").includes(q))
+      .slice(0, 30);
+  }, [partners, custSearch]);
+
+  // Điền hộ từ một dòng hợp đồng trong danh mục.
+  //
+  // `overwrite` = false khi hệ thống TỰ điền (đối tác chỉ có đúng 1 hợp đồng):
+  // chỉ đổ vào những ô còn trống, không đè lên thứ người dùng đã gõ. Bấm chọn
+  // hợp đồng trong ô "Lấy theo hợp đồng" thì `overwrite` = true — đó là thao tác
+  // cố ý, đè lên nội dung cũ mới đúng ý.
+  const applyContract = (c: FinancePartnerContract, overwrite: boolean) => {
+    const proj = projects.find(x => x.code === c.project_code);
+    setD(prev => ({
+      ...prev,
+      project_code: overwrite || !prev.project_code ? (c.project_code || prev.project_code) : prev.project_code,
+      project_name: overwrite || !prev.project_name
+        ? (proj?.name || c.project_name || prev.project_name)
+        : prev.project_name,
+      flow: overwrite ? c.flow : prev.flow,
+      department: overwrite || !prev.department ? (c.department || prev.department) : prev.department,
+      content: overwrite || !prev.content ? (c.default_content || prev.content) : prev.content,
+    }));
+    setContractId(c.id);
+    setFilled(c.default_content ? "Đã điền nội dung thanh toán từ danh mục đối tác." : "");
+  };
+
+  // Chọn khách hàng xong thì tự lấy hợp đồng của họ.
+  // Nhiều hợp đồng thì KHÔNG đoán bừa — hiện ô chọn để người lập tự quyết.
+  const pickCustomer = (name: string) => {
+    setD(prev => ({ ...prev, customer: name }));
+    setContractId("");
+    setFilled("");
+    const q = name.trim().toLowerCase();
+    const pn = partners.find(x => x.name.trim().toLowerCase() === q);
+    if (!pn) return;
+    const list = contracts.filter(c => c.partner_id === pn.id);
+    // Đã chọn dự án từ trước thì ưu tiên hợp đồng của đúng dự án đó.
+    const byProject = d.project_code ? list.filter(c => c.project_code === d.project_code) : [];
+    const auto = byProject.length === 1 ? byProject[0] : list.length === 1 ? list[0] : null;
+    if (auto) applyContract(auto, false);
+  };
 
   const set = <K extends keyof FinancePlanRow>(k: K, v: FinancePlanRow[K]) =>
     setD(prev => ({ ...prev, [k]: v }));
@@ -737,25 +865,131 @@ function PlanRowModal({ row, onSave, onClose }: {
             </label>
           </div>
 
-          {/* Khách hàng — datalist để trình duyệt tự lọc, gõ tiếng Việt không bị ngắt */}
-          <label className="flex flex-col gap-1.5">
+          {/* Khách hàng — cùng khuôn ô "Người nhận" ở trang Giao việc.
+              Bản đầu dùng <datalist> cho trình duyệt tự lọc, tránh bẫy bộ gõ
+              tiếng Việt bị ngắt giữa chừng ở ô search tự lọc bằng React. Ô này
+              cũng lọc bằng React nhưng KHÔNG dính bẫy đó, vì bê nguyên cách đã
+              chạy tốt sẵn trong repo: một <input> có kiểm soát, lọc trong useMemo,
+              không đụng gì tới giá trị người dùng đang gõ. */}
+          <div className="flex flex-col gap-1.5">
             <span className={labelCls}>Khách hàng</span>
-            <input
-              list="fp-customers"
-              value={d.customer}
-              onChange={e => set("customer", e.target.value)}
-              placeholder="Chọn trong danh mục đối tác, hoặc gõ tên mới"
-              className={inputCls}
-            />
-            <datalist id="fp-customers">
-              {partners.map(p => <option key={p.id} value={p.name} />)}
-            </datalist>
-            {partners.length === 0 && (
+            <div className="relative" ref={custRef}>
+              {d.customer ? (
+                // Đã chọn: hiện thành thẻ, bấm X để chọn lại người khác.
+                <div className="w-full min-h-[38px] px-3 py-2 border border-slate-200 rounded-xl flex items-center gap-2 bg-white">
+                  <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-cyan-400 text-white text-[9px] font-bold flex items-center justify-center shrink-0">
+                    {d.customer.split(" ").filter(Boolean).map(w => w[0]).join("").slice(0, 2).toUpperCase()}
+                  </span>
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-xs font-bold text-slate-800 truncate">{d.customer}</span>
+                    <span className="block text-[10px] font-semibold text-slate-400 truncate">
+                      {partner
+                        ? `${PARTY_TYPE_LABELS[partner.party_type]}${partner.short_name ? ` • ${partner.short_name}` : ""}`
+                        : "Tên gõ tay — chưa có trong danh mục đối tác"}
+                    </span>
+                  </span>
+                  <button type="button"
+                    onClick={() => { pickCustomer(""); setCustSearch(""); setShowCust(true); }}
+                    title="Chọn khách hàng khác"
+                    className="p-1 text-slate-300 hover:text-rose-500 rounded-lg transition-colors cursor-pointer shrink-0">
+                    <X size={13} />
+                  </button>
+                </div>
+              ) : (
+                <div className="w-full min-h-[38px] px-3 py-2 border border-slate-200 rounded-xl flex items-center gap-1.5 bg-white focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-400">
+                  <Search size={12} className="text-slate-400 shrink-0" />
+                  <input
+                    type="text"
+                    value={custSearch}
+                    onChange={e => { setCustSearch(e.target.value); setShowCust(true); }}
+                    onFocus={() => setShowCust(true)}
+                    placeholder="Tìm nhà thầu hoặc bấm để chọn nhanh..."
+                    className="flex-1 min-w-0 py-0.5 outline-none text-xs font-semibold text-slate-800 placeholder:font-normal placeholder:text-slate-400 bg-transparent"
+                  />
+                </div>
+              )}
+
+              {showCust && !d.customer && (
+                <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-premium z-20 max-h-56 overflow-y-auto animate-in fade-in duration-150">
+                  {custResults.map(p => (
+                    <button key={p.id} type="button"
+                      onClick={() => { pickCustomer(p.name); setCustSearch(""); setShowCust(false); }}
+                      className="w-full flex items-center gap-2.5 px-4 py-2 hover:bg-slate-50 transition-colors text-left cursor-pointer">
+                      <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-cyan-400 text-white text-[9px] font-bold flex items-center justify-center shrink-0">
+                        {p.name.split(" ").filter(Boolean).map(w => w[0]).join("").slice(0, 2).toUpperCase()}
+                      </span>
+                      <span className="flex-1 min-w-0">
+                        <span className="block text-xs font-bold text-slate-700 truncate">{p.name}</span>
+                        <span className="block text-[10px] text-slate-400 font-semibold truncate">
+                          {PARTY_TYPE_LABELS[p.party_type]}
+                          {p.short_name ? ` • ${p.short_name}` : ""}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+
+                  {/* Vẫn phải nhận được tên NGOÀI danh mục: kế hoạch có khi ghi
+                      một đơn vị chưa kịp đưa vào danh mục đối tác. */}
+                  {custSearch.trim() && !custResults.some(p => foldVi(p.name) === foldVi(custSearch)) && (
+                    <button type="button"
+                      onClick={() => { pickCustomer(custSearch.trim()); setCustSearch(""); setShowCust(false); }}
+                      className="w-full flex items-center gap-2.5 px-4 py-2 hover:bg-blue-50 border-t border-slate-100 transition-colors text-left cursor-pointer">
+                      <span className="w-6 h-6 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center shrink-0">
+                        <Building2 size={12} />
+                      </span>
+                      <span className="flex-1 min-w-0">
+                        <span className="block text-xs font-bold text-blue-700 truncate">
+                          Dùng tên &ldquo;{custSearch.trim()}&rdquo;
+                        </span>
+                        <span className="block text-[10px] text-slate-400 font-semibold">
+                          Không có trong danh mục — sẽ không tự điền được nội dung thanh toán
+                        </span>
+                      </span>
+                    </button>
+                  )}
+
+                  {custResults.length === 0 && !custSearch.trim() && (
+                    <p className="text-center text-slate-400 text-[11px] italic py-4">
+                      Danh mục đối tác đang rỗng — thêm ở tab &ldquo;Danh mục đối tác&rdquo;.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Lấy sẵn nội dung thanh toán từ danh mục đối tác.
+              Chỉ hiện khi tên khách hàng khớp đúng một đơn vị TRONG danh mục và
+              đơn vị đó có hợp đồng — gõ tên lạ thì khối này không chiếm chỗ. */}
+          {partnerContracts.length > 0 && (
+            <label className="flex flex-col gap-1.5">
+              <span className={labelCls}>Lấy theo hợp đồng</span>
+              <select
+                value={contractId}
+                onChange={e => {
+                  const c = partnerContracts.find(x => x.id === e.target.value);
+                  if (c) applyContract(c, true);
+                  else { setContractId(""); setFilled(""); }
+                }}
+                className={`${inputCls} cursor-pointer`}
+              >
+                <option value="">
+                  {partnerContracts.length === 1
+                    ? "— Không lấy, tự gõ nội dung —"
+                    : `— Chọn 1 trong ${partnerContracts.length} hợp đồng —`}
+                </option>
+                {partnerContracts.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {[c.project_name || c.project_code, c.contract_no].filter(Boolean).join(" · ") ||
+                      "(hợp đồng chưa có số)"}
+                  </option>
+                ))}
+              </select>
               <span className="text-[10px] font-semibold text-slate-400">
-                Danh mục đối tác đang rỗng — thêm ở tab &ldquo;Danh mục đối tác&rdquo; để lần sau chỉ việc chọn.
+                {filled || "Chọn hợp đồng để tự điền nội dung, dự án, loại thu/chi và phòng ban."}
               </span>
-            )}
-          </label>
+            </label>
+          )}
 
           {/* Nội dung */}
           <label className="flex flex-col gap-1.5">

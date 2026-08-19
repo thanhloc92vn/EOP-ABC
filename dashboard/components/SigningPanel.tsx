@@ -12,7 +12,7 @@
 // thật nằm ở trigger + RLS của migration 050 — ẩn nút chỉ là cho gọn mắt.
 // ============================================================
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "@/lib/supabase";
 import { useCurrentUser } from "@/lib/useCurrentUser";
@@ -23,16 +23,26 @@ import {
   fetchSubmissions, canActOn, canEdit, stagesOf, nextStatus, tinhDeNghi,
   fmtMoney, fmtDateTime, resolveDossierUrl, fetchStageApproverEmails, errText,
   normalizeStatus, pgdOpinionField, downloadSigningForm, docxPayloadFromRow, docxFileName,
-  deleteSubmission,
+  deleteSubmission, duplicateSubmission, appendDossierFiles, removeDossierFile,
   STATUS_META, ACTION_LABEL, EVENT_LABEL, FLOW,
   type SigningSubmission, type SigningStatus,
 } from "@/lib/signingSubmissions";
 import {
   FileText, Plus, Loader2, RefreshCw, Search, AlertTriangle, X, Check,
   Undo2, Inbox, ClipboardCheck, CircleDot, ExternalLink, Pencil, Send, Download, Trash2,
+  CopyPlus, Eye, Upload, FileWarning,
 } from "lucide-react";
 
+// Cột "File gốc" chỉ nhận PDF và ảnh, tối đa 4MB. Chặt hơn hẳn ô tải hồ sơ
+// trong form soạn phiếu (8 tệp / 25MB, nhận cả Word/Excel) — đây là chỗ đính
+// kèm nhanh ngay trên danh sách, không phải nơi nộp cả bộ hồ sơ.
+const QUICK_MAX_BYTES = 4 * 1024 * 1024;
+const QUICK_ACCEPT = ".pdf,.png,.jpg,.jpeg,.webp";
+const QUICK_TYPE_RE = /\.(pdf|png|jpe?g|webp)$/i;
+
 const labelCls = "text-[10px] font-bold text-slate-400 uppercase tracking-wider";
+// Nhãn cột trên thanh tiêu đề nền xanh — cùng cỡ chữ với labelCls, khác mỗi màu.
+const headCls = "text-[10px] font-extrabold text-white uppercase tracking-wider";
 const inputCls =
   "border border-slate-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 font-semibold text-slate-800 text-xs bg-white transition-all";
 
@@ -55,6 +65,65 @@ export default function SigningPanel() {
   // Lỗi khi xoá KHÔNG dùng chung state `err`: `err` có early-return che sạch
   // panel, một lần bấm hụt là mất cả danh sách.
   const [delErr, setDelErr] = useState("");
+  // Nhân đôi / đính kèm nhanh — khoá theo TỪNG dòng để bấm ở dòng này không làm
+  // đơ nút của dòng khác, và bấm trùng vào cùng một nút không bắn hai lệnh.
+  const [dupId, setDupId] = useState<string | null>(null);
+  const [uploadId, setUploadId] = useState<string | null>(null);
+  const quickFileRef = useRef<HTMLInputElement>(null);
+  const quickTargetRef = useRef<SigningSubmission | null>(null);
+  // Phiếu đang mở cửa sổ xem tệp. Giữ CẢ DÒNG chứ không giữ mỗi đường dẫn: phiếu
+  // có nhiều tệp thì cửa sổ còn cho lật qua lại giữa chúng.
+  const [previewRow, setPreviewRow] = useState<SigningSubmission | null>(null);
+
+  const duplicateRow = async (r: SigningSubmission) => {
+    if (dupId) return;
+    setDupId(r.id);
+    setDelErr("");
+    try {
+      const copy = await duplicateSubmission(r, user.email, user.name);
+      await load();
+      // Mở luôn bản sao ra sửa — nhân đôi bao giờ cũng là để sửa thành phiếu
+      // khác, bắt người dùng tự đi tìm dòng mới trong danh sách là thừa một bước.
+      setEditing(copy);
+    } catch (e) {
+      setDelErr(`Không nhân đôi được phiếu: ${errText(e)}`);
+    } finally {
+      setDupId(null);
+    }
+  };
+
+  const pickQuickFile = (r: SigningSubmission) => {
+    quickTargetRef.current = r;
+    quickFileRef.current?.click();
+  };
+
+  const uploadQuickFiles = async (picked: File[]) => {
+    const r = quickTargetRef.current;
+    if (!r || picked.length === 0) return;
+    // Kiểm ở client TRƯỚC khi gửi: để kho tự từ chối thì người dùng chờ hết cả
+    // lượt tải rồi mới nhận lỗi, mà thông báo của kho lại bằng tiếng Anh.
+    const sai = picked.find(f => !QUICK_TYPE_RE.test(f.name));
+    if (sai) {
+      setDelErr(`"${sai.name}" không phải PDF hay ảnh — cột File gốc chỉ nhận PDF, PNG, JPG, WEBP.`);
+      return;
+    }
+    const to = picked.find(f => f.size > QUICK_MAX_BYTES);
+    if (to) {
+      setDelErr(`"${to.name}" nặng ${(to.size / 1024 / 1024).toFixed(1)}MB — vượt mức 4MB.`);
+      return;
+    }
+    setUploadId(r.id);
+    setDelErr("");
+    try {
+      await appendDossierFiles(r, picked);
+      await load();
+    } catch (e) {
+      setDelErr(`Không tải lên được tệp: ${errText(e)}`);
+    } finally {
+      setUploadId(null);
+      quickTargetRef.current = null;
+    }
+  };
 
   const load = useCallback(async () => {
     try {
@@ -265,16 +334,21 @@ export default function SigningPanel() {
       ) : (
         <div className="bg-white rounded-2xl border border-slate-200/60 shadow-premium overflow-hidden">
           <div className="max-h-[560px] overflow-y-auto">
-            <div className="sticky top-0 z-10 flex items-center gap-3 px-4 py-2.5 bg-slate-50 border-b border-slate-200">
-              <span className={`${labelCls} w-24 shrink-0`}>Mã phiếu</span>
-              <span className={`${labelCls} flex-1 min-w-0`}>Hợp đồng / Dự án</span>
-              <span className={`${labelCls} w-14 shrink-0 text-center hidden sm:block`}>Đợt</span>
+            {/* Thanh tiêu đề nền xanh, chữ trắng. Bản trước dùng nền xám nhạt
+                + chữ slate-400 nên chìm nghỉm vào dòng dữ liệu, nhìn lướt không
+                thấy đâu là tiêu đề cột. Màu đặc nên hiện đúng ở cả nền sáng lẫn
+                nền tối, không phải nhờ bảng remap dark mode. */}
+            <div className="sticky top-0 z-10 flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-[#005BAC] to-blue-500 shadow-sm">
+              <span className={`${headCls} w-24 shrink-0`}>Mã phiếu</span>
+              <span className={`${headCls} flex-1 min-w-0`}>Hợp đồng / Dự án</span>
+              <span className={`${headCls} w-14 shrink-0 text-center hidden sm:block`}>Đợt</span>
               {/* pr-6: số tiền căn phải, chip trạng thái căn trái — không chừa lề
                   thì hai cột dính vào nhau thành một khối chữ. */}
-              <span className={`${labelCls} w-36 shrink-0 text-right pr-6 hidden md:block`}>Đề nghị TT</span>
-              <span className={`${labelCls} w-32 shrink-0 hidden lg:block`}>Trạng thái</span>
-              {user.isAdmin && (
-                <span className={`${labelCls} w-14 shrink-0 text-center`}>Thao tác</span>
+              <span className={`${headCls} w-36 shrink-0 text-right pr-6 hidden md:block`}>Đề nghị TT</span>
+              <span className={`${headCls} w-20 shrink-0 text-center hidden md:block`}>File gốc</span>
+              <span className={`${headCls} w-32 shrink-0 hidden lg:block`}>Trạng thái</span>
+              {(user.isAdmin || canCreate) && (
+                <span className={`${headCls} w-20 shrink-0 text-center`}>Thao tác</span>
               )}
             </div>
             <div className="divide-y divide-slate-100">
@@ -309,28 +383,67 @@ export default function SigningPanel() {
                     <span className="w-36 shrink-0 text-right pr-6 font-mono font-bold text-[11px] text-slate-700 hidden md:block">
                       {fmtMoney(r.de_nghi_thanh_toan ?? tinhDeNghi(r))}
                     </span>
+                    {/* File gốc — xem tệp đã có và đính kèm thêm ngay tại dòng */}
+                    <span className="w-20 shrink-0 hidden md:flex items-center justify-center gap-0.5">
+                      {r.files.length > 0 && (
+                        <button type="button"
+                          onClick={(e) => { e.stopPropagation(); setPreviewRow(r); }}
+                          title={`Xem ${r.files.length} tệp:\n${r.files.map(f => f.name).join("\n")}`}
+                          className="inline-flex items-center gap-1 px-1.5 py-1 rounded-lg text-[10px] font-bold text-blue-600 hover:bg-blue-50 transition-all cursor-pointer">
+                          <Eye size={13} />
+                          {r.files.length}
+                        </button>
+                      )}
+                      {canEdit(r, user.email, user.isAdmin) && (
+                        <button type="button"
+                          onClick={(e) => { e.stopPropagation(); pickQuickFile(r); }}
+                          disabled={uploadId === r.id}
+                          title="Đính kèm PDF hoặc ảnh (tối đa 4MB)"
+                          className="p-1.5 rounded-lg text-slate-300 hover:text-blue-600 hover:bg-blue-50 transition-all cursor-pointer disabled:opacity-40">
+                          {uploadId === r.id
+                            ? <Loader2 size={13} className="animate-spin" />
+                            : <Upload size={13} />}
+                        </button>
+                      )}
+                      {r.files.length === 0 && !canEdit(r, user.email, user.isAdmin) && (
+                        <span className="text-[10px] font-bold text-slate-300">—</span>
+                      )}
+                    </span>
                     <span className="w-32 shrink-0 hidden lg:flex items-center gap-1.5">
                       <span className={`text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full ${meta.chip}`}>
                         {meta.short}
                       </span>
                       {mine && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" title="Chờ bạn xử lý" />}
                     </span>
-                    {user.isAdmin && (
-                      <span className="w-14 shrink-0 flex items-center justify-center">
-                        <button type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            // Lấy dòng ngay trong handler: sau await thì React đã
-                            // dựng lại bảng, không còn tìm được node này nữa.
-                            removeRow(r, e.currentTarget.closest("[data-toss-row]") as HTMLElement | null, e.currentTarget);
-                          }}
-                          disabled={deleting === r.id}
-                          title={`Xoá phiếu ${r.ma_phieu || ""}`.trim()}
-                          className="p-1.5 rounded-lg text-slate-300 hover:text-rose-600 hover:bg-rose-50 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
-                          {deleting === r.id
-                            ? <Loader2 size={14} className="animate-spin" />
-                            : <Trash2 size={14} />}
-                        </button>
+                    {(user.isAdmin || canCreate) && (
+                      <span className="w-20 shrink-0 flex items-center justify-center gap-0.5">
+                        {canCreate && (
+                          <button type="button"
+                            onClick={(e) => { e.stopPropagation(); duplicateRow(r); }}
+                            disabled={dupId === r.id}
+                            title="Nhân đôi phiếu này thành bản nháp mới"
+                            className="p-1.5 rounded-lg text-slate-300 hover:text-blue-600 hover:bg-blue-50 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
+                            {dupId === r.id
+                              ? <Loader2 size={14} className="animate-spin" />
+                              : <CopyPlus size={14} />}
+                          </button>
+                        )}
+                        {user.isAdmin && (
+                          <button type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              // Lấy dòng ngay trong handler: sau await thì React đã
+                              // dựng lại bảng, không còn tìm được node này nữa.
+                              removeRow(r, e.currentTarget.closest("[data-toss-row]") as HTMLElement | null, e.currentTarget);
+                            }}
+                            disabled={deleting === r.id}
+                            title={`Xoá phiếu ${r.ma_phieu || ""}`.trim()}
+                            className="p-1.5 rounded-lg text-slate-300 hover:text-rose-600 hover:bg-rose-50 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
+                            {deleting === r.id
+                              ? <Loader2 size={14} className="animate-spin" />
+                              : <Trash2 size={14} />}
+                          </button>
+                        )}
                       </span>
                     )}
                   </div>
@@ -339,6 +452,31 @@ export default function SigningPanel() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Một ô chọn tệp dùng chung cho mọi dòng — dựng 1 ô cho mỗi dòng thì
+          danh sách 50 phiếu sẽ có 50 input thừa trong DOM. */}
+      <input
+        ref={quickFileRef}
+        type="file"
+        multiple
+        hidden
+        accept={QUICK_ACCEPT}
+        onChange={(e) => {
+          const picked = Array.from(e.target.files || []);
+          uploadQuickFiles(picked);
+          // Xoá giá trị để lần sau chọn LẠI ĐÚNG tệp đó vẫn kích hoạt onChange.
+          e.target.value = "";
+        }}
+      />
+
+      {previewRow && (
+        <FilePreviewModal
+          row={previewRow}
+          canDelete={canEdit(previewRow, user.email, user.isAdmin)}
+          onChanged={load}
+          onClose={() => setPreviewRow(null)}
+        />
       )}
 
       {(creating || editing) && (
@@ -362,6 +500,185 @@ export default function SigningPanel() {
         />
       )}
     </div>
+  );
+}
+
+// ─── Cửa sổ xem tệp hồ sơ ───
+// Mở ngay giữa màn hình thay vì bật tab mới: người duyệt đang dò danh sách,
+// nhảy tab rồi quay lại là mất chỗ đang xem và mất cả bộ lọc đang đặt.
+//
+// ⚠ createPortal ra document.body — panel này nằm trong khối `.glass` của trang
+// /bao-cao, mà `backdrop-filter` tạo containing block mới nên phần tử `fixed` sẽ
+// bị nhốt trong thẻ cha thay vì phủ toàn màn hình.
+function FilePreviewModal({ row, canDelete, onChanged, onClose }: {
+  row: SigningSubmission;
+  canDelete: boolean;
+  onChanged: () => void;
+  onClose: () => void;
+}) {
+  const [idx, setIdx] = useState(0);
+  // Danh sách tệp giữ ngay trong cửa sổ: xoá xong phải thấy mất ngay, không đợi
+  // tải lại cả bảng rồi mới cập nhật.
+  const [files, setFiles] = useState(row.files);
+  const [busy, setBusy] = useState(false);
+  const [delErr, setDelErr] = useState("");
+  // Giữ CẢ đường dẫn đã giải trong state, không tách thành url/loading/err rời.
+  // Nhờ vậy "đang tải" được SUY RA từ việc kết quả có khớp tệp đang xem hay
+  // không, thay vì phải dọn 3 ô state ngay đầu effect — dọn kiểu đó là gọi
+  // setState thẳng trong thân effect, React cảnh báo và dễ sinh render thừa.
+  const [resolved, setResolved] = useState<{ path: string; url: string; err: string } | null>(null);
+
+  const file = files[idx];
+  const isPdf = /\.pdf$/i.test(file?.name || "");
+
+  const ready = !!file && resolved?.path === file.path;
+  const loading = !ready;
+  const url = ready ? resolved.url : "";
+  const err = ready ? resolved.err : "";
+
+  // Đường dẫn kho là loại có hạn dùng, phải xin lại mỗi lần đổi tệp — không
+  // dựng sẵn một lượt cho cả bộ rồi dùng dần, hết hạn giữa chừng là ảnh trắng.
+  useEffect(() => {
+    if (!file) return;
+    let mounted = true;
+    resolveDossierUrl(file.path)
+      .then(u => {
+        if (!mounted) return;
+        setResolved({
+          path: file.path,
+          url: u || "",
+          err: u ? "" : `Không mở được "${file.name}" — tệp đã bị xoá hoặc tài khoản hết quyền.`,
+        });
+      })
+      .catch(e => {
+        if (mounted) setResolved({ path: file.path, url: "", err: errText(e) });
+      });
+    return () => { mounted = false; };
+  }, [file]);
+
+  const removeCurrent = async () => {
+    if (!file || busy) return;
+    if (!confirm(
+      `Gỡ "${file.name}" khỏi phiếu ${row.ma_phieu || ""}?\n\n` +
+      `Tệp vẫn còn trong kho, chỉ là phiếu này không trỏ tới nữa.`
+    )) return;
+    setBusy(true);
+    setDelErr("");
+    try {
+      const next = await removeDossierFile(row.id, files, file.path);
+      setFiles(next);
+      // Lùi con trỏ nếu vừa xoá tệp cuối; hết tệp thì đóng luôn cửa sổ.
+      setIdx(i => Math.max(0, Math.min(i, next.length - 1)));
+      onChanged();
+      if (next.length === 0) onClose();
+    } catch (e) {
+      setDelErr(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Esc để đóng — cửa sổ chiếm gần hết màn hình, với chuột thì phải rê lên tận
+  // góc trên bên phải mới bấm được nút X.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return createPortal(
+    <div
+      className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl w-full max-w-5xl h-[88vh] overflow-hidden shadow-2xl border border-slate-100 flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Đầu cửa sổ */}
+        <div className="flex items-center gap-3 px-5 py-3 border-b border-slate-200/60 bg-slate-50/70 shrink-0">
+          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#005BAC] to-blue-500 flex items-center justify-center shadow-sm shrink-0">
+            <Eye size={15} className="text-white" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h4 className="font-heading font-extrabold text-slate-800 text-xs leading-tight truncate">
+              {file?.name || "Tệp hồ sơ"}
+            </h4>
+            <p className="text-[10px] text-slate-400 font-semibold truncate">
+              Phiếu {row.ma_phieu || "—"} · tệp {idx + 1}/{files.length}
+            </p>
+          </div>
+          {canDelete && file && (
+            <button type="button" onClick={removeCurrent} disabled={busy}
+              title={`Gỡ "${file.name}" khỏi phiếu`}
+              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all cursor-pointer disabled:opacity-40">
+              {busy ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+            </button>
+          )}
+          {url && (
+            <a href={url} target="_blank" rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              title="Mở ở tab mới"
+              className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all cursor-pointer">
+              <ExternalLink size={15} />
+            </a>
+          )}
+          <button type="button" onClick={onClose}
+            className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-lg transition-all cursor-pointer">
+            <X size={15} />
+          </button>
+        </div>
+
+        {/* Thanh lật tệp — chỉ hiện khi phiếu có nhiều hơn một tệp */}
+        {files.length > 1 && (
+          <div className="flex items-center gap-1.5 px-4 py-2 border-b border-slate-100 bg-white overflow-x-auto shrink-0">
+            {files.map((f, i) => (
+              <button key={f.path} type="button" onClick={() => setIdx(i)}
+                title={f.name}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold whitespace-nowrap transition-all cursor-pointer ${
+                  i === idx
+                    ? "bg-blue-600 text-white shadow-sm"
+                    : "bg-slate-100 text-slate-500 hover:text-slate-700"
+                }`}>
+                {i + 1}. {f.name.length > 22 ? `${f.name.slice(0, 20)}…` : f.name}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {delErr && (
+          <div className="px-4 py-2.5 bg-rose-50 border-b border-rose-200 flex items-start gap-2 shrink-0">
+            <AlertTriangle size={14} className="text-rose-500 shrink-0 mt-0.5" />
+            <p className="flex-1 min-w-0 text-[11px] font-bold text-rose-700 break-words">{delErr}</p>
+            <button type="button" onClick={() => setDelErr("")}
+              className="p-0.5 text-rose-400 hover:text-rose-600 cursor-pointer"><X size={13} /></button>
+          </div>
+        )}
+
+        {/* Thân — nền xám để ảnh nền trắng còn thấy được mép */}
+        <div className="flex-1 min-h-0 bg-slate-100 flex items-center justify-center overflow-auto">
+          {loading ? (
+            <div className="flex flex-col items-center gap-2 text-slate-400">
+              <Loader2 size={28} className="animate-spin text-[#005BAC]" />
+              <p className="text-xs font-semibold">Đang mở tệp…</p>
+            </div>
+          ) : err ? (
+            <div className="flex flex-col items-center gap-2 text-center px-8">
+              <FileWarning size={30} className="text-rose-400" />
+              <p className="text-[11px] font-bold text-rose-600 max-w-sm">{err}</p>
+            </div>
+          ) : isPdf ? (
+            // PDF nhờ trình xem sẵn có của trình duyệt, không nạp thêm thư viện.
+            <iframe src={url} title={file?.name || "PDF"} className="w-full h-full border-0" />
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={url} alt={file?.name || "Ảnh hồ sơ"}
+              className="max-w-full max-h-full object-contain" />
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 

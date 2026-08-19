@@ -327,6 +327,113 @@ export async function deleteSubmission(id: string): Promise<void> {
   }
 }
 
+/**
+ * Nhân đôi một phiếu để sửa nhanh thành phiếu mới.
+ *
+ * CHỈ chép phần NGHIỆP VỤ (hợp đồng, giá trị, số tiền, tệp hồ sơ). KHÔNG chép:
+ *   - `ma_phieu`  : trigger tự sinh mã mới, chép sang là đụng ràng buộc unique.
+ *   - toàn bộ vết duyệt (ý kiến, người duyệt, mốc thời gian, lý do trả lại) —
+ *     phiếu mới chưa ai duyệt, mang vết cũ sang là ghi khống lịch sử.
+ *   - `ai_ghi_chu` / `ai_thieu` : nhận xét của AI về BỘ HỒ SƠ ĐÃ QUÉT của phiếu
+ *     cũ, dán sang phiếu mới thì không còn đúng nữa.
+ *
+ * `dot_so` chép NGUYÊN: chỉ số về `nhap` nên không vướng unique index
+ * (uq_signing_hopdong_dot bỏ qua trạng thái nhap/tra_lai). Người lập tự sửa
+ * sang đợt cần làm.
+ *
+ * `files` chép tham chiếu, KHÔNG nhân bản tệp trong kho: hai phiếu cùng trỏ vào
+ * một đường dẫn. An toàn vì xoá phiếu không đụng tới tệp trong kho — xem
+ * `deleteSubmission`, nó chỉ xoá dòng.
+ */
+export async function duplicateSubmission(
+  src: SigningSubmission,
+  email: string,
+  name: string
+): Promise<SigningSubmission> {
+  const payload = {
+    don_vi: src.don_vi,
+    ve_viec: src.ve_viec,
+    noi_dung_trinh: src.noi_dung_trinh,
+    dot_so: src.dot_so,
+    chu_dau_tu: src.chu_dau_tu,
+    du_an: src.du_an,
+    hop_dong_so: src.hop_dong_so,
+    ngay_ky_hop_dong: src.ngay_ky_hop_dong,
+    goi_thau: src.goi_thau,
+    gia_tri_hd: src.gia_tri_hd,
+    gia_tri_nghiem_thu: src.gia_tri_nghiem_thu,
+    giu_bao_hanh: src.giu_bao_hanh,
+    giu_lai_tung_lan: src.giu_lai_tung_lan,
+    ty_le_giu_lai: src.ty_le_giu_lai,
+    khau_tru_tam_ung: src.khau_tru_tam_ung,
+    ty_le_thu_hoi: src.ty_le_thu_hoi,
+    de_nghi_thanh_toan: src.de_nghi_thanh_toan,
+    luy_ke_da_thanh_toan: src.luy_ke_da_thanh_toan,
+    tam_ung_con_lai: src.tam_ung_con_lai,
+    project_code: src.project_code,
+    project_name: src.project_name,
+    files: src.files,
+    status: "nhap",
+    created_by: email,
+    created_by_name: name || null,
+  };
+
+  const { data, error } = await supabase
+    .from("signing_submissions")
+    .insert([payload])
+    .select(COLS)
+    .single();
+  if (error) throw error;
+  return normalizeRow(data as unknown as Record<string, unknown>);
+}
+
+// ─── Đính kèm thêm tệp cho một phiếu đã có ───
+// Dùng cho cột "File gốc" ngoài danh sách: tải lên rồi NỐI vào mảng `files`,
+// không ghi đè — phiếu thường có nhiều tệp, ghi đè là mất bộ hồ sơ đã tải.
+export async function appendDossierFiles(
+  row: SigningSubmission,
+  picked: File[]
+): Promise<SigningFile[]> {
+  const added: SigningFile[] = [];
+  for (const f of picked) {
+    added.push(await uploadDossierFile(f));
+  }
+  const files = [...row.files, ...added];
+  const { error } = await supabase
+    .from("signing_submissions")
+    .update({ files })
+    .eq("id", row.id);
+  if (error) throw error;
+  return files;
+}
+
+/**
+ * Gỡ một tệp khỏi phiếu.
+ *
+ * CHỈ xoá THAM CHIẾU trong cột `files`, KHÔNG xoá tệp trong kho. Lý do: phiếu
+ * nhân đôi dùng chung đường dẫn với phiếu gốc (xem `duplicateSubmission`), nên
+ * xoá vật lý sẽ làm hỏng luôn tệp của phiếu kia — mà từ đây không cách nào biết
+ * còn phiếu nào đang trỏ vào nó. Đổi lại kho có thể còn tệp không ai dùng; dọn
+ * kho là việc định kỳ, không đáng đánh đổi bằng rủi ro mất hồ sơ của phiếu khác.
+ *
+ * Trigger `guard_signing_transition` chỉ cho sửa `files` khi phiếu còn ở
+ * nháp/trả lại và người sửa là người lập (hoặc Admin) — trùng đúng với `canEdit`
+ * mà giao diện đang dùng để ẩn/hiện nút.
+ */
+export async function removeDossierFile(
+  rowId: string,
+  files: SigningFile[],
+  path: string
+): Promise<SigningFile[]> {
+  const next = files.filter(f => f.path !== path);
+  const { error } = await supabase
+    .from("signing_submissions")
+    .update({ files: next })
+    .eq("id", rowId);
+  if (error) throw error;
+  return next;
+}
+
 function normalizeRow(r: Record<string, unknown>): SigningSubmission {
   return {
     ...(r as unknown as SigningSubmission),
