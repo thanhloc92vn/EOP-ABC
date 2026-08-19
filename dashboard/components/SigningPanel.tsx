@@ -18,6 +18,7 @@ import { supabase } from "@/lib/supabase";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import SigningFormModal from "./SigningFormModal";
 import { apiFetch } from "@/lib/apiClient";
+import { crumpleToss } from "@/lib/crumpleToss";
 import {
   fetchSubmissions, canActOn, canEdit, stagesOf, nextStatus, tinhDeNghi,
   fmtMoney, fmtDateTime, resolveDossierUrl, fetchStageApproverEmails, errText,
@@ -72,7 +73,7 @@ export default function SigningPanel() {
   // Xoá phiếu — CHỈ Admin thấy nút này (RLS migration 050 chặn lần hai ở DB).
   // Xoá xong nạp lại cả bảng thay vì gỡ dòng khỏi state: KPI phía trên đếm từ
   // `rows`, gỡ tay thì phải nhớ trừ đúng ô KPI tương ứng, nạp lại là chắc.
-  const removeRow = async (r: SigningSubmission) => {
+  const removeRow = async (r: SigningSubmission, rowEl: HTMLElement | null, btn: HTMLElement | null) => {
     if (deleting) return;
     if (!confirm(
       `Xoá phiếu "${r.ma_phieu || "(chưa có mã)"}"?
@@ -84,10 +85,15 @@ export default function SigningPanel() {
     )) return;
     setDeleting(r.id);
     setDelErr("");
+    // Vò dòng ném vào sọt NGAY khi bấm, không đợi server: phản hồi tức thì là
+    // điểm chính của hiệu ứng. Xoá hỏng thì toss.cancel() bung dòng trở lại.
+    const toss = crumpleToss(rowEl, { origin: btn });
     try {
       await deleteSubmission(r.id);
+      toss.done(`Đã xoá phiếu ${r.ma_phieu || "trình ký"}`);
       await load();
     } catch (e) {
+      toss.cancel();
       setDelErr(errText(e));
     } finally {
       setDeleting(null);
@@ -280,7 +286,7 @@ export default function SigningPanel() {
                   // Dòng là <div role="button"> chứ không phải <button>: bên trong
                   // có nút Xoá riêng, mà <button> lồng <button> là HTML sai và
                   // trình duyệt sẽ nuốt cú bấm của nút con.
-                  <div key={r.id} role="button" tabIndex={0}
+                  <div key={r.id} role="button" tabIndex={0} data-toss-row
                     onClick={() => setViewing(r)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setViewing(r); }
@@ -312,7 +318,12 @@ export default function SigningPanel() {
                     {user.isAdmin && (
                       <span className="w-14 shrink-0 flex items-center justify-center">
                         <button type="button"
-                          onClick={(e) => { e.stopPropagation(); removeRow(r); }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            // Lấy dòng ngay trong handler: sau await thì React đã
+                            // dựng lại bảng, không còn tìm được node này nữa.
+                            removeRow(r, e.currentTarget.closest("[data-toss-row]") as HTMLElement | null, e.currentTarget);
+                          }}
                           disabled={deleting === r.id}
                           title={`Xoá phiếu ${r.ma_phieu || ""}`.trim()}
                           className="p-1.5 rounded-lg text-slate-300 hover:text-rose-600 hover:bg-rose-50 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">

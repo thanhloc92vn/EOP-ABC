@@ -987,3 +987,137 @@ html.dark .cell-frozen-resigned { background-color: #4a3834; }
   .upload-nudge-icon { animation: none; }
   .upload-nudge-ring { animation: none; }
 }
+
+/* ── Hiệu ứng "vò giấy ném vào sọt" khi xoá dòng (module Báo cáo) ───────
+   Điều khiển bằng lib/crumpleToss.ts: các phần tử dưới đây do JS tạo ra và
+   gắn thẳng vào <body>, nên KHÔNG có class Tailwind nào chạm tới — màu phải
+   ghi cứng ở đây. Cục giấy để trắng ngà cho cả nền sáng lẫn nền tối đều thấy. */
+
+/* Cục giấy vò: clip-path đa giác lệch cho ra dáng nhàu, hai lớp gradient làm
+   nếp gấp. Tròn đều thì nhìn thành quả bóng, mất chất "tờ giấy bị vò". */
+.toss-ball {
+  position: fixed;
+  width: 30px;
+  height: 30px;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 32% 28%, #ffffff 0%, #f1f5f9 46%, #cbd5e1 100%);
+  clip-path: polygon(
+    50% 0%, 74% 9%, 92% 28%, 100% 52%, 88% 74%,
+    68% 92%, 44% 100%, 20% 88%, 6% 66%, 2% 40%, 16% 16%, 34% 5%
+  );
+  filter: drop-shadow(0 4px 8px rgba(15, 23, 42, 0.28));
+}
+
+/* Vệt nếp gấp — một dải sáng chéo, đủ để mắt đọc ra "giấy" khi cục đang xoay. */
+.toss-ball::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(118deg, transparent 34%, rgba(148, 163, 184, 0.55) 41%, transparent 47%),
+    linear-gradient(-42deg, transparent 56%, rgba(148, 163, 184, 0.4) 62%, transparent 68%);
+}
+
+/* Sọt rác: chỉ hiện trong lúc ném rồi mờ đi, không phải đồ trang trí thường trực. */
+.toss-bin {
+  position: fixed;
+  width: 52px;
+  height: 60px;
+  pointer-events: none;
+  opacity: 0;
+  transform-origin: 50% 100%;
+  transition: opacity 0.24s ease;
+}
+
+.toss-bin-on { opacity: 1; }
+
+.toss-bin-lid {
+  position: absolute;
+  top: 6px;
+  left: 3px;
+  width: 46px;
+  height: 7px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #94a3b8, #64748b);
+  transform-origin: 4px 50%; /* bản lề ở mép trái để nắp hé lên như thật */
+}
+
+/* Tay cầm nhỏ trên nắp */
+.toss-bin-lid::before {
+  content: "";
+  position: absolute;
+  left: 17px;
+  top: -4px;
+  width: 12px;
+  height: 4px;
+  border-radius: 2px 2px 0 0;
+  background: #64748b;
+}
+
+.toss-bin-body {
+  position: absolute;
+  top: 15px;
+  left: 7px;
+  width: 38px;
+  height: 42px;
+  border-radius: 3px 3px 9px 9px;
+  background: linear-gradient(180deg, #cbd5e1, #94a3b8);
+  box-shadow: inset 0 -6px 10px rgba(15, 23, 42, 0.16);
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  padding-top: 7px;
+}
+
+/* Ba gân dọc của thùng */
+.toss-bin-body i {
+  width: 3px;
+  height: 26px;
+  border-radius: 2px;
+  background: rgba(71, 85, 105, 0.42);
+}
+
+/* Bụi bốc lên lúc giấy chạm đáy */
+.toss-dust {
+  position: fixed;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: rgba(148, 163, 184, 0.85);
+}
+
+/* Toast báo đã xoá — nổi giữa mép dưới, tự tắt sau 2.6s */
+.toss-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 32px;
+  transform: translateX(-50%);
+  padding: 11px 20px;
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.94);
+  color: #f8fafc;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.28);
+  animation: toss-toast-in 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.toss-toast-out {
+  opacity: 0;
+  transform: translateX(-50%) translateY(8px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+@keyframes toss-toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(14px) scale(0.96); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+}
+
+/* Giảm chuyển động: crumpleToss.ts đã tự bỏ giấy bay, ở đây tắt nốt phần
+   toast nảy để không còn chuyển động nào ngoài mờ dần. */
+@media (prefers-reduced-motion: reduce) {
+  .toss-toast { animation: none; }
+}

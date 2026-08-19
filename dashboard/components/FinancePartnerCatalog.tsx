@@ -38,6 +38,7 @@ import {
 import { useProjectCatalog } from "@/lib/projectCatalog";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import { supabase } from "@/lib/supabase";
+import { crumpleToss } from "@/lib/crumpleToss";
 import {
   Building2, Plus, Trash2, Save, RefreshCw, Loader2, Search, Landmark,
   Copy, Check, FileText, AlertTriangle, X, Users, Briefcase, HardHat, CreditCard,
@@ -103,7 +104,7 @@ export default function FinancePartnerCatalog() {
    * hình im lặng và tưởng đã xoá xong.
    */
   const removePartner = useCallback(
-    async (p: FinancePartner, contractCount: number) => {
+    async (p: FinancePartner, contractCount: number, rowEl: HTMLElement | null, btn: HTMLElement | null) => {
       if (deletingId) return;
       if (!confirm(
         `Xoá đối tác "${p.name}"?
@@ -116,6 +117,11 @@ export default function FinancePartnerCatalog() {
       )) return;
       setDeletingId(p.id);
       setWriteErr("");
+      // Vò dòng ném vào sọt ngay khi bấm. Ở đây hiệu ứng còn gánh thêm một việc:
+      // RLS chặn DELETE thì server trả về sạch sẽ chứ không báo lỗi, nên nhánh
+      // "xoá 0 dòng" bên dưới cũng phải gọi cancel() để dòng bung lại — nếu
+      // không, người dùng thấy dòng bay đi rồi hiện lại như ma.
+      const toss = crumpleToss(rowEl, { origin: btn });
       try {
         const { data, error: e } = await supabase
           .from("finance_partners")
@@ -126,9 +132,11 @@ export default function FinancePartnerCatalog() {
         if (!data || data.length === 0) {
           throw new Error("tài khoản của bạn không đủ quyền xoá đối tác.");
         }
+        toss.done(`Đã xoá đối tác ${p.name}`);
         invalidateFinancePartners();
         await reload();
       } catch (e) {
+        toss.cancel();
         setWriteErr(`Không xoá được đối tác: ${e instanceof Error ? e.message : String(e)}`);
       } finally {
         setDeletingId(null);
@@ -407,7 +415,7 @@ function PartnerRow({ partner: p, contracts, onOpen, canDelete, deleting, onDele
   onOpen: () => void;
   canDelete: boolean;
   deleting: boolean;
-  onDelete: (p: FinancePartner, contractCount: number) => void;
+  onDelete: (p: FinancePartner, contractCount: number, rowEl: HTMLElement | null, btn: HTMLElement | null) => void;
 }) {
   const st = TYPE_STYLE[p.party_type];
   const projectNames = Array.from(
@@ -422,6 +430,7 @@ function PartnerRow({ partner: p, contracts, onOpen, canDelete, deleting, onDele
     <div
       role="button"
       tabIndex={0}
+      data-toss-row
       onClick={onOpen}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); }
@@ -478,7 +487,12 @@ function PartnerRow({ partner: p, contracts, onOpen, canDelete, deleting, onDele
         <span className="w-14 shrink-0 flex items-center justify-center">
           <button
             type="button"
-            onClick={(e) => { e.stopPropagation(); onDelete(p, contracts.length); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              // Lấy dòng ngay trong handler: sau await thì danh sách đã dựng lại,
+              // không còn tìm được node này nữa.
+              onDelete(p, contracts.length, e.currentTarget.closest("[data-toss-row]") as HTMLElement | null, e.currentTarget);
+            }}
             disabled={deleting}
             title={`Xoá đối tác ${p.name}`}
             className="p-1.5 rounded-lg text-slate-300 hover:text-rose-600 hover:bg-rose-50 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
