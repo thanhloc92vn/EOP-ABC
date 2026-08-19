@@ -24,6 +24,7 @@ import { useState } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import FinancePartnerCatalog from "@/components/FinancePartnerCatalog";
+import FinancePlanPanel from "@/components/FinancePlanPanel";
 import SigningPanel from "@/components/SigningPanel";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import {
@@ -40,10 +41,11 @@ type ReportTab = "thu-chi" | "san-luong" | "doanh-thu";
 // Tab "Kế hoạch thu chi" đã gánh 2 việc khác hẳn nhau: danh mục đối tác (dữ liệu
 // nền, sửa thưa) và phiếu trình ký (việc hằng ngày, có luồng duyệt). Tách tab con
 // thay vì dồn một trang — dồn lại thì mỗi lần vào phải cuộn qua thứ không cần.
-type ThuChiTab = "doi-tac" | "trinh-ky";
+type ThuChiTab = "doi-tac" | "trinh-ky" | "ke-hoach";
 
 const THU_CHI_TABS: { id: ThuChiTab; label: string; desc: string }[] = [
   { id: "trinh-ky", label: "Phiếu trình ký", desc: "Lập phiếu, trình duyệt 4 cấp, xuất Word" },
+  { id: "ke-hoach", label: "Kế hoạch TC", desc: "Kế hoạch tài chính tháng — thu / chi theo tuần, theo dự án" },
   { id: "doi-tac", label: "Danh mục đối tác", desc: "Nhà thầu, số tài khoản, hợp đồng theo dự án" },
 ];
 
@@ -212,7 +214,13 @@ export default function BaoCaoPage() {
                 ))}
               </div>
 
-              {thuChiTab === "trinh-ky" ? <SigningPanel /> : <FinancePartnerCatalog />}
+              {thuChiTab === "trinh-ky" ? (
+                <SigningPanel />
+              ) : thuChiTab === "ke-hoach" ? (
+                <FinancePlanPanel />
+              ) : (
+                <FinancePartnerCatalog />
+              )}
             </div>
           ) : (
             <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium space-y-5">

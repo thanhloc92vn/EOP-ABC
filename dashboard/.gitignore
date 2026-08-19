@@ -49,6 +49,11 @@ yarn-error.log*
 # không phát tán theo mã nguồn. Đã từng bị `git add .` gom nhầm lên một lần.
 /docs/
 
+# Bản gốc file mẫu Excel còn nguyên số liệu thanh toán thật của công ty. Giữ
+# lại trên máy để đối chiếu, KHÔNG đẩy lên: mọi thứ nằm dưới public/ đều tải
+# được qua HTTP mà không cần đăng nhập.
+/_local/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
