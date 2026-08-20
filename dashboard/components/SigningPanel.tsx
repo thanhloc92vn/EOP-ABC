@@ -835,6 +835,10 @@ function DetailModal({ row, user, onClose, onEdit, onDone, onMailWarn }: {
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [err, setErr] = useState("");
+  // Khoá bằng ref chứ không bằng state `busy`: modal đóng ngay sau khi ghi CSDL
+  // nên `busy` chưa kịp vẽ lại, bấm nhanh hai cái vẫn lọt được lệnh thứ hai.
+  // Ref đổi giá trị tức thì, không chờ render.
+  const dangChay = useRef(false);
 
   const exportDocx = async () => {
     setExporting(true); setErr("");
@@ -858,6 +862,8 @@ function DetailModal({ row, user, onClose, onEdit, onDone, onMailWarn }: {
 
   // Gửi email báo luồng. KHÔNG chặn thao tác nếu email hỏng: phiếu đã chuyển
   // bước trong CSDL rồi, bắt người dùng làm lại chỉ vì SMTP lỗi là sai.
+  // Gửi email báo cấp kế tiếp. CỐ Ý không await ở nơi gọi — xem ghi chú tại
+  // `approve` / `sendBack` / `submit`.
   const notify = async (
     event: "trinh" | "duyet" | "tra_lai",
     fromStatus: SigningStatus,
@@ -905,6 +911,8 @@ function DetailModal({ row, user, onClose, onEdit, onDone, onMailWarn }: {
   };
 
   const submit = async () => {
+    if (dangChay.current) return;
+    dangChay.current = true;
     setBusy(true); setErr("");
     try {
       const { error } = await supabase
@@ -912,10 +920,18 @@ function DetailModal({ row, user, onClose, onEdit, onDone, onMailWarn }: {
         .update({ status: "cho_pho_giam_doc" })
         .eq("id", row.id);
       if (error) throw error;
-      await notify("trinh", row.status, "cho_pho_giam_doc", {});
+
+      // ─── ĐÓNG NGAY, EMAIL CHẠY NGẦM ───
+      // Trước đây phải chờ xong cả `fetchStageApproverEmails` lẫn cú gọi SMTP
+      // rồi mới đóng — nút quay vài giây, cấp duyệt tưởng máy treo và bấm lại.
+      // Việc chốt là dòng UPDATE ở trên: nó xong thì phiếu ĐÃ chuyển bước.
+      // Email chỉ là báo tin, hỏng cũng không làm sai dữ liệu — và cảnh báo của
+      // nó nổi ở PANEL CHA (onMailWarn) nên modal đóng rồi vẫn đọc được.
       onDone();
+      void notify("trinh", row.status, "cho_pho_giam_doc", {});
     } catch (e) {
       setErr(errText(e));
+      dangChay.current = false;
     } finally {
       setBusy(false);
     }
@@ -930,7 +946,8 @@ function DetailModal({ row, user, onClose, onEdit, onDone, onMailWarn }: {
   // Ghi ý kiến vào đúng cột của cấp đang giữ phiếu, rồi đẩy sang bước kế tiếp.
   const approve = async () => {
     const nxt = nextStatus(row.status, row.loai);
-    if (!nxt) return;
+    if (!nxt || dangChay.current) return;
+    dangChay.current = true;
     setBusy(true); setErr("");
     try {
       const now = new Date().toISOString();
@@ -951,10 +968,18 @@ function DetailModal({ row, user, onClose, onEdit, onDone, onMailWarn }: {
 
       const { error } = await supabase.from("signing_submissions").update(patch).eq("id", row.id);
       if (error) throw error;
-      await notify("duyet", row.status, nxt, { ykien });
+
+      // ─── ĐÓNG NGAY, EMAIL CHẠY NGẦM ───
+      // Trước đây phải chờ xong cả `fetchStageApproverEmails` lẫn cú gọi SMTP
+      // rồi mới đóng — nút quay vài giây, cấp duyệt tưởng máy treo và bấm lại.
+      // Việc chốt là dòng UPDATE ở trên: nó xong thì phiếu ĐÃ chuyển bước.
+      // Email chỉ là báo tin, hỏng cũng không làm sai dữ liệu — và cảnh báo của
+      // nó nổi ở PANEL CHA (onMailWarn) nên modal đóng rồi vẫn đọc được.
       onDone();
+      void notify("duyet", row.status, nxt, { ykien });
     } catch (e) {
       setErr(errText(e));
+      dangChay.current = false;
     } finally {
       setBusy(false);
     }
@@ -962,6 +987,8 @@ function DetailModal({ row, user, onClose, onEdit, onDone, onMailWarn }: {
 
   const sendBack = async () => {
     if (!lyDo.trim()) { setErr("Phải ghi lý do khi trả lại."); return; }
+    if (dangChay.current) return;
+    dangChay.current = true;
     setBusy(true); setErr("");
     try {
       const { error } = await supabase.from("signing_submissions").update({
@@ -972,10 +999,18 @@ function DetailModal({ row, user, onClose, onEdit, onDone, onMailWarn }: {
         tra_lai_ly_do: lyDo.trim(),
       }).eq("id", row.id);
       if (error) throw error;
-      await notify("tra_lai", row.status, "tra_lai", { lyDo: lyDo.trim() });
+
+      // ─── ĐÓNG NGAY, EMAIL CHẠY NGẦM ───
+      // Trước đây phải chờ xong cả `fetchStageApproverEmails` lẫn cú gọi SMTP
+      // rồi mới đóng — nút quay vài giây, cấp duyệt tưởng máy treo và bấm lại.
+      // Việc chốt là dòng UPDATE ở trên: nó xong thì phiếu ĐÃ chuyển bước.
+      // Email chỉ là báo tin, hỏng cũng không làm sai dữ liệu — và cảnh báo của
+      // nó nổi ở PANEL CHA (onMailWarn) nên modal đóng rồi vẫn đọc được.
       onDone();
+      void notify("tra_lai", row.status, "tra_lai", { lyDo: lyDo.trim() });
     } catch (e) {
       setErr(errText(e));
+      dangChay.current = false;
     } finally {
       setBusy(false);
     }
