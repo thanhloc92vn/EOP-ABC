@@ -135,8 +135,12 @@ export default function TransferRequestPreview({ data, onClose }: {
         )}
 
         {/* ─── Tờ giấy ─── */}
+        {/* `paper-sheet` (khai trong globals.css) ghim nền trắng + mực đen cho cả
+            dark mode. KHÔNG dùng `bg-white` / `text-[#1e293b]` ở đây nữa: dark
+            mode remap `bg-white` thành nền tối trong khi chữ vẫn tối, nhìn ra tờ
+            giấy trắng trơn chỉ còn khung bảng. */}
         <div
-          className="bg-white border border-slate-200 shadow p-8 rounded-xl text-[#1e293b] leading-relaxed max-w-2xl mx-auto w-full select-none font-medium"
+          className="paper-sheet border shadow p-8 rounded-xl leading-relaxed max-w-2xl mx-auto w-full select-none font-medium"
           style={{ fontFamily: "'Times New Roman', Times, serif" }}
         >
           <div className="flex justify-between items-start border-b border-slate-300 pb-4 mb-4">

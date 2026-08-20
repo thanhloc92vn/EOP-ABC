@@ -1121,3 +1121,27 @@ html.dark .cell-frozen-resigned { background-color: #4a3834; }
 @media (prefers-reduced-motion: reduce) {
   .toss-toast { animation: none; }
 }
+
+/* ── TỜ GIẤY XEM TRƯỚC BIỂU MẪU (Giấy đề nghị chuyển tiền, HC-BM021/ĐNCT) ──
+   Khối này là ẢNH CHỤP của tờ giấy sắp in ra, nên phải LUÔN là giấy trắng mực
+   đen — kể cả khi cả hệ thống đang ở dark mode. Nó không phải một thẻ giao diện.
+
+   Thiếu khối này thì: nền `bg-white` bị remap thành #1e293b trong khi chữ vẫn
+   để #1e293b, và `text-slate-800/900` bị đổi thành màu sáng — kết quả là tờ
+   giấy trắng trơn, chỉ còn thấy mỗi khung bảng.
+
+   Các luật dưới đây thêm một lớp `.paper-sheet` vào bộ chọn nên đặc tả cao hơn
+   luật `html.dark .bg-white` ở trên, và chỉ ăn trong phạm vi tờ giấy. */
+.paper-sheet {
+  background-color: #ffffff !important;
+  color: #1e293b !important;
+  border-color: #e2e8f0 !important;
+}
+html.dark .paper-sheet .bg-white { background-color: #ffffff !important; }
+html.dark .paper-sheet .bg-slate-50 { background-color: #f8fafc !important; }
+html.dark .paper-sheet .text-slate-900,
+html.dark .paper-sheet .text-slate-800 { color: #0f172a !important; }
+html.dark .paper-sheet .text-slate-500 { color: #64748b !important; }
+html.dark .paper-sheet .border-slate-200 { border-color: #e2e8f0 !important; }
+html.dark .paper-sheet .border-slate-300 { border-color: #cbd5e1 !important; }
+html.dark .paper-sheet .border-slate-900 { border-color: #0f172a !important; }
