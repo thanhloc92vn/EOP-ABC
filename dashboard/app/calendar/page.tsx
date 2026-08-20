@@ -744,7 +744,15 @@ function CalendarContent() {
     );
     if (!dept) return "";
 
-    const sameDept = employeeDirectory.filter(e => normalizeName(e.department || "") === dept);
+    // Loại CHÍNH người làm đơn khỏi danh sách ứng viên: từ 20/08/2026
+    // isLeaveTripCap1Approver chặn tự duyệt đơn của mình, nên một Trưởng phòng
+    // tự nộp đơn mà vẫn ghi tên mình vào "Người duyệt:" thì mail bay vào hư
+    // không và đơn nằm im. Bỏ họ ra thì rơi xuống Phó phòng; không còn ai thì
+    // trả "" và đơn chờ Giám đốc/PGĐ (hoặc Admin) xử lý ở trang Duyệt yêu cầu.
+    const sameDept = employeeDirectory.filter(e =>
+      normalizeName(e.department || "") === dept &&
+      normalizeName(e.name) !== normalizeName(assigneeName)
+    );
     const isTruongPhong = (role: string) => {
       const r = normalizeName(role || "");
       return r.includes("truong phong") && !r.includes("pho truong phong");
@@ -836,8 +844,9 @@ function CalendarContent() {
   // để tránh 2 nơi cùng có quyền duyệt cuối và lỡ bỏ qua bước chuyển HCNS.
   const pendingApprovals = useMemo(() => {
     if (!currentUser) return [];
-    // Ngoại lệ tên cứng (Giáp Nhân/Duy Hưng coi như Admin) đã bỏ — Ban giám đốc vẫn
-    // duyệt cấp 1 được qua isManagerRole("giám đốc") trong isLeaveTripCap1Approver
+    // Ngoại lệ tên cứng (Giáp Nhân/Duy Hưng coi như Admin) đã bỏ. Ban giám đốc
+    // duyệt cấp 1 cho ĐÚNG phòng mình phụ trách — qua `approval_groups` (nhóm có
+    // tổ trưởng là Giám đốc/PGĐ đó), không còn ngoại lệ "thấy mọi phòng" từ 20/08/2026.
     const isUserAdmin = currentUser.isAdmin ||
                         (currentUser.role || "").toLowerCase() === "admin";
 
@@ -853,10 +862,9 @@ function CalendarContent() {
         currentUserName: currentUser.name,
         currentUserRole: currentUser.role,
         currentUserIsAdmin: isUserAdmin,
-        currentUserIsDirector: currentUser.isDirector,
         currentUserDepartment: currentUser.department,
-        assigneeName: t.assignee,
-        assigneeDepartment: employeeDirectory.find(
+        requesterName: t.assignee,
+        requesterDepartment: employeeDirectory.find(
           e => normalizeName(e.name) === normalizeName(t.assignee || "")
         )?.department || "",
         taskNotes: t.notes,

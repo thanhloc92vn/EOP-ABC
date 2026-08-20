@@ -11,11 +11,12 @@ import {
   isManagerRole,
   isBookingCap1Approver,
   getRequestStage,
+  isJustificationCap1Approver,
   isLeaveTripCap1Approver,
   isLeaveTripCap2Approver,
   normalizeName,
 } from "@/lib/approvers";
-import { isDirectorRole } from "@/lib/access";
+import { isHrDept } from "@/lib/access";
 import { useSidebar } from "./SidebarContext";
 import { useTenantConfig } from "@/lib/tenantConfig";
 import { usePlan } from "@/lib/plan";
@@ -467,9 +468,11 @@ export default function Header({ title, subtitle }: Props) {
       // isManagerRole đã bao gồm cả cấp phó (phó phòng / chỉ huy phó / leader).
       const isUserManager = isManagerRole(userObj.role);
 
-      // HR by role only — per-person grants now live in the approval_permissions table
-      const isUserHR = (userObj.role || "").toLowerCase().includes("nhân sự") ||
-                       (userObj.role || "").toLowerCase().includes("nhan su");
+      // HR theo chức danh — dùng chung isHrDept() với settings/page.tsx (đồng bộ
+      // 20/08/2026). Trước đây Header chỉ nhận "nhân sự" còn settings nhận cả
+      // "hành chính"/"hcns", nên người mang chức danh Hành chính thấy đơn giải
+      // trình trong trang Duyệt yêu cầu mà chuông thì im.
+      const isUserHR = isHrDept(userObj.role);
 
       // Per-user approval grants from approval_permissions table
       const perms = await fetchApprovalPermissions(userObj.email);
@@ -600,31 +603,37 @@ export default function Header({ title, subtitle }: Props) {
             currentUserName: userObj.name,
             currentUserRole: userObj.role,
             currentUserIsAdmin: isUserAdmin,
-            currentUserIsDirector: isDirectorRole(userObj.role),
             currentUserDepartment: userObj.department,
-            assigneeName: t.assignee,
-            assigneeDepartment: deptOfName.get(normalizeName(t.assignee || "")) || "",
+            requesterName: t.assignee,
+            requesterDepartment: deptOfName.get(normalizeName(t.assignee || "")) || "",
             taskNotes: t.notes,
             taskTitleLower: titleLower,
           });
         }
-        // isUserHR giữ đúng hành vi cũ (HR luôn thấy đơn công tác/nghỉ phép chờ HCNS duyệt cuối)
-        return isUserHR || isLeaveTripCap2Approver({ currentUserIsAdmin: isUserAdmin, approvalPerms: perms, isTrip });
+        // CẤP 2 (HCNS duyệt cuối) — CHỈ theo cờ can_approve_leave/can_approve_trip
+        // (+ Admin). Trước 20/08/2026 chuông còn cộng thêm `isUserHR` (chức danh
+        // chứa "nhân sự"), trong khi trang Cài đặt > Duyệt yêu cầu — nơi có nút
+        // Duyệt thật — chỉ tính cờ: nhân viên HCNS không có cờ nghe chuông kêu
+        // nhưng mở trang ra không thấy đơn nào. Ai cần nhận thì tick cờ cho họ ở
+        // Cài đặt > Phân quyền & Luồng duyệt, đừng cộng lại điều kiện chức danh.
+        return isLeaveTripCap2Approver({ currentUserIsAdmin: isUserAdmin, approvalPerms: perms, isTrip });
       });
 
-      // Filter justifications notifications (Admin, HR, Director, or the specifically designated approver, or department managers/deputies)
-      const isDirector = (userObj.role || "").toLowerCase().includes("giám đốc") ||
-                         (userObj.role || "").toLowerCase().includes("giam doc");
-
+      // Giải trình công — cùng luật với settings/page.tsx qua isJustificationCap1Approver.
+      // Quyền bao quát (Admin / cờ / HCNS) kiểm trước; phần còn lại đi khung chung
+      // của 4 luồng đăng ký: cấm tự duyệt -> tổ trưởng tổ mình -> người được chỉ
+      // định trong biểu mẫu -> Trưởng/Phó phòng cùng đơn vị.
       const filteredJustifications = justificationsData.filter(e => {
-        if (isUserAdmin || isUserHR || isDirector || perms.canApproveJustification) return true;
-        if (userObj && e.approver === userObj.name) return true;
-        
-        // Department manager or deputy manager of the same department
-        const isManagerOfSameDept = isUserManager && userObj && userObj.department === e.department;
-        if (isManagerOfSameDept) return true;
-
-        return false;
+        if (isUserAdmin || isUserHR || perms.canApproveJustification) return true;
+        return isJustificationCap1Approver({
+          currentUserName: userObj.name,
+          currentUserRole: userObj.role,
+          currentUserIsAdmin: isUserAdmin,
+          currentUserDepartment: userObj.department,
+          requesterName: e.name,
+          requesterDepartment: e.department,
+          designatedApprover: e.approver,
+        });
       });
 
       // Map tasks to notification format

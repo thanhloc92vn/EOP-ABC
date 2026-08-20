@@ -17,9 +17,9 @@ import { useTenantConfig } from "@/lib/tenantConfig";
 import {
   hasAnyApprovalPermission,
   isMarketingTeamLeader,
-  isManagerRole,
   isBookingCap1Approver,
   getRequestStage,
+  isJustificationCap1Approver,
   isLeaveTripCap1Approver,
   isLeaveTripCap2Approver,
   normalizeName,
@@ -718,10 +718,9 @@ function SettingsContent() {
             currentUserName: currentUser.name,
             currentUserRole: currentUser.role,
             currentUserIsAdmin: isUserAdmin,
-            currentUserIsDirector: currentUser.isDirector || isDirectorRole(currentUser.role),
             currentUserDepartment: currentUser.department,
-            assigneeName: t.assignee,
-            assigneeDepartment: departmentOfPerson(t.assignee),
+            requesterName: t.assignee,
+            requesterDepartment: departmentOfPerson(t.assignee),
             taskNotes: t.notes,
             taskTitleLower: t.title.toLowerCase(),
           });
@@ -749,10 +748,9 @@ function SettingsContent() {
             currentUserName: currentUser.name,
             currentUserRole: currentUser.role,
             currentUserIsAdmin: isUserAdmin,
-            currentUserIsDirector: currentUser.isDirector || isDirectorRole(currentUser.role),
             currentUserDepartment: currentUser.department,
-            assigneeName: t.assignee,
-            assigneeDepartment: departmentOfPerson(t.assignee),
+            requesterName: t.assignee,
+            requesterDepartment: departmentOfPerson(t.assignee),
             taskNotes: t.notes,
             taskTitleLower: t.title.toLowerCase(),
           });
@@ -852,21 +850,31 @@ function SettingsContent() {
     return notes.length > 50 ? notes.substring(0, 50) + "..." : notes;
   };
 
-  // Justifications approvals list (Admin, HR, Director, or department manager/deputy)
+  // Giải trình công — luồng thứ 5, dùng chung khung cấp 1 với 4 luồng đăng ký
+  // (đồng bộ 20/08/2026). Quyền BAO QUÁT kiểm trước: Admin, HCNS theo chức danh,
+  // hoặc cờ can_approve_justification. Phần còn lại giao cho
+  // isJustificationCap1Approver: cấm tự duyệt -> tổ trưởng của chính tổ người
+  // giải trình -> người được điền vào ô "Người phê duyệt" -> Trưởng/Phó phòng
+  // cùng đơn vị (tổ trưởng KHÔNG còn thấy người khác tổ, Giám đốc không còn thấy
+  // mọi phòng — phạm vi lãnh đạo đi qua approval_groups như 4 luồng kia).
+  // Header.tsx lọc y hệt bằng cùng hàm này; đừng thêm điều kiện chỉ ở một nơi.
   const pendingExplanations = useMemo(() => {
     if (!currentUser || !isApprover) return [];
-    
-    // Nhận diện qua helper trung tâm (thay các danh sách so chuỗi vai trò rời rạc).
+
     const isUserAdmin = currentUser.isAdmin || (currentUser.role || "").toLowerCase() === "admin";
     const isUserHR = isHrDept(currentUser.role);        // HR theo vai trò (Nhân sự/HCNS)
-    const isDirector = isDirectorRole(currentUser.role); // Giám đốc
 
     return explanations.filter(e => {
-      if (isUserAdmin || isUserHR || isDirector || approvalPerms.canApproveJustification) return true;
-      if (e.approver === currentUser.name) return true;
-      // Trưởng/Phó phòng (quản lý) cùng phòng ban với người giải trình
-      if (isManagerRole(currentUser.role) && currentUser.department === e.department) return true;
-      return false;
+      if (isUserAdmin || isUserHR || approvalPerms.canApproveJustification) return true;
+      return isJustificationCap1Approver({
+        currentUserName: currentUser.name,
+        currentUserRole: currentUser.role,
+        currentUserIsAdmin: isUserAdmin,
+        currentUserDepartment: currentUser.department,
+        requesterName: e.name,
+        requesterDepartment: e.department,
+        designatedApprover: e.approver,
+      });
     });
   }, [explanations, currentUser, isApprover, approvalPerms]);
 

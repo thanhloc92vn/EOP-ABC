@@ -147,10 +147,13 @@ function activeGroups(): ApprovalGroup[] {
 }
 
 // Nhóm duyệt mà người này là THÀNH VIÊN (null nếu không thuộc nhóm nào)
+// So tên qua normalizeName (bỏ dấu + thường hoá) — trước đây chỉ trim+lowercase
+// nên một dòng nhập "Nguyen Van A" trong member_names là trượt sạch luồng duyệt
+// của "Nguyễn Văn A" mà không có lỗi nào báo ra.
 export function getApprovalGroupOfMember(personName?: string | null): ApprovalGroup | null {
-  const n = (personName || "").trim().toLowerCase();
+  const n = normalizeName(personName);
   if (!n) return null;
-  return activeGroups().find(g => g.member_names.some(m => m.trim().toLowerCase() === n)) || null;
+  return activeGroups().find(g => g.member_names.some(m => normalizeName(m) === n)) || null;
 }
 
 // Tên tổ trưởng phụ trách duyệt cấp 1 cho thành viên này (null nếu không thuộc nhóm)
@@ -170,9 +173,9 @@ export function isMarketingTeamMember(personName?: string | null): boolean {
 // isGroupLeaderOfRequester() bên dưới: ghép nhầm hai câu hỏi này chính là lý do
 // mọi tổ trưởng từng thấy đơn đăng ký của thành viên mọi tổ khác.
 export function isMarketingTeamLeader(userName?: string | null): boolean {
-  const n = (userName || "").trim().toLowerCase();
+  const n = normalizeName(userName);
   if (!n) return false;
-  return activeGroups().some(g => g.leader_name.trim().toLowerCase() === n);
+  return activeGroups().some(g => normalizeName(g.leader_name) === n);
 }
 
 // Người này có phải tổ trưởng của ĐÚNG cái tổ mà người gửi đơn thuộc về không?
@@ -204,40 +207,102 @@ export function isDepartmentManagerRole(role?: string | null): boolean {
   );
 }
 
-// ━━━ Đăng ký xe / phòng họp — ai được duyệt CẤP 1 một đơn cụ thể ━━━
-// Gom về một chỗ vì luật này từng được chép tay ở 3 nơi (chuông Header, trang
-// /dang-ky, Cài đặt > Duyệt yêu cầu) và 3 bản đã trôi lệch nhau: hai nơi tính
-// tổ trưởng là quản lý, nơi còn lại thì không — cùng một đơn mà chuông kêu,
-// /dang-ky duyệt được, còn danh sách trong Cài đặt lại không liệt kê.
-export function isBookingCap1Approver(params: {
+// ━━━ CẤP 1 — KHUNG CHUNG CHO CẢ 4 LUỒNG ━━━
+// Nghỉ phép · Công tác · Đăng ký xe · Đăng ký phòng họp dùng CHUNG hai bước
+// dưới đây; luồng nào có luật riêng thì chèn vào GIỮA hai bước (nghỉ phép có
+// ngoại lệ đơn ngắn ngày + người duyệt ghi tường minh trong notes).
+//
+// Trước 20/08/2026 mỗi luồng giữ một bản chép riêng và chúng đã trôi lệch nhau:
+// tổ trưởng duyệt được đơn nghỉ của cả phòng nhưng không duyệt được đăng ký xe;
+// tên có dấu khớp bên này lại trượt bên kia; và người làm đơn tự duyệt được đơn
+// của chính mình ở luồng đăng ký. THÊM LUỒNG MỚI thì gọi lại đúng hai hàm này,
+// đừng chép luật ra chỗ khác.
+export type Cap1Params = {
   currentUserName: string;
   currentUserRole: string;
   currentUserIsAdmin: boolean;
+  /** Phòng ban / Ban điều hành của người đang đăng nhập. */
   currentUserDepartment?: string | null;
+  /** Người làm đơn (tên hiển thị, khớp cột text trong DB). */
   requesterName: string;
+  /** Phòng ban / Ban điều hành của người làm đơn (tra từ danh bạ nhân sự). */
   requesterDepartment?: string | null;
-}): boolean {
-  const {
-    currentUserName, currentUserRole, currentUserIsAdmin,
-    currentUserDepartment, requesterName, requesterDepartment,
-  } = params;
-  if (currentUserIsAdmin) return true;
+};
 
-  // 1. Người gửi thuộc một tổ có luồng riêng -> CHỈ tổ trưởng của chính tổ đó.
-  //    Tổ trưởng tổ khác dừng ở đây, không rơi xuống nhánh phòng ban bên dưới.
-  if (getApprovalGroupOfMember(requesterName)) {
-    return isGroupLeaderOfRequester(currentUserName, requesterName);
+// BƯỚC MỞ ĐẦU — trả boolean là đã kết luận xong; trả null là chưa, đi tiếp.
+export function cap1Opening(p: Cap1Params): boolean | null {
+  if (p.currentUserIsAdmin) return true;
+
+  // Không ai tự duyệt cấp 1 đơn của CHÍNH MÌNH (chốt 20/08/2026). Đặt ở đây để
+  // chặn TRƯỚC mọi nhánh đặc cách bên dưới — nhánh "Người duyệt: X" của nghỉ
+  // phép đọc tên do resolveCap1Approver ghi vào notes, mà tên đó chính là người
+  // làm đơn khi họ là Trưởng phòng, nên chặn muộn hơn là không chặn được gì.
+  // Admin cố ý thoát ở trên: giữ một lối gỡ khi đơn không còn ai duyệt được.
+  const self = normalizeName(p.currentUserName);
+  if (self && self === normalizeName(p.requesterName)) return false;
+
+  // Người làm đơn thuộc tổ/nhóm có luồng riêng -> CHỈ tổ trưởng của CHÍNH tổ đó.
+  // TP/PP được xếp vào nhóm do Giám đốc phụ trách phòng làm tổ trưởng cũng chạy
+  // đúng nhánh này. Tổ trưởng tổ khác dừng lại, không rơi xuống nhánh phòng ban.
+  if (getApprovalGroupOfMember(p.requesterName)) {
+    return isGroupLeaderOfRequester(p.currentUserName, p.requesterName);
   }
 
-  // 2. Người gửi chưa xếp tổ -> Trưởng/Phó phòng cùng đơn vị. Tổ trưởng KHÔNG
-  //    thấy: họ chỉ phụ trách thành viên tổ mình.
-  if (!isDepartmentManagerRole(currentUserRole)) return false;
+  return null;
+}
 
-  const mine = normalizeName(currentUserDepartment);
-  const theirs = normalizeName(requesterDepartment);
-  // Thiếu phòng ban ở một trong hai bên thì không suy đoán (Admin đã thoát ở trên)
+// BƯỚC CUỐI — cấp trưởng ĐƠN VỊ, chỉ duyệt cho nhân sự CÙNG ĐƠN VỊ với mình.
+// Dùng isDepartmentManagerRole (KHÔNG tính "tổ trưởng"/"leader"): người chưa xếp
+// tổ thuộc về Trưởng/Phó phòng, còn tổ trưởng đã xử lý xong ở bước mở đầu.
+export function cap1DepartmentManager(p: Cap1Params): boolean {
+  if (!isDepartmentManagerRole(p.currentUserRole)) return false;
+
+  // KHÔNG có ngoại lệ "Giám đốc thấy mọi phòng" (bỏ 20/08/2026, user chốt).
+  // Ban lãnh đạo chia nhau phụ trách từng phòng, nên phạm vi của họ đi qua
+  // `approval_groups` ở cap1Opening: xếp TP/PP của phòng vào một nhóm do đúng
+  // Giám đốc/PGĐ phụ trách làm tổ trưởng. Cho bypass toàn công ty ở đây là mọi
+  // lãnh đạo thấy đơn của mọi phòng — đúng thứ user không muốn.
+  // HỆ QUẢ CẦN NHỚ: một TP/PP chưa được xếp nhóm thì đơn của họ chỉ còn Phó
+  // phòng cùng phòng (nếu có) hoặc Admin duyệt được.
+  const mine = normalizeName(p.currentUserDepartment);
+  const theirs = normalizeName(p.requesterDepartment);
+  // Thiếu phòng ban ở một trong hai bên thì KHÔNG suy đoán (Admin và người được
+  // chỉ định tường minh trong notes đều đã thoát trước đó).
   if (!mine || !theirs) return false;
   return mine === theirs;
+}
+
+// ━━━ Đăng ký xe / phòng họp — ai được duyệt CẤP 1 một đơn cụ thể ━━━
+// Không có luật riêng: đúng bằng hai bước chung.
+export function isBookingCap1Approver(params: Cap1Params): boolean {
+  const decided = cap1Opening(params);
+  if (decided !== null) return decided;
+  return cap1DepartmentManager(params);
+}
+
+// ━━━ Giải trình công (bảng attendance_justifications) — ai được duyệt CẤP 1 ━━━
+// Luồng thứ 5, dùng chung đúng khung với 4 luồng đăng ký (đồng bộ 20/08/2026).
+// Trước đó giải trình đi luật riêng: HR + Giám đốc theo CHỨC DANH thấy toàn công ty,
+// "quản lý cùng phòng" tính cả tổ trưởng, so phòng ban bằng chuỗi thô, và không
+// chặn tự duyệt — nên một Trưởng phòng tự điền tên mình vào ô "Người phê duyệt"
+// là tự duyệt được giải trình của chính mình.
+//
+// Quyền BAO QUÁT (Admin, cờ can_approve_justification, HCNS) KHÔNG nằm trong hàm
+// này — nơi gọi tự kiểm trước, giống cách cấp 2 của nghỉ phép/công tác đứng riêng.
+export function isJustificationCap1Approver(params: Cap1Params & {
+  /** Ô "Người phê duyệt" do chính người viết giải trình điền trong biểu mẫu C&B. */
+  designatedApprover?: string | null;
+}): boolean {
+  const decided = cap1Opening(params);
+  if (decided !== null) return decided;
+
+  // Người được chỉ định tường minh trong biểu mẫu. Tự điền tên mình vào cũng vô
+  // hiệu — cap1Opening đã chặn ở trên. So tên bỏ dấu cho khớp phần còn lại của
+  // hệ thống (ô này người dùng gõ tay nên rất hay thiếu dấu).
+  const designated = normalizeName(params.designatedApprover);
+  if (designated && designated === normalizeName(params.currentUserName)) return true;
+
+  return cap1DepartmentManager(params);
 }
 
 // ━━━ NGOẠI LỆ DUYỆT NGHỈ 1 NGÀY (bảng leave_exceptions) ━━━
@@ -359,32 +424,19 @@ export function getRequestStage(task: { approval_stage?: string | null }): Reque
   return task.approval_stage === "pending_hcns" ? "hcns" : "manager";
 }
 
-export function isLeaveTripCap1Approver(params: {
-  currentUserName: string;
-  currentUserRole: string;
-  currentUserIsAdmin: boolean;
-  /** Giám đốc / Ban lãnh đạo — đứng trên mọi phòng nên không bị giới hạn đơn vị. */
-  currentUserIsDirector?: boolean;
-  /** Phòng ban / Ban điều hành của người đang đăng nhập. */
-  currentUserDepartment?: string | null;
-  assigneeName: string;
-  /** Phòng ban / Ban điều hành của người làm đơn (tra từ danh bạ nhân sự). */
-  assigneeDepartment?: string | null;
+export function isLeaveTripCap1Approver(params: Cap1Params & {
   taskNotes?: string | null;
   taskTitleLower: string;
 }): boolean {
-  const {
-    currentUserName, currentUserRole, currentUserIsAdmin, currentUserIsDirector,
-    currentUserDepartment, assigneeName, assigneeDepartment, taskNotes, taskTitleLower,
-  } = params;
-  if (currentUserIsAdmin) return true;
+  // Hai bước chung với đăng ký xe/phòng họp (Admin -> cấm tự duyệt -> nhóm duyệt
+  // riêng). Đổi luật thì sửa trong cap1Opening/cap1DepartmentManager, cả 4 luồng
+  // cùng đổi theo — đó là lý do khung này tồn tại.
+  const decided = cap1Opening(params);
+  if (decided !== null) return decided;
 
-  // Thành viên nhóm duyệt riêng (VD tổ Marketing): cấp 1 do TỔ TRƯỞNG CỦA CHÍNH
-  // NHÓM ĐÓ duyệt, không phải Trưởng phòng ban
-  const assigneeGroup = getApprovalGroupOfMember(assigneeName);
-  if (assigneeGroup) {
-    return assigneeGroup.leader_name.trim().toLowerCase() === currentUserName.trim().toLowerCase();
-  }
+  const { currentUserName, requesterName, taskNotes, taskTitleLower } = params;
+
+  // ── Luật RIÊNG của nghỉ phép/công tác, chèn giữa hai bước chung ──
 
   // Đơn NGẮN = đúng 1 ngày hoặc nửa ngày. Nửa ngày trước đây tự động duyệt nên
   // không bao giờ chạy tới đây; nay đã bỏ tự duyệt, đơn nửa ngày phải dùng chung
@@ -397,7 +449,7 @@ export function isLeaveTripCap1Approver(params: {
   // Hoành Anh->Quyên): đặc cách theo quy định nội bộ
   if (isShortLeave) {
     const userNorm = normalizeName(currentUserName);
-    const assigneeNorm = normalizeName(assigneeName);
+    const assigneeNorm = normalizeName(requesterName);
     const matched = activeLeaveExceptions().some(ex => {
       const approverNorm = normalizeName(ex.approver_name);
       const exAssigneeNorm = normalizeName(ex.assignee_name);
@@ -407,26 +459,11 @@ export function isLeaveTripCap1Approver(params: {
     if (matched) return true;
   }
 
-  // Người được nhân viên chỉ định tường minh khi gửi đơn ("Người duyệt: X")
+  // Người được chỉ định tường minh khi gửi đơn ("Người duyệt: X" trong notes).
+  // Người làm đơn tự ghi tên mình vào đây cũng vô hiệu — cap1Opening đã chặn.
   if (taskNotes && taskNotes.includes(`Người duyệt: ${currentUserName}`)) return true;
 
-  // Cấp quản lý đơn vị: CHỈ duyệt cho nhân sự CÙNG ĐƠN VỊ với mình.
-  // (Siết 07/08/2026 — trước đây bất kỳ ai có chức danh quản lý cũng duyệt được
-  // đơn của mọi phòng, nên Tổ trưởng Marketing duyệt được đơn phòng Kỹ thuật.)
-  if (isManagerRole(currentUserRole)) {
-    // Giám đốc / Phó GĐ / Ban lãnh đạo đứng trên mọi phòng — không giới hạn.
-    if (currentUserIsDirector) return true;
-
-    const mine = normalizeName(currentUserDepartment || "");
-    const theirs = normalizeName(assigneeDepartment || "");
-    // Thiếu dữ liệu phòng ban ở một trong hai bên thì KHÔNG suy đoán, trả về
-    // false. Không sợ đơn kẹt: Admin và Giám đốc đã thoát ở trên, và người được
-    // chỉ định tường minh trong notes cũng đã thoát ở nhánh trước.
-    if (!mine || !theirs) return false;
-    return mine === theirs;
-  }
-
-  return false;
+  return cap1DepartmentManager(params);
 }
 
 export function isLeaveTripCap2Approver(params: {

@@ -32,6 +32,7 @@ import {
   getGroupLeaderNameForMember,
   isBookingCap1Approver,
   isDepartmentManagerRole,
+  normalizeName,
 } from "@/lib/approvers";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 
@@ -548,7 +549,7 @@ function BookingContent() {
         const groupLeaderName = getGroupLeaderNameForMember(currentUser.name);
         if (groupLeaderName) {
           approverEmails = employees
-            .filter((e) => e.name.trim().toLowerCase() === groupLeaderName.trim().toLowerCase())
+            .filter((e) => normalizeName(e.name) === normalizeName(groupLeaderName))
             .map((e) => e.email)
             .filter(Boolean)
             .join(", ");
@@ -557,8 +558,16 @@ function BookingContent() {
           // isDepartmentManagerRole() với bộ lọc trên giao diện để người nhận
           // mail đúng là người bấm duyệt được (trước đây là 2 danh sách chức
           // danh chép tay, lệch nhau ở Kế toán trưởng/Chỉ huy trưởng).
+          // Loại CHÍNH người đăng ký ra: từ 20/08/2026 isBookingCap1Approver cấm
+          // tự duyệt đơn của mình, nên gửi mail cho họ là gửi vào hư không và
+          // đăng ký nằm im. Trưởng phòng tự đăng ký -> mail rơi xuống Phó phòng;
+          // không còn ai thì Giám đốc/PGĐ (hoặc Admin) xử lý ở trang Duyệt yêu cầu.
           approverEmails = employees
-            .filter((e) => e.department === department && !!e.email && isDepartmentManagerRole(e.role))
+            .filter((e) =>
+              normalizeName(e.department) === normalizeName(department) &&
+              normalizeName(e.name) !== normalizeName(currentUser.name) &&
+              !!e.email && isDepartmentManagerRole(e.role)
+            )
             .map((e) => e.email)
             .join(", ");
         }
