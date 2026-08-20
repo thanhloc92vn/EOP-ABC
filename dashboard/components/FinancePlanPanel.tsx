@@ -38,11 +38,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   Plus, X, Save, Trash2, Wallet, ArrowDownCircle, ArrowUpCircle,
-  Calendar, Download, Loader2, AlertTriangle, Search, Building2,
+  Calendar, Download, Loader2, AlertTriangle, Search, Building2, Eye, FileText,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { apiFetch } from "@/lib/apiClient";
 import { useCurrentUser } from "@/lib/useCurrentUser";
+import TransferRequestPreview, {
+  exportTransferRequestDocx,
+  type TransferRequestData,
+} from "@/components/TransferRequestPreview";
 import { useDepartments } from "@/lib/departments";
 import { useProjectCatalog } from "@/lib/projectCatalog";
 import {
@@ -695,7 +699,8 @@ function PlanRowModal({ row, onSave, onClose }: {
 }) {
   const departments = useDepartments();
   const { projects } = useProjectCatalog();
-  const { partners, contracts } = useFinancePartners();
+  const { partners, contracts, accounts, contractAccounts } = useFinancePartners();
+  const me = useCurrentUser();
 
   const [d, setD] = useState<FinancePlanRow>(row);
   const [amountText, setAmountText] = useState(fmtMoney(row.amount));
@@ -705,6 +710,9 @@ function PlanRowModal({ row, onSave, onClose }: {
   const [filled, setFilled] = useState("");
   // Ô chọn nhà thầu — dựng theo ĐÚNG ô "Người nhận" ở trang Giao việc: gõ để
   // tìm, danh sách xổ xuống có avatar chữ cái, chọn xong thành thẻ có nút gỡ.
+  const [showTransfer, setShowTransfer] = useState(false);
+  const [transferBusy, setTransferBusy] = useState(false);
+  const [transferErr, setTransferErr] = useState("");
   const [custSearch, setCustSearch] = useState("");
   const [showCust, setShowCust] = useState(false);
   const custRef = useRef<HTMLDivElement>(null);
@@ -741,6 +749,40 @@ function PlanRowModal({ row, onSave, onClose }: {
       .filter(p => !q || foldVi(p.name).includes(q) || foldVi(p.short_name || "").includes(q))
       .slice(0, 30);
   }, [partners, custSearch]);
+
+  // Tài khoản nhận tiền cho giấy đề nghị chuyển tiền (migration 059).
+  // Ưu tiên tài khoản gắn với ĐÚNG hợp đồng đang chọn; không chọn hợp đồng thì
+  // lấy tài khoản mặc định của nhà thầu (truy vấn đã xếp mặc định lên đầu).
+  const payAccount = useMemo(() => {
+    if (!partner) return null;
+    const mine = accounts.filter(a => a.partner_id === partner.id);
+    if (mine.length === 0) return null;
+    if (contractId) {
+      const ids = contractAccounts
+        .filter(l => l.contract_id === contractId)
+        .map(l => l.account_id);
+      const hit = mine.find(a => ids.includes(a.id));
+      if (hit) return hit;
+    }
+    return mine.find(a => a.is_default) || mine[0];
+  }, [partner, accounts, contractAccounts, contractId]);
+
+  const transferData = useMemo<TransferRequestData>(() => ({
+    // Họ tên + phòng ban BÁM THEO TÀI KHOẢN ĐĂNG NHẬP, không cho gõ tay: giấy
+    // này đem trình ký, người đề nghị phải là người đang thao tác.
+    employeeName: me.name,
+    employeeDept: me.department,
+    reason: d.content,
+    projectName: d.project_name,
+    supplierName: d.customer,
+    bankAccount: payAccount?.bank_account || "",
+    bankNameBranch: [payAccount?.bank_name, payAccount?.bank_branch].filter(Boolean).join(" - "),
+    amount: parseMoney(amountText),
+  }), [me.name, me.department, d.content, d.project_name, d.customer, payAccount, amountText]);
+
+  // Đủ dữ liệu tối thiểu mới cho bấm — xuất tờ giấy trống tên đơn vị thụ hưởng
+  // hoặc trống số tiền thì in ra cũng phải bỏ.
+  const canMakeTransfer = !!d.customer.trim() && parseMoney(amountText) > 0;
 
   // Điền hộ từ một dòng hợp đồng trong danh mục.
   //
@@ -798,6 +840,19 @@ function PlanRowModal({ row, onSave, onClose }: {
       month: m ? String(Number(m[2])) : prev.month,
       year: m ? m[1] : prev.year,
     }));
+  };
+
+  const exportTransfer = async () => {
+    if (transferBusy) return;
+    setTransferBusy(true);
+    setTransferErr("");
+    try {
+      await exportTransferRequestDocx(transferData);
+    } catch (e) {
+      setTransferErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTransferBusy(false);
+    }
   };
 
   const submit = async () => {
@@ -1067,8 +1122,37 @@ function PlanRowModal({ row, onSave, onClose }: {
           </div>
         </div>
 
-        {/* Chân modal */}
-        <div className="flex items-center justify-end gap-2.5 px-5 py-3.5 border-t border-slate-200/60 bg-slate-50/70 shrink-0">
+        {/* Chân modal — hai nút giấy đề nghị chuyển tiền nằm bên TRÁI, tách khỏi
+            Huỷ/Lưu bên phải: chúng không lưu gì cả, chỉ đọc dữ liệu đang có trên
+            form. Chạy được cả với dòng chưa lưu. */}
+        <div className="flex items-center gap-2.5 px-5 py-3.5 border-t border-slate-200/60 bg-slate-50/70 shrink-0 flex-wrap">
+          <button type="button" onClick={() => setShowTransfer(true)} disabled={!canMakeTransfer}
+            title={canMakeTransfer ? "Xem trước giấy đề nghị chuyển tiền" : "Cần có khách hàng và số tiền"}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-blue-50 border border-blue-200 hover:bg-blue-100 text-[#005BAC] font-bold rounded-xl text-[11px] transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
+            <Eye size={13} /> Xem trước
+          </button>
+          <button type="button" onClick={exportTransfer} disabled={!canMakeTransfer || transferBusy}
+            title={canMakeTransfer ? "Xuất giấy đề nghị chuyển tiền (Word)" : "Cần có khách hàng và số tiền"}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-[11px] shadow-md transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
+            {transferBusy
+              ? <><Loader2 size={13} className="animate-spin" /> Đang tạo…</>
+              : <><FileText size={13} /> Xuất đề nghị chuyển tiền</>}
+          </button>
+
+          {/* Nói TRƯỚC là giấy sẽ trống ô số tài khoản, đừng để in ra mới thấy. */}
+          {canMakeTransfer && !payAccount && (
+            <span className="text-[10px] font-bold text-amber-600 max-w-[220px] leading-tight">
+              Chưa có số tài khoản của đơn vị này — giấy sẽ để trống ô đó.
+            </span>
+          )}
+          {transferErr && (
+            <span className="text-[10px] font-bold text-rose-600 max-w-[240px] leading-tight break-words">
+              {transferErr}
+            </span>
+          )}
+
+          <span className="flex-1" />
+
           <button type="button" onClick={onClose} disabled={saving}
             className="px-4 py-2 text-slate-500 hover:text-slate-700 hover:bg-slate-200/60 font-bold rounded-xl text-[11px] transition-all cursor-pointer disabled:opacity-40">
             Huỷ
@@ -1080,6 +1164,9 @@ function PlanRowModal({ row, onSave, onClose }: {
           </button>
         </div>
       </div>
+      {showTransfer && (
+        <TransferRequestPreview data={transferData} onClose={() => setShowTransfer(false)} />
+      )}
     </div>,
     document.body
   );
