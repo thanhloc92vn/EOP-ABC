@@ -33,6 +33,39 @@ export type SigningStatus =
 
 export type SigningFile = { path: string; name: string; size?: number };
 
+// ─── Hai loại phiếu (migration 060) ───
+// ho_so    : TL/BM/011  — trình MỘT ĐỢT THANH TOÁN của hợp đồng đã ký.
+// hop_dong : KHKT/BM/001 — trình NỘI DUNG HỢP ĐỒNG trước khi ký.
+export type SigningLoai = "ho_so" | "hop_dong";
+
+export const LOAI_META: Record<SigningLoai, { label: string; short: string; bieuMau: string; chip: string }> = {
+  ho_so: {
+    label: "Trình ký hồ sơ / văn bản",
+    short: "Hồ sơ",
+    bieuMau: "TL/BM/011",
+    chip: "bg-blue-50 text-blue-700",
+  },
+  hop_dong: {
+    label: "Trình ký hợp đồng",
+    short: "Hợp đồng",
+    bieuMau: "KHKT/BM/001",
+    chip: "bg-violet-50 text-violet-700",
+  },
+};
+
+/** Một dòng trong bảng so sánh A-B ↔ B-B′. Số dòng THÊM/BỚT được, không cố định 6. */
+export type SoSanhRow = { stt: string; muc: string; ab: string; bb: string };
+
+/** 6 dòng a–f theo đúng tờ mẫu — chỉ dùng làm GỢI Ý khi lập phiếu mới. */
+export const SO_SANH_MAU: SoSanhRow[] = [
+  { stt: "a)", muc: "Tạm ứng", ab: "", bb: "" },
+  { stt: "b)", muc: "Nghiệm thu thanh toán", ab: "", bb: "" },
+  { stt: "c)", muc: "Bảo đảm THHĐ", ab: "", bb: "" },
+  { stt: "d)", muc: "Giữ bảo hành", ab: "", bb: "" },
+  { stt: "e)", muc: "Giữ quyết toán", ab: "", bb: "" },
+  { stt: "f)", muc: "Thuế vãng lai", ab: "", bb: "" },
+];
+
 export type SigningSubmission = {
   id: string;
   ma_phieu: string | null;
@@ -64,6 +97,14 @@ export type SigningSubmission = {
   ai_ghi_chu: string | null;
   ai_thieu: string[];
   files: SigningFile[];
+
+  // ─── migration 060 ───
+  loai: SigningLoai;
+  hang_muc: string | null;
+  ben_a: string | null;
+  ben_b: string | null;
+  vat_percent: number | null;
+  so_sanh: SoSanhRow[];
 
   status: SigningStatus;
 
@@ -139,15 +180,36 @@ export const FLOW: SigningStatus[] = [
   "hoan_tat",
 ];
 
+// Phiếu HỢP ĐỒNG hết luồng ngay sau Giám đốc: tờ KHKT/BM/001 chỉ có 3 ô ký
+// (Người trình · Phụ trách · BLĐ Phê duyệt), không có chỗ cho Kế toán vì hợp
+// đồng chưa phát sinh chi tiền.
+//
+// ⚠ Luật này PHẢI khớp với trigger `guard_signing_transition` ở migration 060.
+// Lệch nhau thì giao diện đẩy phiếu sang một bước mà CSDL từ chối, hoặc tệ hơn:
+// phiếu treo ở chặng không cấp nào giữ.
+export const FLOW_HOP_DONG: SigningStatus[] = [
+  "cho_pho_giam_doc",
+  "cho_giam_doc",
+  "hoan_tat",
+];
+
+export function flowOf(loai: SigningLoai): SigningStatus[] {
+  return loai === "hop_dong" ? FLOW_HOP_DONG : FLOW;
+}
+
 // Phiếu cũ nằm ở trạng thái trước 053 thì quy về chặng Phó Giám đốc, để
 // nextStatus / thanh tiến trình không bị lệch.
 export function normalizeStatus(s: SigningStatus): SigningStatus {
   return s === "cho_pgd_qlda" || s === "cho_pgd_khdt" ? "cho_pho_giam_doc" : s;
 }
 
-export function nextStatus(cur: SigningStatus): SigningStatus | null {
-  const i = FLOW.indexOf(normalizeStatus(cur));
-  return i >= 0 && i < FLOW.length - 1 ? FLOW[i + 1] : null;
+// `loai` BẮT BUỘC truyền vào, không để mặc định 'ho_so': quên truyền thì phiếu
+// hợp đồng sẽ bị đẩy sang chặng Kế toán và trigger 060 chặn lại — lỗi chỉ lộ ra
+// lúc người dùng bấm duyệt, rất khó lần.
+export function nextStatus(cur: SigningStatus, loai: SigningLoai): SigningStatus | null {
+  const flow = flowOf(loai);
+  const i = flow.indexOf(normalizeStatus(cur));
+  return i >= 0 && i < flow.length - 1 ? flow[i + 1] : null;
 }
 
 // Cờ quyền giữ từng chặng. Chặng Phó Giám đốc nhận CẢ HAI cờ — chỉ cần một.
@@ -440,6 +502,10 @@ function normalizeRow(r: Record<string, unknown>): SigningSubmission {
     // Hai cột jsonb: Postgres trả về mảng, nhưng dòng cũ/lỗi có thể là null.
     ai_thieu: Array.isArray(r.ai_thieu) ? (r.ai_thieu as string[]) : [],
     files: Array.isArray(r.files) ? (r.files as SigningFile[]) : [],
+    // Phiếu lập trước 060 không có 2 cột này — về mặc định thay vì undefined,
+    // để mọi chỗ đọc `s.loai` / `s.so_sanh` không phải kiểm null.
+    loai: (r.loai as SigningLoai) || "ho_so",
+    so_sanh: Array.isArray(r.so_sanh) ? (r.so_sanh as SoSanhRow[]) : [],
   };
 }
 
@@ -522,7 +588,29 @@ export async function downloadSigningForm(
  * là để lấy bản phiếu đã có chữ ký/ý kiến, đó mới là bản đem đi lưu hồ sơ.
  */
 export function docxPayloadFromRow(s: SigningSubmission): Record<string, unknown> {
+  // Phiếu HỢP ĐỒNG: bộ trường khác hẳn, route cũng render bằng nhánh riêng.
+  if (s.loai === "hop_dong") {
+    return {
+      loai: "hop_dong",
+      duAn: s.du_an,
+      goiThau: s.goi_thau,
+      hangMuc: s.hang_muc,
+      hopDongSo: s.hop_dong_so,
+      benA: s.ben_a,
+      benB: s.ben_b,
+      giaTriHD: s.gia_tri_hd,
+      vatPercent: s.vat_percent,
+      soSanh: s.so_sanh,
+      ykienQLDA: s.ykien_qlda || "",
+      ykienKHDT: s.ykien_khdt || "",
+      ykienGiamDoc: s.ykien_giam_doc || "",
+      nguoiTrinh: s.created_by_name || "",
+      fileName: docxFileName(s),
+    };
+  }
+
   return {
+    loai: "ho_so",
     donVi: s.don_vi,
     veViec: s.ve_viec,
     noiDungTrinh: s.noi_dung_trinh,
@@ -550,8 +638,11 @@ export function docxPayloadFromRow(s: SigningSubmission): Record<string, unknown
 
 export function docxFileName(s: {
   ma_phieu?: string | null; hop_dong_so?: string | null; dot_so?: number | null;
+  loai?: SigningLoai;
 }): string {
   const safe = String(s.hop_dong_so || s.ma_phieu || "phieu").replace(/[^\p{L}\p{N}_-]+/gu, "_").slice(0, 60);
+  // Phiếu hợp đồng không có "đợt" — gắn đuôi _Dot_x vào là sai nghiệp vụ.
+  if (s.loai === "hop_dong") return `Phieu_Trinh_Ky_Hop_Dong_${safe}.docx`;
   return `Phieu_Trinh_Ky_${safe}_Dot_${s.dot_so ?? "x"}.docx`;
 }
 

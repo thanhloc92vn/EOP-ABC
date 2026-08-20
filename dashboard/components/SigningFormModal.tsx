@@ -25,9 +25,11 @@ import {
   tinhDeNghi, tinhLuyKe, fmtMoney, uploadDossierFile, resolveDossierUrl, errText,
   downloadSigningForm, docxFileName,
   type SigningSubmission, type SigningFile,
+  LOAI_META, SO_SANH_MAU,
+  type SigningLoai, type SoSanhRow,
 } from "@/lib/signingSubmissions";
 import {
-  X, Upload, Sparkles, Loader2, Save, Send, Trash2, FileText,
+  X, Upload, Sparkles, Loader2, Save, Send, Trash2, FileText, Plus,
   AlertTriangle, Download, Calculator, ExternalLink, Settings,
 } from "lucide-react";
 
@@ -65,9 +67,12 @@ function toDraft(s: SigningSubmission | null): Draft {
   if (!s) return { don_vi: "P. Kế hoạch Đấu thầu" };
   const d: Draft = {};
   for (const k of ["don_vi", "ve_viec", "noi_dung_trinh", "chu_dau_tu", "du_an",
-    "hop_dong_so", "ngay_ky_hop_dong", "goi_thau", "project_code"] as const) {
+    "hop_dong_so", "ngay_ky_hop_dong", "goi_thau", "project_code",
+    // migration 060 — chỉ dùng cho phiếu hợp đồng
+    "hang_muc", "ben_a", "ben_b"] as const) {
     d[k] = (s[k] as string) || "";
   }
+  d.vat_percent = s.vat_percent != null ? String(s.vat_percent) : "";
   d.dot_so = s.dot_so != null ? String(s.dot_so) : "";
   for (const k of NUM_FIELDS) d[k] = showNum(s[k]);
   for (const k of RATE_FIELDS) d[k] = s[k] != null ? String(s[k]) : "";
@@ -75,16 +80,28 @@ function toDraft(s: SigningSubmission | null): Draft {
 }
 
 export default function SigningFormModal({
-  existing, currentEmail, currentName, onClose, onSaved,
+  existing, loai: loaiMoi, currentEmail, currentName, onClose, onSaved,
 }: {
   existing: SigningSubmission | null;
+  /** Loại phiếu khi LẬP MỚI. Sửa phiếu cũ thì lấy theo phiếu, không đổi được. */
+  loai?: SigningLoai;
   currentEmail: string;
   currentName: string;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const { projects } = useProjectCatalog();
+  // Loại phiếu KHÔNG cho đổi sau khi đã tạo: đổi giữa chừng thì nửa số trường
+  // đang có dữ liệu bỗng thành trường của loại kia, và luồng duyệt đã đi được
+  // vài bước lại nhảy sang luồng khác.
+  const loai: SigningLoai = existing ? existing.loai : (loaiMoi || "ho_so");
+  const laHopDong = loai === "hop_dong";
+  const meta = LOAI_META[loai];
   const [d, setD] = useState<Draft>(() => toDraft(existing));
+  // Bảng so sánh A-B ↔ B-B′ — mảng riêng, không nhét vào Draft (Draft toàn chuỗi).
+  const [soSanh, setSoSanh] = useState<SoSanhRow[]>(
+    () => (existing?.so_sanh?.length ? existing.so_sanh : SO_SANH_MAU).map((r) => ({ ...r }))
+  );
   // MỘT danh sách duy nhất. Trước đây tách làm hai — `files` để hiển thị/lưu và
   // `pending` để gửi cho AI — nhưng nút thùng rác chỉ xoá khỏi `files`, nên tệp
   // đã xoá VẪN được gửi lên OpenAI ở lần bóc kế tiếp. Hậu quả thật: xoá một PDF
@@ -170,11 +187,18 @@ export default function SigningFormModal({
       // Lột bỏ File gốc trước khi lưu: cột `files` là jsonb, nhét File object
       // vào thì JSON.stringify ra {} và mất sạch đường dẫn tệp.
       files: files.map((f) => ({ path: f.path, name: f.name, size: f.size })),
+      loai,
+      hang_muc: d.hang_muc?.trim() || null,
+      ben_a: d.ben_a?.trim() || null,
+      ben_b: d.ben_b?.trim() || null,
+      vat_percent: toRate(d.vat_percent || ""),
+      // Bỏ dòng trống trước khi lưu — người lập hay để lại vài dòng mẫu chưa điền.
+      so_sanh: soSanh.filter((r) => [r.muc, r.ab, r.bb].some((v) => (v || "").trim() !== "")),
     };
     for (const k of NUM_FIELDS) if (k !== "de_nghi_thanh_toan") p[k] = toNum(d[k] || "");
     for (const k of RATE_FIELDS) p[k] = toRate(d[k] || "");
     return p;
-  }, [d, projects, deNghiCuoi, aiGhiChu, aiThieu, files]);
+  }, [d, projects, deNghiCuoi, aiGhiChu, aiThieu, files, loai, soSanh]);
 
   // ─── Tải tệp lên kho ───
   const doUpload = async (picked: File[]) => {
@@ -294,7 +318,9 @@ export default function SigningFormModal({
     try {
       const payload = buildPayload();
       if (submit && !payload.hop_dong_so) throw new Error("Phải có Số hợp đồng trước khi trình.");
-      if (submit && !payload.dot_so) throw new Error("Phải có Đợt số trước khi trình.");
+      // "Đợt số" là khái niệm của phiếu thanh toán. Phiếu hợp đồng trình MỘT
+      // hợp đồng, không có đợt nào cả.
+      if (submit && !laHopDong && !payload.dot_so) throw new Error("Phải có Đợt số trước khi trình.");
 
       if (existing) {
         const { error } = await supabase
@@ -331,6 +357,29 @@ export default function SigningFormModal({
     try {
       // Xuất theo BẢN NHÁP đang gõ (chưa cần lưu), nên dựng payload từ `d` chứ
       // không dùng docxPayloadFromRow — hàm đó đọc phiếu đã lưu trong CSDL.
+      if (laHopDong) {
+        await downloadSigningForm(
+          {
+            loai: "hop_dong",
+            duAn: d.du_an,
+            goiThau: d.goi_thau,
+            hangMuc: d.hang_muc,
+            hopDongSo: d.hop_dong_so,
+            benA: d.ben_a,
+            benB: d.ben_b,
+            giaTriHD: toNum(d.gia_tri_hd || ""),
+            vatPercent: toRate(d.vat_percent || ""),
+            soSanh,
+            ykienQLDA: existing?.ykien_qlda || "",
+            ykienKHDT: existing?.ykien_khdt || "",
+            ykienGiamDoc: existing?.ykien_giam_doc || "",
+            nguoiTrinh: existing?.created_by_name || currentName || "",
+          },
+          docxFileName({ ...(existing || {}), hop_dong_so: d.hop_dong_so, loai: "hop_dong" })
+        );
+        return;
+      }
+
       await downloadSigningForm(
         {
           donVi: d.don_vi, veViec: d.ve_viec, noiDungTrinh: d.noi_dung_trinh,
@@ -393,10 +442,12 @@ export default function SigningFormModal({
           </div>
           <div className="flex-1 min-w-0">
             <h4 className="font-heading font-extrabold text-slate-800 text-xs leading-tight truncate">
-              {existing ? `Sửa phiếu ${existing.ma_phieu || ""}` : "Lập phiếu trình ký mới"}
+              {existing ? `Sửa phiếu ${existing.ma_phieu || ""}` : `Lập ${meta.label.toLowerCase()}`}
             </h4>
             <p className="text-[10px] text-slate-400 font-semibold truncate">
-              Tải hồ sơ lên, bóc tách bằng AI, soát lại rồi trình
+              Biểu mẫu {meta.bieuMau} · {laHopDong
+                ? "trình duyệt nội dung hợp đồng trước khi ký"
+                : "tải hồ sơ lên, bóc tách bằng AI, soát lại rồi trình"}
             </p>
           </div>
           <button type="button" onClick={onClose} disabled={!!busy}
@@ -588,10 +639,15 @@ export default function SigningFormModal({
           <section className="space-y-3">
             <h5 className={labelCls}>3. Hợp đồng &amp; dự án</h5>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-              <label className="flex flex-col gap-1.5 md:col-span-2">
-                <span className={labelCls}>Chủ đầu tư</span>
-                <input value={d.chu_dau_tu || ""} onChange={(e) => set("chu_dau_tu", e.target.value)} className={inputCls} />
-              </label>
+              {/* Chủ đầu tư chỉ có trên phiếu hồ sơ/văn bản. Phiếu hợp đồng nói
+                  vai bằng ô "Bên A / Bên B" bên dưới, vì tuỳ loại hợp đồng mà
+                  chủ đầu tư đứng vai A hay Trung Nam đứng vai A. */}
+              {!laHopDong && (
+                <label className="flex flex-col gap-1.5 md:col-span-2">
+                  <span className={labelCls}>Chủ đầu tư</span>
+                  <input value={d.chu_dau_tu || ""} onChange={(e) => set("chu_dau_tu", e.target.value)} className={inputCls} />
+                </label>
+              )}
               <label className="flex flex-col gap-1.5 md:col-span-2">
                 <span className={labelCls}>Dự án</span>
                 <input value={d.du_an || ""} onChange={(e) => set("du_an", e.target.value)} className={inputCls} />
@@ -601,11 +657,21 @@ export default function SigningFormModal({
                 <input value={d.hop_dong_so || ""} onChange={(e) => set("hop_dong_so", e.target.value)}
                   className={`${inputCls} font-mono`} />
               </label>
-              <label className="flex flex-col gap-1.5">
-                <span className={labelCls}>Ngày ký</span>
-                <input value={d.ngay_ky_hop_dong || ""} onChange={(e) => set("ngay_ky_hop_dong", e.target.value)}
-                  placeholder="01/4/2026" className={inputCls} />
-              </label>
+              {!laHopDong && (
+                <label className="flex flex-col gap-1.5">
+                  <span className={labelCls}>Ngày ký</span>
+                  <input value={d.ngay_ky_hop_dong || ""} onChange={(e) => set("ngay_ky_hop_dong", e.target.value)}
+                    placeholder="01/4/2026" className={inputCls} />
+                </label>
+              )}
+              {/* Hạng mục — chỉ có trên tờ KHKT/BM/001 */}
+              {laHopDong && (
+                <label className="flex flex-col gap-1.5">
+                  <span className={labelCls}>Hạng mục</span>
+                  <input value={d.hang_muc || ""} onChange={(e) => set("hang_muc", e.target.value)}
+                    placeholder="Phần còn lại cầu Lang Minh" className={inputCls} />
+                </label>
+              )}
               <label className="flex flex-col gap-1.5 md:col-span-2">
                 <span className={labelCls}>Gói thầu</span>
                 <input value={d.goi_thau || ""} onChange={(e) => set("goi_thau", e.target.value)} className={inputCls} />
@@ -620,15 +686,97 @@ export default function SigningFormModal({
                   ))}
                 </select>
               </label>
-              <label className="flex flex-col gap-1.5">
-                <span className={labelCls}>Đợt số *</span>
-                <input value={d.dot_so || ""} onChange={(e) => set("dot_so", e.target.value)}
-                  inputMode="numeric" placeholder="2" className={`${inputCls} font-mono`} />
-              </label>
+              {!laHopDong && (
+                <label className="flex flex-col gap-1.5">
+                  <span className={labelCls}>Đợt số *</span>
+                  <input value={d.dot_so || ""} onChange={(e) => set("dot_so", e.target.value)}
+                    inputMode="numeric" placeholder="2" className={`${inputCls} font-mono`} />
+                </label>
+              )}
             </div>
           </section>
 
-          {/* ─── 4. Số liệu ─── */}
+          {/* ─── 4b. Chủ thể + giá trị + bảng so sánh (chỉ phiếu hợp đồng) ─── */}
+          {laHopDong && (
+            <section className="space-y-3">
+              <h5 className={labelCls}>4. Chủ thể &amp; giá trị hợp đồng</h5>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                {/* KHÔNG mặc định Trung Nam vào ô nào: hợp đồng A-B thì Bên A là
+                    chủ đầu tư, hợp đồng B-B′ thì Bên A mới là Trung Nam. */}
+                <label className="flex flex-col gap-1.5">
+                  <span className={labelCls}>Bên A</span>
+                  <input value={d.ben_a || ""} onChange={(e) => set("ben_a", e.target.value)}
+                    placeholder="Chủ đầu tư, hoặc Trung Nam nếu là HĐ B-B′" className={inputCls} />
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className={labelCls}>Bên B</span>
+                  <input value={d.ben_b || ""} onChange={(e) => set("ben_b", e.target.value)}
+                    placeholder="Trung Nam, hoặc nhà thầu phụ nếu là HĐ B-B′" className={inputCls} />
+                </label>
+                <div className="grid grid-cols-[1fr_100px] gap-2">
+                  {num("gia_tri_hd", "Giá trị hợp đồng")}
+                  <label className="flex flex-col gap-1.5">
+                    <span className={labelCls}>VAT %</span>
+                    <input value={d.vat_percent || ""} onChange={(e) => set("vat_percent", e.target.value)}
+                      inputMode="decimal" placeholder="8" className={`${inputCls} font-mono text-right`} />
+                  </label>
+                </div>
+              </div>
+
+              {/* ─── Bảng so sánh A-B ↔ B-B′ ───
+                  Số dòng THÊM/BỚT được nên đây là danh sách động, không phải 6 ô
+                  cố định. Mở phiếu mới thì có sẵn 6 dòng a–f theo tờ mẫu để khỏi
+                  gõ lại tên mục. */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <h5 className={labelCls}>Nội dung so sánh ({soSanh.length} dòng)</h5>
+                  <button type="button" onClick={() => setSoSanh((v) => [...v, { stt: "", muc: "", ab: "", bb: "" }])}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white border border-slate-200 hover:border-blue-300 hover:text-blue-600 text-slate-600 font-bold rounded-lg text-[10px] transition-all cursor-pointer">
+                    <Plus size={12} /> Thêm dòng
+                  </button>
+                </div>
+
+                <div className="hidden md:grid grid-cols-[36px_1fr_1fr_1fr_28px] gap-2 px-1">
+                  <span className={labelCls}>TT</span>
+                  <span className={labelCls}>Nội dung</span>
+                  <span className={labelCls}>Hợp đồng A-B</span>
+                  <span className={labelCls}>Hợp đồng B-B′</span>
+                  <span />
+                </div>
+
+                {soSanh.map((r, i) => {
+                  const upd = (k: keyof SoSanhRow, v: string) =>
+                    setSoSanh((prev) => prev.map((x, j) => (j === i ? { ...x, [k]: v } : x)));
+                  return (
+                    <div key={i} className="grid grid-cols-1 md:grid-cols-[36px_1fr_1fr_1fr_28px] gap-2 items-start">
+                      <input value={r.stt} onChange={(e) => upd("stt", e.target.value)}
+                        placeholder={`${String.fromCharCode(97 + i)})`}
+                        className={`${inputCls} text-center font-mono px-1`} />
+                      <input value={r.muc} onChange={(e) => upd("muc", e.target.value)}
+                        placeholder="Tạm ứng" className={inputCls} />
+                      <textarea value={r.ab} onChange={(e) => upd("ab", e.target.value)} rows={2}
+                        placeholder="Tối đa 30% GTHĐ&#10;(Phát hành bảo lãnh)"
+                        className={`${inputCls} resize-y leading-relaxed`} />
+                      <textarea value={r.bb} onChange={(e) => upd("bb", e.target.value)} rows={2}
+                        placeholder="Theo tiến độ thanh toán A-B"
+                        className={`${inputCls} resize-y leading-relaxed`} />
+                      <button type="button" onClick={() => setSoSanh((prev) => prev.filter((_, j) => j !== i))}
+                        title="Xoá dòng"
+                        className="p-1.5 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all cursor-pointer mt-0.5">
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  );
+                })}
+                <p className="text-[10px] font-semibold text-slate-400">
+                  Xuống dòng trong ô sẽ giữ nguyên khi xuất ra Word. Dòng để trống hoàn toàn sẽ tự bị bỏ.
+                </p>
+              </div>
+            </section>
+          )}
+
+          {/* ─── 4. Số liệu (chỉ phiếu hồ sơ/văn bản) ─── */}
+          {!laHopDong && (
           <section className="space-y-3">
             <h5 className={labelCls}>4. Số liệu đợt thanh toán</h5>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
@@ -682,6 +830,7 @@ export default function SigningFormModal({
               </label>
             </div>
           </section>
+          )}
         </div>
 
         {/* Footer */}

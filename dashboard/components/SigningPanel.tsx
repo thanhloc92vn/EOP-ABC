@@ -20,17 +20,17 @@ import SigningFormModal from "./SigningFormModal";
 import { apiFetch } from "@/lib/apiClient";
 import { crumpleToss } from "@/lib/crumpleToss";
 import {
-  fetchSubmissions, canActOn, canEdit, stagesOf, nextStatus, tinhDeNghi,
+  fetchSubmissions, canActOn, canEdit, nextStatus, tinhDeNghi,
   fmtMoney, fmtDateTime, resolveDossierUrl, fetchStageApproverEmails, errText,
   normalizeStatus, pgdOpinionField, downloadSigningForm, docxPayloadFromRow, docxFileName,
   deleteSubmission, duplicateSubmission, appendDossierFiles, removeDossierFile,
-  STATUS_META, ACTION_LABEL, EVENT_LABEL, FLOW,
-  type SigningSubmission, type SigningStatus,
+  STATUS_META, ACTION_LABEL, EVENT_LABEL, FLOW, flowOf, LOAI_META,
+  type SigningSubmission, type SigningStatus, type SigningLoai,
 } from "@/lib/signingSubmissions";
 import {
-  FileText, Plus, Loader2, RefreshCw, Search, AlertTriangle, X, Check,
+  FileText, Plus, Loader2, Search, AlertTriangle, X, Check,
   Undo2, Inbox, ClipboardCheck, CircleDot, ExternalLink, Pencil, Send, Download, Trash2,
-  CopyPlus, Eye, Upload, FileWarning,
+  CopyPlus, Eye, Upload, FileWarning, Calendar,
 } from "lucide-react";
 
 // Cột "File gốc" chỉ nhận PDF và ảnh, tối đa 4MB. Chặt hơn hẳn ô tải hồ sơ
@@ -46,17 +46,56 @@ const headCls = "text-[10px] font-extrabold text-white uppercase tracking-wider"
 const inputCls =
   "border border-slate-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 font-semibold text-slate-800 text-xs bg-white transition-all";
 
-type Filter = "can_duyet" | "cua_toi" | "tat_ca";
+// MỘT bộ lọc duy nhất thay cho hai nhóm nút (trạng thái + loại) trước đây.
+// Hai nhóm nằm cạnh nhau trông như hai thứ độc lập nhưng thực tế người dùng chỉ
+// bấm một cái mỗi lần, và tổng 6 nút chiếm gần nửa chiều ngang thanh công cụ.
+type Filter = "tat_ca" | "ho_so" | "hop_dong" | "cua_toi";
+
+// `created_at` là timestamptz — cắt 10 ký tự đầu là lấy ngày theo giờ UTC, nên
+// phiếu lập sau 7 giờ tối giờ VN sẽ bị tính sang ngày hôm sau và rơi ra ngoài
+// khoảng lọc. Phải đổi múi giờ đàng hoàng.
+function ngayVN(iso: string): string {
+  if (!iso) return "";
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date(iso));
+}
+
+const homNay = (): string => ngayVN(new Date().toISOString());
+
+/** Mùng 1 -> ngày cuối của tháng chứa `iso`. */
+function tronThang(iso: string): { from: string; to: string } {
+  const [y, m] = iso.split("-").map(Number);
+  const cuoi = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const mm = String(m).padStart(2, "0");
+  return { from: `${y}-${mm}-01`, to: `${y}-${mm}-${String(cuoi).padStart(2, "0")}` };
+}
+
+const ddmmyyyy = (iso: string) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : iso || "";
+};
 
 export default function SigningPanel() {
   const user = useCurrentUser();
   const [rows, setRows] = useState<SigningSubmission[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
-  const [filter, setFilter] = useState<Filter>("can_duyet");
+  const [filter, setFilter] = useState<Filter>("tat_ca");
   const [search, setSearch] = useState("");
+  // Khoảng ngày LẬP PHIẾU. Để TRỐNG mặc định = xem tất cả.
+  //
+  // KHÁC Kế hoạch TC (mở ra là trọn tháng này) và đó là chủ đích: kế hoạch tài
+  // chính lập theo tháng, còn phiếu trình ký thì chạy vắt qua nhiều tháng —
+  // mặc định bó vào tháng hiện tại sẽ GIẤU MẤT phiếu tháng trước còn đang chờ
+  // duyệt, cấp duyệt mở trang ra không thấy việc của mình.
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
   const [editing, setEditing] = useState<SigningSubmission | null>(null);
-  const [creating, setCreating] = useState(false);
+  // Lập phiếu mới: giữ LOẠI đang chọn chứ không phải cờ true/false — mở form ra
+  // là biết ngay đang lập tờ nào, không phải hỏi lại giữa chừng.
+  const [creating, setCreating] = useState<SigningLoai | null>(null);
   const [viewing, setViewing] = useState<SigningSubmission | null>(null);
   const [mailWarn, setMailWarn] = useState("");
   // id phiếu đang xoá — khoá riêng từng dòng để không chặn cả bảng, và để bấm
@@ -169,17 +208,11 @@ export default function SigningPanel() {
     }
   };
 
-  const myStages = useMemo(() => stagesOf(user.perms), [user.perms]);
   const canCreate = user.isAdmin || user.perms.canCreateSigning;
 
-  // Mặc định mở đúng cái người dùng cần: cấp duyệt thấy hộp việc, người lập
-  // thấy phiếu của mình. Chỉ chạy một lần sau khi biết danh tính.
-  const [pickedDefault, setPickedDefault] = useState(false);
-  useEffect(() => {
-    if (user.loading || pickedDefault) return;
-    setFilter(myStages.length > 0 ? "can_duyet" : canCreate ? "cua_toi" : "tat_ca");
-    setPickedDefault(true);
-  }, [user.loading, myStages.length, canCreate, pickedDefault]);
+  // Không còn tự chọn bộ lọc theo vai: bộ lọc mới không có mục "Cần tôi duyệt"
+  // để nhảy vào. Mở ra là xem TẤT CẢ — số phiếu đang chờ mình xử lý đã có thẻ
+  // "Cần tôi xử lý" ở dải KPI phía trên đếm hộ.
 
   const canDuyet = useMemo(
     () => rows.filter((r) => canActOn(r, user.perms, user.isAdmin) && !["hoan_tat", "nhap", "tra_lai"].includes(r.status)),
@@ -191,14 +224,40 @@ export default function SigningPanel() {
   );
 
   const visible = useMemo(() => {
-    const base = filter === "can_duyet" ? canDuyet : filter === "cua_toi" ? cuaToi : rows;
+    const base =
+      filter === "cua_toi" ? cuaToi
+      : filter === "ho_so" ? rows.filter((r) => r.loai === "ho_so")
+      : filter === "hop_dong" ? rows.filter((r) => r.loai === "hop_dong")
+      : rows;
     const q = search.trim().toLowerCase();
-    if (!q) return base;
-    return base.filter((r) =>
-      [r.ma_phieu, r.hop_dong_so, r.chu_dau_tu, r.du_an, r.goi_thau]
+    const list = !q ? base : base.filter((r) =>
+      // Thêm Bên A / Bên B / hạng mục vào diện tìm — với phiếu hợp đồng thì đó
+      // mới là thứ người ta nhớ, chứ không phải "chủ đầu tư".
+      [r.ma_phieu, r.hop_dong_so, r.chu_dau_tu, r.du_an, r.goi_thau, r.ben_a, r.ben_b, r.hang_muc]
         .some((x) => (x || "").toLowerCase().includes(q))
     );
-  }, [filter, canDuyet, cuaToi, rows, search]);
+
+    // Khoảng ngày lập phiếu — bỏ qua khi cả hai ô còn trống.
+    const trongKhoang = (r: SigningSubmission) => {
+      if (!from && !to) return true;
+      const d = ngayVN(r.created_at);
+      if (!d) return false;
+      return (!from || d >= from) && (!to || d <= to);
+    };
+    const list2 = list.filter(trongKhoang);
+
+    // Ở mục "Tất cả": đẩy phiếu ĐANG CHỜ CHÍNH MÌNH DUYỆT lên đầu.
+    //
+    // Bộ lọc mới không còn mục "Cần tôi duyệt" nên cấp duyệt mở trang ra là vào
+    // thẳng danh sách chung; không xếp lên đầu thì họ phải dò cả bảng tìm dòng
+    // có chấm vàng.
+    //
+    // `sort` của JS ổn định, nên các phiếu cùng nhóm giữ nguyên thứ tự cũ
+    // (mới nhất trước) — chỉ nhấc nhóm chờ duyệt lên, không xáo trộn phần còn lại.
+    if (filter !== "tat_ca") return list2;
+    const cho = new Set(canDuyet.map((r) => r.id));
+    return [...list2].sort((a, b) => Number(cho.has(b.id)) - Number(cho.has(a.id)));
+  }, [filter, cuaToi, rows, search, canDuyet, from, to]);
 
   const stats = useMemo(() => ({
     canXuLy: canDuyet.length,
@@ -271,27 +330,76 @@ export default function SigningPanel() {
       </div>
 
       {/* Thanh công cụ */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
+      {/* ─── THANH CÔNG CỤ: MỘT LƯỚI 3 CỘT CHO CẢ HAI HÀNG ───
+        Trước đây hai hàng là hai khối flex RIÊNG, nên cột giữa của hàng trên
+        (ô chọn ngày) và cột giữa của hàng dưới (ô tìm kiếm) rơi vào hai vị trí
+        khác nhau — nhìn so le hẳn ra. Gom vào một lưới thì trình duyệt tự canh
+        cột 1 rộng bằng thứ rộng nhất trong hai hàng, hai ô ở cột 2 thẳng nhau.
+        Màn hình hẹp thì lưới rút về 1 cột, mọi thứ xếp dọc như cũ. */}
+      <div className="grid grid-cols-1 lg:grid-cols-[auto_1fr_auto] items-center gap-x-2.5 gap-y-3">
         <div>
           <h3 className={labelCls}>Phiếu trình ký hồ sơ / văn bản</h3>
           <p className="text-[11px] text-slate-400 font-medium mt-1">
             Hiện <strong className="text-slate-600">{visible.length}</strong> phiếu
+            {(from || to) && (
+              <> · lập {from ? `từ ${ddmmyyyy(from)}` : ""}{to ? ` đến ${ddmmyyyy(to)}` : ""}</>
+            )}
           </p>
         </div>
-        {canCreate && (
-          <button type="button" onClick={() => setCreating(true)}
-            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2.5 rounded-xl shadow-md shadow-blue-500/10 hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer">
-            <Plus size={14} /> Lập phiếu
-          </button>
-        )}
-      </div>
+        {/* Khoảng ngày lập phiếu — cùng khuôn ô lọc bên Kế hoạch TC: hai ô ngày
+            nằm chung một khung để đọc ra là MỘT khoảng, `max`/`min` chéo nhau
+            chặn luôn khoảng ngược đời. */}
+        <div className="flex items-center gap-1.5 bg-slate-100/50 border border-slate-200/60 rounded-xl px-2.5 py-1.5 w-fit">
+          <Calendar size={14} className="text-slate-400 shrink-0" />
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Từ</span>
+          <input type="date" value={from} max={to || undefined}
+            onChange={(e) => setFrom(e.target.value)}
+            className="bg-transparent border-0 text-xs font-bold text-slate-700 outline-none cursor-pointer p-0" />
+          <span className="text-slate-300 font-bold">–</span>
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Đến</span>
+          <input type="date" value={to} min={from || undefined}
+            onChange={(e) => setTo(e.target.value)}
+            className="bg-transparent border-0 text-xs font-bold text-slate-700 outline-none cursor-pointer p-0" />
+          {(from || to) ? (
+            <button type="button" onClick={() => { setFrom(""); setTo(""); }}
+              title="Bỏ lọc theo ngày, xem tất cả"
+              className="p-1 text-slate-400 hover:text-rose-500 hover:bg-slate-200 rounded-lg transition-all cursor-pointer">
+              <X size={12} />
+            </button>
+          ) : (
+            <button type="button"
+              onClick={() => { const b = tronThang(homNay()); setFrom(b.from); setTo(b.to); }}
+              title="Lọc nhanh trọn tháng này"
+              className="px-2 py-0.5 text-[10px] font-bold text-slate-400 hover:text-blue-600 hover:bg-white rounded-lg transition-all cursor-pointer">
+              Tháng này
+            </button>
+          )}
+        </div>
 
-      <div className="flex flex-wrap items-center gap-2.5">
-        <div className="flex bg-slate-100/70 rounded-xl p-1 gap-1">
+        {/* Hai nút riêng thay vì một nút rồi hỏi loại: hai tờ này khác hẳn nhau
+            về mục đích, chọn ngay từ đây đỡ một bước bấm. */}
+        {canCreate && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <button type="button" onClick={() => setCreating("ho_so")}
+              title="Trình duyệt một đợt thanh toán của hợp đồng đã ký (TL/BM/011)"
+              className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2.5 rounded-xl shadow-md shadow-blue-500/10 hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer">
+              <Plus size={14} /> Phiếu hồ sơ / văn bản
+            </button>
+            <button type="button" onClick={() => setCreating("hop_dong")}
+              title="Trình duyệt nội dung hợp đồng trước khi ký (KHKT/BM/001)"
+              className="flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold px-4 py-2.5 rounded-xl shadow-md shadow-violet-500/10 hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer">
+              <Plus size={14} /> Phiếu hợp đồng
+            </button>
+          </div>
+        )}
+
+        {/* ─── Hàng 2 của cùng lưới ─── */}
+        <div className="flex bg-slate-100/70 rounded-xl p-1 gap-1 w-fit">
           {([
-            ["can_duyet", `Cần tôi duyệt (${canDuyet.length})`],
-            ["cua_toi", `Phiếu của tôi (${cuaToi.length})`],
             ["tat_ca", `Tất cả (${rows.length})`],
+            ["ho_so", `Hồ sơ (${rows.filter((r) => r.loai === "ho_so").length})`],
+            ["hop_dong", `Hợp đồng (${rows.filter((r) => r.loai === "hop_dong").length})`],
+            ["cua_toi", `Phiếu của tôi (${cuaToi.length})`],
           ] as [Filter, string][]).map(([k, lb]) => (
             <button key={k} type="button" onClick={() => setFilter(k)}
               className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
@@ -301,16 +409,15 @@ export default function SigningPanel() {
             </button>
           ))}
         </div>
-        <div className="relative flex-1 min-w-[200px]">
+        {/* Trải sang cả cột 3: chỗ đó vốn dành cho nút tải lại, bỏ nút rồi thì
+            để trống sẽ hụt một khoảng, mép phải ô tìm kiếm không thẳng với cụm
+            nút ở hàng trên. Danh sách vẫn tự nạp lại sau mỗi thao tác. */}
+        <div className="relative min-w-[200px] lg:col-span-2">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input value={search} onChange={(e) => setSearch(e.target.value)}
             placeholder="Tìm theo mã phiếu, số hợp đồng, chủ đầu tư, dự án…"
             className="w-full pl-9 pr-4 py-2 bg-slate-100/50 hover:bg-slate-100 focus:bg-white text-xs font-semibold text-slate-700 placeholder:text-slate-400 placeholder:font-medium border border-slate-200/60 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 transition-all" />
         </div>
-        <button type="button" onClick={load}
-          className="p-2 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-600 transition-all cursor-pointer">
-          <RefreshCw size={16} />
-        </button>
       </div>
 
       {/* Danh sách */}
@@ -320,12 +427,14 @@ export default function SigningPanel() {
             <FileText size={26} />
           </div>
           <p className="font-heading font-extrabold text-slate-700 text-xs">
-            {filter === "can_duyet" ? "Không có phiếu nào chờ bạn duyệt"
+            {(from || to) ? "Không có phiếu nào lập trong khoảng ngày đã chọn"
               : filter === "cua_toi" ? "Bạn chưa lập phiếu nào"
+              : filter === "ho_so" ? "Chưa có phiếu trình ký hồ sơ / văn bản nào"
+              : filter === "hop_dong" ? "Chưa có phiếu trình ký hợp đồng nào"
               : "Chưa có phiếu trình ký nào"}
           </p>
-          {canCreate && filter !== "can_duyet" && (
-            <button type="button" onClick={() => setCreating(true)}
+          {canCreate && (
+            <button type="button" onClick={() => setCreating("ho_so")}
               className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2.5 rounded-xl shadow-md shadow-blue-500/10 transition-all cursor-pointer">
               <Plus size={14} /> Lập phiếu đầu tiên
             </button>
@@ -373,12 +482,21 @@ export default function SigningPanel() {
                       <span className="block font-semibold text-slate-800 text-xs truncate leading-tight">
                         {r.hop_dong_so || "(chưa có số HĐ)"}
                       </span>
-                      <span className="block text-[10px] font-medium text-slate-400 truncate mt-0.5">
-                        {r.chu_dau_tu || r.du_an || "—"}
+                      <span className="flex items-center gap-1.5 mt-0.5 min-w-0">
+                        <span className={`shrink-0 text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded ${LOAI_META[r.loai].chip}`}>
+                          {LOAI_META[r.loai].short}
+                        </span>
+                        <span className="block text-[10px] font-medium text-slate-400 truncate">
+                          {/* Phiếu hợp đồng thì thứ đáng nhớ là hai bên ký, không
+                              phải chủ đầu tư (ô đó bỏ trống ở loại này). */}
+                          {r.loai === "hop_dong"
+                            ? [r.ben_b, r.du_an].filter(Boolean).join(" · ") || "—"
+                            : r.chu_dau_tu || r.du_an || "—"}
+                        </span>
                       </span>
                     </span>
                     <span className="w-14 shrink-0 text-center text-[11px] font-bold text-slate-500 hidden sm:block">
-                      {r.dot_so ?? "—"}
+                      {r.loai === "hop_dong" ? <span className="text-slate-300">—</span> : (r.dot_so ?? "—")}
                     </span>
                     <span className="w-36 shrink-0 text-right pr-6 font-mono font-bold text-[11px] text-slate-700 hidden md:block">
                       {fmtMoney(r.de_nghi_thanh_toan ?? tinhDeNghi(r))}
@@ -482,9 +600,10 @@ export default function SigningPanel() {
       {(creating || editing) && (
         <SigningFormModal
           existing={editing}
+          loai={creating || undefined}
           currentEmail={user.email}
           currentName={user.name}
-          onClose={() => { setCreating(false); setEditing(null); }}
+          onClose={() => { setCreating(null); setEditing(null); }}
           onSaved={load}
         />
       )}
@@ -810,7 +929,7 @@ function DetailModal({ row, user, onClose, onEdit, onDone, onMailWarn }: {
 
   // Ghi ý kiến vào đúng cột của cấp đang giữ phiếu, rồi đẩy sang bước kế tiếp.
   const approve = async () => {
-    const nxt = nextStatus(row.status);
+    const nxt = nextStatus(row.status, row.loai);
     if (!nxt) return;
     setBusy(true); setErr("");
     try {
@@ -869,19 +988,37 @@ function DetailModal({ row, user, onClose, onEdit, onDone, onMailWarn }: {
   };
 
   const meta = STATUS_META[row.status];
-  const rowInfo: [string, string][] = [
-    ["Chủ đầu tư", row.chu_dau_tu || "—"],
-    ["Dự án", row.du_an || "—"],
-    ["Hợp đồng số", [row.hop_dong_so, row.ngay_ky_hop_dong ? `ký ngày ${row.ngay_ky_hop_dong}` : ""].filter(Boolean).join(" ") || "—"],
-    ["Gói thầu", row.goi_thau || "—"],
-    ["Giá trị HĐ", `${fmtMoney(row.gia_tri_hd)} đồng`],
-    [`Giá trị nghiệm thu đợt ${row.dot_so ?? ""}`, `${fmtMoney(row.gia_tri_nghiem_thu)} đồng (A)`],
-    ["Giữ bảo hành", `${fmtMoney(row.giu_bao_hanh)} đồng (B)`],
-    ["Giữ lại từng lần", `${fmtMoney(row.giu_lai_tung_lan)} đồng (C)${row.ty_le_giu_lai ? ` (${row.ty_le_giu_lai}%)` : ""}`],
-    ["Khấu trừ tạm ứng", `${fmtMoney(row.khau_tru_tam_ung)} đồng (D)${row.ty_le_thu_hoi ? ` (thu hồi ~${row.ty_le_thu_hoi}%)` : ""}`],
-    ["Luỹ kế đã thanh toán", `${fmtMoney(row.luy_ke_da_thanh_toan)} đồng`],
-    ["Tạm ứng còn lại", `${fmtMoney(row.tam_ung_con_lai)} đồng`],
-  ];
+  const laHopDong = row.loai === "hop_dong";
+
+  // Hai bộ dòng khác hẳn nhau. Trước đây phiếu hợp đồng cũng đổ ra bộ của phiếu
+  // thanh toán: 7 dòng "— đồng (A)/(B)/(C)/(D)" và một dòng "Đề nghị thanh toán
+  // 0 đồng" — vừa vô nghĩa vừa dễ làm người duyệt tưởng phiếu nhập thiếu số.
+  const rowInfo: [string, string][] = laHopDong
+    ? [
+        ["Dự án", row.du_an || "—"],
+        ["Gói thầu", row.goi_thau || "—"],
+        ["Hạng mục", row.hang_muc || "—"],
+        ["Số hợp đồng", row.hop_dong_so || "—"],
+        ["Bên A", row.ben_a || "—"],
+        ["Bên B", row.ben_b || "—"],
+        [
+          "Giá trị hợp đồng",
+          `${fmtMoney(row.gia_tri_hd)} đồng${row.vat_percent != null ? ` (bao gồm thuế VAT ${row.vat_percent}%)` : ""}`,
+        ],
+      ]
+    : [
+        ["Chủ đầu tư", row.chu_dau_tu || "—"],
+        ["Dự án", row.du_an || "—"],
+        ["Hợp đồng số", [row.hop_dong_so, row.ngay_ky_hop_dong ? `ký ngày ${row.ngay_ky_hop_dong}` : ""].filter(Boolean).join(" ") || "—"],
+        ["Gói thầu", row.goi_thau || "—"],
+        ["Giá trị HĐ", `${fmtMoney(row.gia_tri_hd)} đồng`],
+        [`Giá trị nghiệm thu đợt ${row.dot_so ?? ""}`, `${fmtMoney(row.gia_tri_nghiem_thu)} đồng (A)`],
+        ["Giữ bảo hành", `${fmtMoney(row.giu_bao_hanh)} đồng (B)`],
+        ["Giữ lại từng lần", `${fmtMoney(row.giu_lai_tung_lan)} đồng (C)${row.ty_le_giu_lai ? ` (${row.ty_le_giu_lai}%)` : ""}`],
+        ["Khấu trừ tạm ứng", `${fmtMoney(row.khau_tru_tam_ung)} đồng (D)${row.ty_le_thu_hoi ? ` (thu hồi ~${row.ty_le_thu_hoi}%)` : ""}`],
+        ["Luỹ kế đã thanh toán", `${fmtMoney(row.luy_ke_da_thanh_toan)} đồng`],
+        ["Tạm ứng còn lại", `${fmtMoney(row.tam_ung_con_lai)} đồng`],
+      ];
 
   // Chặng Phó Giám đốc gộp làm một dòng: chỉ cần MỘT trong hai vị xem xét.
   // Lấy vết của vị nào đã ký (QLDA hoặc KHĐT), kèm nhãn để biết ai ký.
@@ -892,10 +1029,15 @@ function DetailModal({ row, user, onClose, onEdit, onDone, onMailWarn }: {
     : row.khdt_at ? "Phó Giám đốc (P.KHĐT)"
     : "Phó Giám đốc (QLDA hoặc KHĐT)";
 
+  // Phiếu HỢP ĐỒNG không có chặng Kế toán — bỏ dòng đó khỏi thanh tiến trình,
+  // nếu không người xem tưởng phiếu còn thiếu một bước chưa ai làm.
   const steps: [SigningStatus, string, string | null, string | null, string | null][] = [
     ["cho_pho_giam_doc", pgdName, pgdBy, pgdAt, pgdYk],
     ["cho_giam_doc", "Giám đốc", row.giam_doc_by, row.giam_doc_at, row.ykien_giam_doc],
-    ["cho_ke_toan", "Kế toán", row.ke_toan_by, row.ke_toan_at, null],
+    ...(row.loai === "hop_dong"
+      ? []
+      : [["cho_ke_toan", "Kế toán", row.ke_toan_by, row.ke_toan_at, null] as
+          [SigningStatus, string, string | null, string | null, string | null]]),
   ];
 
   return createPortal(
@@ -907,10 +1049,12 @@ function DetailModal({ row, user, onClose, onEdit, onDone, onMailWarn }: {
           </div>
           <div className="flex-1 min-w-0">
             <h4 className="font-heading font-extrabold text-slate-800 text-xs leading-tight truncate">
-              {row.ma_phieu} · Đợt {row.dot_so ?? "—"}
+              {/* Phiếu hợp đồng không có "đợt" — ghi "Đợt —" chỉ làm người xem
+                  tưởng phiếu nhập thiếu. Thay bằng tên loại phiếu. */}
+              {row.ma_phieu} · {laHopDong ? LOAI_META.hop_dong.label : `Đợt ${row.dot_so ?? "—"}`}
             </h4>
             <p className="text-[10px] text-slate-400 font-semibold truncate">
-              {row.created_by_name || row.created_by} lập {fmtDateTime(row.created_at)}
+              Biểu mẫu {LOAI_META[row.loai].bieuMau} · {row.created_by_name || row.created_by} lập {fmtDateTime(row.created_at)}
             </p>
           </div>
           <span className={`text-[9px] font-extrabold uppercase px-2 py-1 rounded-full shrink-0 ${meta.chip}`}>
@@ -948,16 +1092,46 @@ function DetailModal({ row, user, onClose, onEdit, onDone, onMailWarn }: {
                   <span className="text-[11px] font-bold text-slate-800 flex-1 min-w-0">{v}</span>
                 </div>
               ))}
-              <div className="flex gap-3 px-3.5 py-2.5 bg-blue-50/70">
-                <span className="text-[11px] font-extrabold text-blue-900 w-52 shrink-0">
-                  Đề nghị thanh toán (A−B−C−D)
-                </span>
-                <span className="text-xs font-extrabold text-blue-900 flex-1">
-                  {fmtMoney(row.de_nghi_thanh_toan ?? tinhDeNghi(row))} đồng
-                </span>
-              </div>
+              {!laHopDong && (
+                <div className="flex gap-3 px-3.5 py-2.5 bg-blue-50/70">
+                  <span className="text-[11px] font-extrabold text-blue-900 w-52 shrink-0">
+                    Đề nghị thanh toán (A−B−C−D)
+                  </span>
+                  <span className="text-xs font-extrabold text-blue-900 flex-1">
+                    {fmtMoney(row.de_nghi_thanh_toan ?? tinhDeNghi(row))} đồng
+                  </span>
+                </div>
+              )}
             </div>
           </section>
+
+          {/* Bảng so sánh A-B ↔ B-B′ — thứ quan trọng nhất của phiếu hợp đồng,
+              người duyệt cần đọc ngay chứ không phải mở file Word ra xem. */}
+          {laHopDong && row.so_sanh.length > 0 && (
+            <section className="space-y-2">
+              <h5 className={labelCls}>Nội dung so sánh ({row.so_sanh.length} dòng)</h5>
+              <div className="border border-slate-200/60 rounded-xl overflow-hidden">
+                <div className="grid grid-cols-[32px_1fr_1fr_1fr] gap-2 px-3 py-2 bg-slate-100/70">
+                  <span className={labelCls}>TT</span>
+                  <span className={labelCls}>Nội dung</span>
+                  <span className={labelCls}>Hợp đồng A-B</span>
+                  <span className={labelCls}>Hợp đồng B-B′</span>
+                </div>
+                <div className="divide-y divide-slate-200/70">
+                  {row.so_sanh.map((r, i) => (
+                    <div key={i} className="grid grid-cols-[32px_1fr_1fr_1fr] gap-2 px-3 py-2 items-start">
+                      <span className="text-[11px] font-bold text-slate-400">{r.stt || `${String.fromCharCode(97 + i)})`}</span>
+                      <span className="text-[11px] font-bold text-slate-700 break-words">{r.muc || "—"}</span>
+                      {/* whitespace-pre-line: người lập xuống dòng trong ô thì
+                          giữ nguyên, đúng như lúc in ra Word. */}
+                      <span className="text-[11px] font-medium text-slate-600 whitespace-pre-line break-words">{r.ab || "—"}</span>
+                      <span className="text-[11px] font-medium text-slate-600 whitespace-pre-line break-words">{r.bb || "—"}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+          )}
 
           {/* Hồ sơ gốc */}
           {row.files.length > 0 && (
@@ -993,7 +1167,7 @@ function DetailModal({ row, user, onClose, onEdit, onDone, onMailWarn }: {
                       done ? "bg-emerald-500" : here ? "bg-amber-500" : "bg-slate-300"
                     }`}>
                       {done ? <Check size={12} className="text-white" />
-                        : <span className="text-white text-[9px] font-extrabold">{FLOW.indexOf(st) + 1}</span>}
+                        : <span className="text-white text-[9px] font-extrabold">{flowOf(row.loai).indexOf(st) + 1}</span>}
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="text-[11px] font-extrabold text-slate-700">

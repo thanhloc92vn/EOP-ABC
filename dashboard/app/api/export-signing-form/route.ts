@@ -19,7 +19,10 @@ import Docxtemplater from "docxtemplater";
 // Cùng khuôn export-invoice-payment (docxtemplater + PizZip) đã chạy ổn định.
 // ============================================================
 
-const TEMPLATE_FILE = "phieu_trinh_ky_ho_so_van_ban_template.docx";
+// Hai biểu mẫu, chọn theo `loai` (migration 060). Cả hai đều là bản ĐÃ GẮN TAG
+// sinh ra từ file gốc của công ty — letterhead, khung viền, ô ký giữ nguyên.
+const TEMPLATE_HO_SO = "phieu_trinh_ky_ho_so_van_ban_template.docx";
+const TEMPLATE_HOP_DONG = "phieu_trinh_ky_hop_dong_template.docx";
 
 const fmt = (n: number) => new Intl.NumberFormat("vi-VN").format(Math.round(n));
 
@@ -68,16 +71,75 @@ export async function POST(request: NextRequest) {
       ykienGiamDoc,
     } = body;
 
-    const templatePath = path.join(process.cwd(), "public", "templates", TEMPLATE_FILE);
+    const loai = body.loai === "hop_dong" ? "hop_dong" : "ho_so";
+    const templateFile = loai === "hop_dong" ? TEMPLATE_HOP_DONG : TEMPLATE_HO_SO;
+    const templatePath = path.join(process.cwd(), "public", "templates", templateFile);
     if (!fs.existsSync(templatePath)) {
       return NextResponse.json(
-        { error: "template_not_found", fileName: TEMPLATE_FILE },
+        { error: "template_not_found", fileName: templateFile },
         { status: 404 }
       );
     }
 
     const zip = new PizZip(fs.readFileSync(templatePath, "binary"));
     const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
+
+    // ─── PHIẾU TRÌNH KÝ HỢP ĐỒNG (KHKT/BM/001) ───
+    // Rẽ nhánh sớm rồi trả về luôn: bộ tag khác hẳn phiếu hồ sơ/văn bản, gộp
+    // chung một lệnh render thì nửa số tag lúc nào cũng rỗng, đọc rất khó biết
+    // tag nào thuộc phiếu nào.
+    if (loai === "hop_dong") {
+      // Bảng so sánh A-B ↔ B-B′ — SỐ DÒNG THÊM/BỚT ĐƯỢC, template dùng vòng lặp
+      // hàng `{#soSanh}`. Lọc dòng trống để phiếu in ra không có hàng thừa.
+      const soSanh = (Array.isArray(body.soSanh) ? body.soSanh : [])
+        .filter((r: Record<string, unknown>) =>
+          [r?.muc, r?.ab, r?.bb].some((v) => String(v || "").trim() !== ""))
+        .map((r: Record<string, unknown>, i: number) => ({
+          // Không có ký hiệu thì tự đánh a) b) c)… theo đúng tờ giấy.
+          stt: String(r?.stt || "").trim() || `${String.fromCharCode(97 + i)})`,
+          muc: String(r?.muc || ""),
+          ab: String(r?.ab || ""),
+          bb: String(r?.bb || ""),
+        }));
+
+      // "2.263.389.186 đồng (bao gồm thuế VAT 8%)" — ghép ở route chứ không bắt
+      // người dùng gõ cả câu, và cũng không nhét công thức vào file Word.
+      const vat = body.vatPercent;
+      const giaTriHopDong = giaTriHD === null || giaTriHD === undefined || giaTriHD === ""
+        ? ""
+        : `${money(giaTriHD)}${vat === null || vat === undefined || vat === "" ? "" : ` (bao gồm thuế VAT ${vat}%)`}`;
+
+      doc.render({
+        duAn: duAn || "",
+        goiThau: goiThau || "",
+        hangMuc: body.hangMuc || "",
+        hopDongSo: hopDongSo || "",
+        benA: body.benA || "",
+        benB: body.benB || "",
+        giaTriHD: giaTriHopDong,
+        soSanh,
+        // Tờ này chỉ có 2 ô ý kiến: Phó Giám đốc phụ trách và Giám đốc.
+        ykienPGD: ykienQLDA || ykienKHDT || "",
+        ykienGiamDoc: ykienGiamDoc || "",
+        // 3 ô ký: người trình điền sẵn, 2 ô còn lại để trắng cho người ký tự ghi.
+        nguoiTrinh: body.nguoiTrinh || "",
+        phuTrach: "",
+        bldPheDuyet: "",
+      });
+
+      const buf = doc.getZip().generate({ type: "nodebuffer", compression: "DEFLATE" });
+      return new NextResponse(new Uint8Array(buf), {
+        status: 200,
+        headers: {
+          "Content-Type":
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "Content-Disposition": `attachment; filename="${encodeURIComponent(
+            String(body.fileName || "Phieu_Trinh_Ky_Hop_Dong.docx")
+          )}"`,
+          "Cache-Control": "no-store",
+        },
+      });
+    }
 
     // Giá trị đề nghị thanh toán: ưu tiên số do người dùng chốt, không có thì
     // tự tính A-B-C-D. Người lập phiếu vẫn phải được quyền ghi đè — có đợt bị
