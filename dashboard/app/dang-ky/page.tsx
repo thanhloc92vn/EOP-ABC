@@ -29,10 +29,8 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
-  getGroupLeaderNameForMember,
   isBookingCap1Approver,
-  isDepartmentManagerRole,
-  normalizeName,
+  resolveBookingCap1Approvers,
 } from "@/lib/approvers";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 
@@ -545,32 +543,16 @@ function BookingContent() {
       // duyệt riêng trong bảng approval_groups — VD tổ Marketing — thì báo tổ trưởng nhóm).
       // Chạy nền, lỗi không chặn việc gửi đăng ký.
       try {
-        let approverEmails = "";
-        const groupLeaderName = getGroupLeaderNameForMember(currentUser.name);
-        if (groupLeaderName) {
-          approverEmails = employees
-            .filter((e) => normalizeName(e.name) === normalizeName(groupLeaderName))
-            .map((e) => e.email)
-            .filter(Boolean)
-            .join(", ");
-        } else {
-          // Chưa xếp tổ -> Trưởng/Phó phòng cùng đơn vị. Dùng chung
-          // isDepartmentManagerRole() với bộ lọc trên giao diện để người nhận
-          // mail đúng là người bấm duyệt được (trước đây là 2 danh sách chức
-          // danh chép tay, lệch nhau ở Kế toán trưởng/Chỉ huy trưởng).
-          // Loại CHÍNH người đăng ký ra: từ 20/08/2026 isBookingCap1Approver cấm
-          // tự duyệt đơn của mình, nên gửi mail cho họ là gửi vào hư không và
-          // đăng ký nằm im. Trưởng phòng tự đăng ký -> mail rơi xuống Phó phòng;
-          // không còn ai thì Giám đốc/PGĐ (hoặc Admin) xử lý ở trang Duyệt yêu cầu.
-          approverEmails = employees
-            .filter((e) =>
-              normalizeName(e.department) === normalizeName(department) &&
-              normalizeName(e.name) !== normalizeName(currentUser.name) &&
-              !!e.email && isDepartmentManagerRole(e.role)
-            )
-            .map((e) => e.email)
-            .join(", ");
-        }
+        // Cùng hàm với dòng "Đơn sẽ chuyển tới X" hiện ngay trên form -> người
+        // đăng ký đọc thấy tên nào thì mail bay đúng tên đó, không lệch.
+        const approverEmails = resolveBookingCap1Approvers({
+          requesterName: currentUser.name,
+          bookingDepartment: department,
+          people: employees,
+        })
+          .map((e) => e.email)
+          .filter(Boolean)
+          .join(", ");
 
         if (approverEmails && inserted && inserted[0]) {
           apiFetch("/api/send-booking-email", {
@@ -634,6 +616,20 @@ function BookingContent() {
     port: Number(localStorage.getItem("tnec_cb_smtp_port")) || 465,
     secure: localStorage.getItem("tnec_cb_smtp_secure") !== "false",
   });
+
+  // Người sẽ nhận đơn cấp 1 theo ô "Phòng ban đăng ký" ĐANG chọn — hiện ngay trên
+  // form. Ô phòng ban cho chọn tay (HCNS hay đăng ký hộ phòng khác), mà nó cũng
+  // chính là cột định tuyến duyệt: chọn "Ban Lãnh đạo" là đơn rời khỏi tầm nhìn
+  // của Trưởng phòng mình và chạy sang Ban lãnh đạo. Trước đây không có gì báo,
+  // người đăng ký chỉ biết khi đơn nằm im không ai duyệt.
+  const cap1ApproverNames = useMemo(() => {
+    if (!currentUser) return [];
+    return resolveBookingCap1Approvers({
+      requesterName: currentUser.name,
+      bookingDepartment: department,
+      people: employees,
+    }).map((e) => e.name);
+  }, [currentUser, department, employees]);
 
   // Admin: cờ isAdmin (bảng allowed_users) HOẶC role hiển thị là "Admin" (bảng employees) —
   // đúng quy ước đã dùng ở Header.tsx/settings/page.tsx, tránh bỏ sót tài khoản Admin nội bộ.
@@ -1681,6 +1677,29 @@ function BookingContent() {
                       <option key={d} value={d}>{d}</option>
                     ))}
                   </select>
+
+                  {/* Đơn chạy theo PHÒNG BAN CHỌN Ở TRÊN, không theo phòng của người
+                      đăng ký. In thẳng tên người sẽ duyệt để chọn nhầm là thấy ngay. */}
+                  {department && (
+                    cap1ApproverNames.length > 0 ? (
+                      <p className="flex items-start gap-1.5 text-[11px] font-semibold text-slate-500 pt-0.5">
+                        <CheckCircle2 size={12} className="text-indigo-500 shrink-0 mt-0.5" />
+                        <span>
+                          Đơn sẽ chuyển tới{" "}
+                          <span className="font-extrabold text-indigo-700">{cap1ApproverNames.join(", ")}</span>
+                          {" "}phê duyệt, sau đó Hành chính xác nhận.
+                        </span>
+                      </p>
+                    ) : (
+                      <p className="flex items-start gap-1.5 text-[11px] font-semibold text-amber-700 pt-0.5">
+                        <AlertTriangle size={12} className="text-amber-500 shrink-0 mt-0.5" />
+                        <span>
+                          Không tìm được cấp quản lý của phòng ban này — đơn sẽ nằm chờ ở mục
+                          Duyệt yêu cầu cho Hành chính/Admin xử lý.
+                        </span>
+                      </p>
+                    )
+                  )}
                 </div>
 
                 {/* Số lượng người */}

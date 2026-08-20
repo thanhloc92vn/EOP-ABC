@@ -280,6 +280,41 @@ export function isBookingCap1Approver(params: Cap1Params): boolean {
   return cap1DepartmentManager(params);
 }
 
+// ━━━ Đăng ký xe/phòng họp — TÊN người duyệt cấp 1, để gửi mail & hiện trên form ━━━
+// Cùng một hàm cho hai chỗ vì chúng phải trùng nhau tuyệt đối: dòng "Đơn sẽ chuyển
+// tới X" hiện cho người đăng ký lúc bấm Gửi, và địa chỉ nhận mail báo duyệt. Lệch
+// là người dùng đọc một tên còn đơn bay tới người khác.
+//
+// Bám đúng thứ tự của isBookingCap1Approver: thuộc tổ -> tổ trưởng tổ đó; chưa xếp
+// tổ -> cấp trưởng ĐƠN VỊ trùng phòng ban GHI TRÊN ĐƠN (không phải phòng của người
+// đăng ký — ô "Phòng ban đăng ký" cho chọn tay, chọn phòng nào là đơn về phòng đó).
+// Trả về rỗng = không tìm được ai; đơn vẫn gửi được, nằm chờ Admin/Hành chính.
+export function resolveBookingCap1Approvers<T extends {
+  name: string; role?: string | null; department?: string | null;
+}>(params: {
+  requesterName: string;
+  /** Giá trị ô "Phòng ban đăng ký" trên form, KHÔNG phải phòng của người đăng ký. */
+  bookingDepartment?: string | null;
+  people: T[];
+}): T[] {
+  const { requesterName, bookingDepartment, people } = params;
+
+  const groupLeader = getGroupLeaderNameForMember(requesterName);
+  if (groupLeader) {
+    return people.filter(e => normalizeName(e.name) === normalizeName(groupLeader));
+  }
+
+  const dept = normalizeName(bookingDepartment);
+  if (!dept) return [];
+  // Loại chính người đăng ký: họ không tự duyệt được (cap1Opening chặn), để tên
+  // họ ở đây là mail gửi vào hư không và form hiện tên gây hiểu nhầm.
+  return people.filter(e =>
+    normalizeName(e.department) === dept &&
+    normalizeName(e.name) !== normalizeName(requesterName) &&
+    isDepartmentManagerRole(e.role)
+  );
+}
+
 // ━━━ Giải trình công (bảng attendance_justifications) — ai được duyệt CẤP 1 ━━━
 // Luồng thứ 5, dùng chung đúng khung với 4 luồng đăng ký (đồng bộ 20/08/2026).
 // Trước đó giải trình đi luật riêng: HR + Giám đốc theo CHỨC DANH thấy toàn công ty,
