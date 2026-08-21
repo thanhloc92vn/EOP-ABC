@@ -19,6 +19,7 @@ import { useCurrentUser } from "@/lib/useCurrentUser";
 import SigningFormModal from "./SigningFormModal";
 import { apiFetch } from "@/lib/apiClient";
 import { crumpleToss } from "@/lib/crumpleToss";
+import { useConfirmBox } from "@/components/ConfirmDialog";
 import {
   fetchSubmissions, canActOn, canEdit, nextStatus, tinhDeNghi,
   fmtMoney, fmtDateTime, resolveDossierUrl, fetchStageApproverEmails, errText,
@@ -104,6 +105,8 @@ export default function SigningPanel() {
   // Lỗi khi xoá KHÔNG dùng chung state `err`: `err` có early-return che sạch
   // panel, một lần bấm hụt là mất cả danh sách.
   const [delErr, setDelErr] = useState("");
+  // Hộp xác nhận căn giữa màn hình — thay window.confirm().
+  const { ask, confirmNode } = useConfirmBox();
   // Nhân đôi / đính kèm nhanh — khoá theo TỪNG dòng để bấm ở dòng này không làm
   // đơ nút của dòng khác, và bấm trùng vào cùng một nút không bắn hai lệnh.
   const [dupId, setDupId] = useState<string | null>(null);
@@ -181,31 +184,31 @@ export default function SigningPanel() {
   // Xoá phiếu — CHỈ Admin thấy nút này (RLS migration 050 chặn lần hai ở DB).
   // Xoá xong nạp lại cả bảng thay vì gỡ dòng khỏi state: KPI phía trên đếm từ
   // `rows`, gỡ tay thì phải nhớ trừ đúng ô KPI tương ứng, nạp lại là chắc.
-  const removeRow = async (r: SigningSubmission, rowEl: HTMLElement | null, btn: HTMLElement | null) => {
+  const removeRow = (r: SigningSubmission, rowEl: HTMLElement | null, btn: HTMLElement | null) => {
     if (deleting) return;
-    if (!confirm(
-      `Xoá phiếu "${r.ma_phieu || "(chưa có mã)"}"?
-
-` +
-      `Hợp đồng: ${r.hop_dong_so || "—"}
-` +
-      `Toàn bộ lịch sử duyệt của phiếu cũng mất theo. Không khôi phục được.`
-    )) return;
-    setDeleting(r.id);
-    setDelErr("");
-    // Vò dòng ném vào sọt NGAY khi bấm, không đợi server: phản hồi tức thì là
-    // điểm chính của hiệu ứng. Xoá hỏng thì toss.cancel() bung dòng trở lại.
-    const toss = crumpleToss(rowEl, { origin: btn });
-    try {
-      await deleteSubmission(r.id);
-      toss.done(`Đã xoá phiếu ${r.ma_phieu || "trình ký"}`);
-      await load();
-    } catch (e) {
-      toss.cancel();
-      setDelErr(errText(e));
-    } finally {
-      setDeleting(null);
-    }
+    ask({
+      title: `Xoá phiếu "${r.ma_phieu || "(chưa có mã)"}"?`,
+      message:
+        `Hợp đồng: ${r.hop_dong_so || "—"}\n` +
+        `Toàn bộ lịch sử duyệt của phiếu cũng mất theo. Không khôi phục được.`,
+      onConfirm: async () => {
+        setDeleting(r.id);
+        setDelErr("");
+        // Vò dòng ném vào sọt NGAY khi bấm, không đợi server: phản hồi tức thì là
+        // điểm chính của hiệu ứng. Xoá hỏng thì toss.cancel() bung dòng trở lại.
+        const toss = crumpleToss(rowEl, { origin: btn });
+        try {
+          await deleteSubmission(r.id);
+          toss.done(`Đã xoá phiếu ${r.ma_phieu || "trình ký"}`);
+          await load();
+        } catch (e) {
+          toss.cancel();
+          setDelErr(errText(e));
+        } finally {
+          setDeleting(null);
+        }
+      },
+    });
   };
 
   const canCreate = user.isAdmin || user.perms.canCreateSigning;
@@ -618,6 +621,8 @@ export default function SigningPanel() {
           onMailWarn={setMailWarn}
         />
       )}
+
+      {confirmNode}
     </div>
   );
 }
@@ -646,6 +651,7 @@ function FilePreviewModal({ row, canDelete, onChanged, onClose }: {
   // không, thay vì phải dọn 3 ô state ngay đầu effect — dọn kiểu đó là gọi
   // setState thẳng trong thân effect, React cảnh báo và dễ sinh render thừa.
   const [resolved, setResolved] = useState<{ path: string; url: string; err: string } | null>(null);
+  const { ask, confirmNode } = useConfirmBox();
 
   const file = files[idx];
   const isPdf = /\.pdf$/i.test(file?.name || "");
@@ -675,26 +681,30 @@ function FilePreviewModal({ row, canDelete, onChanged, onClose }: {
     return () => { mounted = false; };
   }, [file]);
 
-  const removeCurrent = async () => {
+  const removeCurrent = () => {
     if (!file || busy) return;
-    if (!confirm(
-      `Gỡ "${file.name}" khỏi phiếu ${row.ma_phieu || ""}?\n\n` +
-      `Tệp vẫn còn trong kho, chỉ là phiếu này không trỏ tới nữa.`
-    )) return;
-    setBusy(true);
-    setDelErr("");
-    try {
-      const next = await removeDossierFile(row.id, files, file.path);
-      setFiles(next);
-      // Lùi con trỏ nếu vừa xoá tệp cuối; hết tệp thì đóng luôn cửa sổ.
-      setIdx(i => Math.max(0, Math.min(i, next.length - 1)));
-      onChanged();
-      if (next.length === 0) onClose();
-    } catch (e) {
-      setDelErr(errText(e));
-    } finally {
-      setBusy(false);
-    }
+    const target = file;
+    ask({
+      title: `Gỡ "${target.name}" khỏi phiếu ${row.ma_phieu || ""}?`.trim(),
+      message: "Tệp vẫn còn trong kho, chỉ là phiếu này không trỏ tới nữa.",
+      confirmLabel: "Gỡ tệp",
+      onConfirm: async () => {
+        setBusy(true);
+        setDelErr("");
+        try {
+          const next = await removeDossierFile(row.id, files, target.path);
+          setFiles(next);
+          // Lùi con trỏ nếu vừa xoá tệp cuối; hết tệp thì đóng luôn cửa sổ.
+          setIdx(i => Math.max(0, Math.min(i, next.length - 1)));
+          onChanged();
+          if (next.length === 0) onClose();
+        } catch (e) {
+          setDelErr(errText(e));
+        } finally {
+          setBusy(false);
+        }
+      },
+    });
   };
 
   // Esc để đóng — cửa sổ chiếm gần hết màn hình, với chuột thì phải rê lên tận
@@ -796,6 +806,8 @@ function FilePreviewModal({ row, canDelete, onChanged, onClose }: {
           )}
         </div>
       </div>
+
+      {confirmNode}
     </div>,
     document.body
   );

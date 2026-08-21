@@ -44,6 +44,7 @@ import {
 import { useProjectCatalog } from "@/lib/projectCatalog";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import { deptShortCode } from "@/lib/departments";
+import { useConfirmBox } from "@/components/ConfirmDialog";
 import { supabase } from "@/lib/supabase";
 import { crumpleToss } from "@/lib/crumpleToss";
 import {
@@ -83,6 +84,8 @@ export default function FinancePartnerCatalog() {
   // gọn mắt — người có cờ Báo cáo vẫn thêm/sửa bình thường, chỉ mất quyền xoá.
   const user = useCurrentUser();
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // Hộp xác nhận căn giữa màn hình — thay window.confirm() cho cả tab này.
+  const { ask, confirmNode } = useConfirmBox();
 
   const runWrite = useCallback(
     async (fn: () => Promise<{ error: unknown }>, failMsg: string) => {
@@ -113,45 +116,46 @@ export default function FinancePartnerCatalog() {
    * hình im lặng và tưởng đã xoá xong.
    */
   const removePartner = useCallback(
-    async (p: FinancePartner, contractCount: number, rowEl: HTMLElement | null, btn: HTMLElement | null) => {
+    (p: FinancePartner, contractCount: number, rowEl: HTMLElement | null, btn: HTMLElement | null) => {
       if (deletingId) return;
-      if (!confirm(
-        `Xoá đối tác "${p.name}"?
-
-` +
-        (contractCount ? `${contractCount} dòng hợp đồng kèm theo cũng bị xoá.
-
-` : "") +
-        `Nếu chỉ muốn ẩn khỏi danh sách chọn thì mở đối tác ra, bỏ tick "Đang dùng" rồi Lưu — cách đó giữ lại dữ liệu.`
-      )) return;
-      setDeletingId(p.id);
-      setWriteErr("");
-      // Vò dòng ném vào sọt ngay khi bấm. Ở đây hiệu ứng còn gánh thêm một việc:
-      // RLS chặn DELETE thì server trả về sạch sẽ chứ không báo lỗi, nên nhánh
-      // "xoá 0 dòng" bên dưới cũng phải gọi cancel() để dòng bung lại — nếu
-      // không, người dùng thấy dòng bay đi rồi hiện lại như ma.
-      const toss = crumpleToss(rowEl, { origin: btn });
-      try {
-        const { data, error: e } = await supabase
-          .from("finance_partners")
-          .delete()
-          .eq("id", p.id)
-          .select("id");
-        if (e) throw e;
-        if (!data || data.length === 0) {
-          throw new Error("tài khoản của bạn không đủ quyền xoá đối tác.");
-        }
-        toss.done(`Đã xoá đối tác ${p.name}`);
-        invalidateFinancePartners();
-        await reload();
-      } catch (e) {
-        toss.cancel();
-        setWriteErr(`Không xoá được đối tác: ${e instanceof Error ? e.message : String(e)}`);
-      } finally {
-        setDeletingId(null);
-      }
+      // Hộp hỏi KHÔNG dừng luồng chạy như window.confirm(): phần xoá nằm hết
+      // trong onConfirm. `rowEl`/`btn` chộp từ lúc bấm nên vẫn đúng dòng đó.
+      ask({
+        title: `Xoá đối tác "${p.name}"?`,
+        message:
+          (contractCount ? `${contractCount} dòng hợp đồng kèm theo cũng bị xoá.\n\n` : "") +
+          `Nếu chỉ muốn ẩn khỏi danh sách chọn thì mở đối tác ra, bỏ tick "Đang dùng" rồi Lưu — cách đó giữ lại dữ liệu.`,
+        onConfirm: async () => {
+          setDeletingId(p.id);
+          setWriteErr("");
+          // Vò dòng ném vào sọt ngay khi bấm. Ở đây hiệu ứng còn gánh thêm một việc:
+          // RLS chặn DELETE thì server trả về sạch sẽ chứ không báo lỗi, nên nhánh
+          // "xoá 0 dòng" bên dưới cũng phải gọi cancel() để dòng bung lại — nếu
+          // không, người dùng thấy dòng bay đi rồi hiện lại như ma.
+          const toss = crumpleToss(rowEl, { origin: btn });
+          try {
+            const { data, error: e } = await supabase
+              .from("finance_partners")
+              .delete()
+              .eq("id", p.id)
+              .select("id");
+            if (e) throw e;
+            if (!data || data.length === 0) {
+              throw new Error("tài khoản của bạn không đủ quyền xoá đối tác.");
+            }
+            toss.done(`Đã xoá đối tác ${p.name}`);
+            invalidateFinancePartners();
+            await reload();
+          } catch (e) {
+            toss.cancel();
+            setWriteErr(`Không xoá được đối tác: ${e instanceof Error ? e.message : String(e)}`);
+          } finally {
+            setDeletingId(null);
+          }
+        },
+      });
     },
-    [deletingId, reload]
+    [deletingId, reload, ask]
   );
 
   // Gom tài khoản theo đối tác (migration 059). Thứ tự đã do truy vấn xếp sẵn:
@@ -433,6 +437,8 @@ export default function FinancePartnerCatalog() {
           onClose={() => setAdding(false)}
         />
       )}
+
+      {confirmNode}
     </div>
   );
 }
@@ -859,6 +865,9 @@ function PartnerModal({ partner: p, contracts, accounts, accountIdsByContract, p
   const [ad, setAd] = useState<Record<string, Partial<FinancePartnerAccount>>>({});
   const [newAcc, setNewAcc] = useState({ label: "", bank_account: "", bank_name: "", bank_branch: "" });
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  // Modal này có 3 nút xoá riêng (đối tác / tài khoản / dòng hợp đồng) nên giữ
+  // hộp hỏi riêng của nó — hộp ở panel ngoài không với vào đây được.
+  const { ask, confirmNode } = useConfirmBox();
 
   const dirty = Object.keys(d).length > 0;
   const set = (k: keyof FinancePartner, v: unknown) => setD(prev => ({ ...prev, [k]: v }));
@@ -881,18 +890,25 @@ function PartnerModal({ partner: p, contracts, accounts, accountIdsByContract, p
     if (ok) setD({});
   };
 
-  const removePartner = async () => {
-    if (!confirm(
-      `Xoá đối tác "${p.name}"?\n\n` +
-      (contracts.length ? `${contracts.length} dòng hợp đồng kèm theo cũng bị xoá.\n\n` : "") +
-      `Nếu chỉ muốn ẩn khỏi danh sách chọn thì bỏ tick "Đang dùng" rồi Lưu — cách đó giữ lại dữ liệu.`
-    )) return;
-    const ok = await runWrite(
-      async () => supabase.from("finance_partners").delete().eq("id", p.id),
-      "Không xoá được đối tác"
-    );
-    if (ok) onClose();
-  };
+  const removePartner = () =>
+    ask({
+      title: `Xoá đối tác "${p.name}"?`,
+      message:
+        (contracts.length ? `${contracts.length} dòng hợp đồng kèm theo cũng bị xoá.\n\n` : "") +
+        `Nếu chỉ muốn ẩn khỏi danh sách chọn thì bỏ tick "Đang dùng" rồi Lưu — cách đó giữ lại dữ liệu.`,
+      onConfirm: async () => {
+        const ok = await runWrite(
+          async () => supabase.from("finance_partners").delete().eq("id", p.id),
+          "Không xoá được đối tác"
+        );
+        // Không vò giấy ở đây: xoá xong là đóng cả modal, chẳng còn dòng nào để
+        // ném. Chỉ báo một dòng toast cho biết đã xong.
+        if (ok) {
+          crumpleToss(null).done(`Đã xoá đối tác ${p.name}`);
+          onClose();
+        }
+      },
+    });
 
   // ─── Tài khoản ngân hàng (059) ───
   const addAccount = async () => {
@@ -945,18 +961,23 @@ function PartnerModal({ partner: p, contracts, accounts, accountIdsByContract, p
       "Không đặt được tài khoản mặc định"
     );
 
-  const removeAccount = (a: FinancePartnerAccount) => {
+  const removeAccount = (a: FinancePartnerAccount, rowEl: HTMLElement | null, btn: HTMLElement | null) => {
     const dung = contracts.filter(c => (accountIdsByContract.get(c.id) || []).includes(a.id));
-    if (!confirm(
-      `Xoá tài khoản ${a.bank_account}?` +
-      (dung.length ? `
-
-${dung.length} dòng hợp đồng đang trỏ vào tài khoản này sẽ mất liên kết.` : "")
-    )) return;
-    runWrite(
-      async () => supabase.from("finance_partner_accounts").delete().eq("id", a.id),
-      "Không xoá được tài khoản"
-    );
+    ask({
+      title: `Xoá tài khoản ${a.bank_account}?`,
+      message: dung.length
+        ? `${dung.length} dòng hợp đồng đang trỏ vào tài khoản này sẽ mất liên kết.`
+        : undefined,
+      onConfirm: async () => {
+        const toss = crumpleToss(rowEl, { origin: btn });
+        const ok = await runWrite(
+          async () => supabase.from("finance_partner_accounts").delete().eq("id", a.id),
+          "Không xoá được tài khoản"
+        );
+        if (ok) toss.done(`Đã xoá tài khoản ${a.bank_account}`);
+        else toss.cancel();
+      },
+    });
   };
 
   // Bật/tắt một tài khoản cho một dòng hợp đồng. Bấm là ghi luôn, không có
@@ -1001,12 +1022,19 @@ ${dung.length} dòng hợp đồng đang trỏ vào tài khoản này sẽ mất
     if (ok) setCd(prev => { const n = { ...prev }; delete n[c.id]; return n; });
   };
 
-  const removeContract = (c: FinancePartnerContract) => {
-    if (!confirm(`Xoá dòng hợp đồng "${c.contract_no || "(chưa có số)"}"?`)) return;
-    runWrite(
-      async () => supabase.from("finance_partner_contracts").delete().eq("id", c.id),
-      "Không xoá được dòng hợp đồng"
-    );
+  const removeContract = (c: FinancePartnerContract, rowEl: HTMLElement | null, btn: HTMLElement | null) => {
+    ask({
+      title: `Xoá dòng hợp đồng "${c.contract_no || "(chưa có số)"}"?`,
+      onConfirm: async () => {
+        const toss = crumpleToss(rowEl, { origin: btn });
+        const ok = await runWrite(
+          async () => supabase.from("finance_partner_contracts").delete().eq("id", c.id),
+          "Không xoá được dòng hợp đồng"
+        );
+        if (ok) toss.done(`Đã xoá dòng hợp đồng ${c.contract_no || ""}`.trim());
+        else toss.cancel();
+      },
+    });
   };
 
   const copyContent = async (c: FinancePartnerContract) => {
@@ -1111,6 +1139,7 @@ ${dung.length} dòng hợp đồng đang trỏ vào tài khoản này sẽ mất
 
             return (
               <div key={a.id}
+                data-toss-row
                 className={`flex flex-wrap items-center gap-2 border rounded-xl p-2.5 transition-all ${
                   aDirty ? "border-blue-300 bg-blue-50/30"
                   : a.is_default ? "border-emerald-200 bg-emerald-50/40"
@@ -1140,7 +1169,12 @@ ${dung.length} dòng hợp đồng đang trỏ vào tài khoản này sẽ mất
                   className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-all cursor-pointer disabled:opacity-30">
                   <Save size={14} />
                 </button>
-                <button type="button" onClick={() => removeAccount(a)} disabled={saving}
+                <button type="button" disabled={saving}
+                  onClick={e => removeAccount(
+                    a,
+                    e.currentTarget.closest("[data-toss-row]") as HTMLElement | null,
+                    e.currentTarget
+                  )}
                   title="Xoá tài khoản"
                   className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg transition-all cursor-pointer disabled:opacity-50">
                   <Trash2 size={14} />
@@ -1195,6 +1229,7 @@ ${dung.length} dòng hợp đồng đang trỏ vào tài khoản này sẽ mất
 
               return (
                 <div key={c.id}
+                  data-toss-row
                   className={`bg-slate-50/60 border rounded-xl p-3 space-y-2.5 transition-all ${
                     cDirty ? "border-blue-300 bg-blue-50/30" : "border-slate-200/70"
                   }`}>
@@ -1284,7 +1319,12 @@ ${dung.length} dòng hợp đồng đang trỏ vào tài khoản này sẽ mất
                         title="Lưu dòng hợp đồng">
                         <Save size={14} />
                       </button>
-                      <button type="button" onClick={() => removeContract(c)} disabled={saving}
+                      <button type="button" disabled={saving}
+                        onClick={e => removeContract(
+                          c,
+                          e.currentTarget.closest("[data-toss-row]") as HTMLElement | null,
+                          e.currentTarget
+                        )}
                         className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg transition-all cursor-pointer disabled:opacity-50"
                         title="Xoá dòng hợp đồng">
                         <Trash2 size={14} />
@@ -1297,6 +1337,8 @@ ${dung.length} dòng hợp đồng đang trỏ vào tài khoản này sẽ mất
           </div>
         )}
       </div>
+
+      {confirmNode}
     </ModalShell>
   );
 }

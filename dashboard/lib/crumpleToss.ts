@@ -164,15 +164,30 @@ export function crumpleToss(
     transition: row.style.transition,
     pointerEvents: row.style.pointerEvents,
   };
+  // Hàng của BẢNG không co được bằng `height`: trong bố cục table, height của
+  // <tr> chỉ là mức TỐI THIỂU, chiều cao thật do nội dung ô quyết định. Muốn
+  // hàng xẹp xuống thì phải bóp padding + line-height của từng <td>.
+  const cells = row.tagName === "TR" ? (Array.from(row.children) as HTMLElement[]) : [];
+  const savedCells = cells.map(c => ({
+    el: c,
+    padding: c.style.padding,
+    lineHeight: c.style.lineHeight,
+    overflow: c.style.overflow,
+    transition: c.style.transition,
+  }));
+
   row.style.height = `${rect.height}px`;
   row.style.overflow = "hidden";
   row.style.pointerEvents = "none";
+  const cellTransition = "padding .3s cubic-bezier(.4,0,.2,1), line-height .3s cubic-bezier(.4,0,.2,1)";
+  cells.forEach(c => { c.style.transition = cellTransition; c.style.overflow = "hidden"; });
   void row.offsetHeight; // ép trình duyệt chốt mốc trước khi đổi sang 0
   row.style.transition = "height .3s cubic-bezier(.4,0,.2,1), padding .3s cubic-bezier(.4,0,.2,1), opacity .2s linear";
   row.style.height = "0px";
   row.style.paddingTop = "0px";
   row.style.paddingBottom = "0px";
   row.style.opacity = "0";
+  cells.forEach(c => { c.style.padding = "0px"; c.style.lineHeight = "0"; });
 
   // 2. Trục rơi = tâm nút Xoá vừa bấm. Không đoán theo bề rộng cột: hai bảng có
   //    thể đổi bố cục, mà lệch trục là giấy rơi ra ngoài miệng sọt.
@@ -269,6 +284,7 @@ export function crumpleToss(
       row.style.paddingTop = saved.paddingTop;
       row.style.paddingBottom = saved.paddingBottom;
       row.style.opacity = "1";
+      savedCells.forEach(c => { c.el.style.padding = c.padding; c.el.style.lineHeight = c.lineHeight; });
       window.setTimeout(() => {
         if (!row.isConnected) return;
         row.style.height = saved.height;
@@ -276,6 +292,10 @@ export function crumpleToss(
         row.style.overflow = saved.overflow;
         row.style.transition = saved.transition;
         row.style.pointerEvents = saved.pointerEvents;
+        savedCells.forEach(c => {
+          c.el.style.overflow = c.overflow;
+          c.el.style.transition = c.transition;
+        });
       }, 320);
     },
   };

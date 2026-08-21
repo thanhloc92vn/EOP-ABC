@@ -49,6 +49,8 @@ import TransferRequestPreview, {
 } from "@/components/TransferRequestPreview";
 import { useDepartments } from "@/lib/departments";
 import { useProjectCatalog } from "@/lib/projectCatalog";
+import { crumpleToss } from "@/lib/crumpleToss";
+import { useConfirmBox } from "@/components/ConfirmDialog";
 import {
   useFinancePartners,
   foldVi,
@@ -165,6 +167,8 @@ export default function FinancePlanPanel() {
   // Lỗi thao tác KHÔNG dùng chung state với lỗi tải: `err` có early-return che
   // sạch panel, một lần bấm hụt là mất cả bảng đang xem.
   const [opErr, setOpErr] = useState("");
+  // Hộp xác nhận căn giữa màn hình — thay window.confirm().
+  const { ask, confirmNode } = useConfirmBox();
 
   // Kỳ ghi lên file Excel lấy theo ngày ĐẦU khoảng lọc.
   const [anchorY, anchorM] = useMemo(() => {
@@ -299,19 +303,33 @@ export default function FinancePlanPanel() {
     }
   };
 
-  const remove = async (r: FinancePlanRow) => {
+  // Hỏi trước rồi mới xoá — trước đây bấm nhầm là dòng bay luôn, không có nút
+  // hoàn tác. Kèm hiệu ứng vò giấy thả sọt như bảng phiếu trình ký.
+  const remove = (r: FinancePlanRow, rowEl: HTMLElement | null, btn: HTMLElement | null) => {
     if (deleting) return;
-    setDeleting(r.id);
-    setOpErr("");
-    try {
-      const { error } = await supabase.from("finance_plans").delete().eq("id", r.id);
-      if (error) throw error;
-      setRows(prev => prev.filter(x => x.id !== r.id));
-    } catch (e) {
-      setOpErr(errText(e));
-    } finally {
-      setDeleting("");
-    }
+    ask({
+      title: `Xoá dòng kế hoạch của "${r.customer || "(chưa có khách hàng)"}"?`,
+      message:
+        (r.content ? `${r.content}\n` : "") +
+        (r.amount ? `Số tiền: ${fmtMoney(r.amount)} đ\n` : "") +
+        "Không khôi phục được.",
+      onConfirm: async () => {
+        setDeleting(r.id);
+        setOpErr("");
+        const toss = crumpleToss(rowEl, { origin: btn });
+        try {
+          const { error } = await supabase.from("finance_plans").delete().eq("id", r.id);
+          if (error) throw error;
+          toss.done(`Đã xoá dòng ${r.customer || "kế hoạch"}`);
+          setRows(prev => prev.filter(x => x.id !== r.id));
+        } catch (e) {
+          toss.cancel();
+          setOpErr(errText(e));
+        } finally {
+          setDeleting("");
+        }
+      },
+    });
   };
 
   // ─── Tải Excel ───
@@ -525,6 +543,7 @@ export default function FinancePlanPanel() {
                   return (
                     <tr
                       key={r.id}
+                      data-toss-row
                       onClick={() => mine && setEditing(r)}
                       title={mine ? "" : `Dòng do ${r.created_by || "người khác"} lập — bạn chỉ xem`}
                       // Nền dòng nói luôn chiều tiền: xanh = thu, đỏ = chi.
@@ -611,7 +630,16 @@ export default function FinancePlanPanel() {
                             <button
                               type="button"
                               disabled={!!deleting}
-                              onClick={e => { e.stopPropagation(); remove(r); }}
+                              onClick={e => {
+                                e.stopPropagation();
+                                // Chộp dòng NGAY trong handler: sau await thì
+                                // React đã dựng lại bảng, không tìm lại được.
+                                remove(
+                                  r,
+                                  e.currentTarget.closest("[data-toss-row]") as HTMLElement | null,
+                                  e.currentTarget
+                                );
+                              }}
                               title="Xoá dòng"
                               className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all cursor-pointer disabled:opacity-40"
                             >
@@ -652,6 +680,8 @@ export default function FinancePlanPanel() {
           onClose={() => setEditing(null)}
         />
       )}
+
+      {confirmNode}
     </div>
   );
 }
