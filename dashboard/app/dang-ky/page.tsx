@@ -1679,26 +1679,16 @@ function BookingContent() {
                   </select>
 
                   {/* Đơn chạy theo PHÒNG BAN CHỌN Ở TRÊN, không theo phòng của người
-                      đăng ký. In thẳng tên người sẽ duyệt để chọn nhầm là thấy ngay. */}
-                  {department && (
-                    cap1ApproverNames.length > 0 ? (
-                      <p className="flex items-start gap-1.5 text-[11px] font-semibold text-slate-500 pt-0.5">
-                        <CheckCircle2 size={12} className="text-indigo-500 shrink-0 mt-0.5" />
-                        <span>
-                          Đơn sẽ chuyển tới{" "}
-                          <span className="font-extrabold text-indigo-700">{cap1ApproverNames.join(", ")}</span>
-                          {" "}phê duyệt, sau đó Hành chính xác nhận.
-                        </span>
-                      </p>
-                    ) : (
-                      <p className="flex items-start gap-1.5 text-[11px] font-semibold text-amber-700 pt-0.5">
-                        <AlertTriangle size={12} className="text-amber-500 shrink-0 mt-0.5" />
-                        <span>
-                          Không tìm được cấp quản lý của phòng ban này — đơn sẽ nằm chờ ở mục
-                          Duyệt yêu cầu cho Hành chính/Admin xử lý.
-                        </span>
-                      </p>
-                    )
+                      đăng ký. Không in tên người duyệt ra form nữa (user yêu cầu ẩn);
+                      chỉ còn cảnh báo khi phòng ban đó KHÔNG có ai duyệt được. */}
+                  {department && cap1ApproverNames.length === 0 && (
+                    <p className="flex items-start gap-1.5 text-[11px] font-semibold text-amber-700 pt-0.5">
+                      <AlertTriangle size={12} className="text-amber-500 shrink-0 mt-0.5" />
+                      <span>
+                        Không tìm được cấp quản lý của phòng ban này — đơn sẽ nằm chờ ở mục
+                        Duyệt yêu cầu cho Hành chính/Admin xử lý.
+                      </span>
+                    </p>
                   )}
                 </div>
 
@@ -2064,7 +2054,8 @@ function BookingContent() {
               <div className="overflow-x-auto rounded-xl border border-slate-200/60 bg-white">
                 <table className="w-full text-xs text-left border-collapse">
                   <thead>
-                    <tr className="bg-slate-50/75 border-b border-slate-100 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                    {/* Thanh tiêu đề xanh thương hiệu — cùng kiểu bảng Kế hoạch TC */}
+                    <tr className="bg-gradient-to-r from-[#005BAC] to-blue-500 border-b border-blue-700/30 text-white font-extrabold uppercase tracking-wider text-[10px]">
                       <th className="py-3 px-4">{isVehicle ? "Xe" : "Phòng"}</th>
                       <th className="py-3 px-4">Thời gian</th>
                       <th className="py-3 px-4">Chủ trì</th>
@@ -2117,7 +2108,8 @@ function BookingContent() {
               <div className="overflow-x-auto rounded-xl border border-slate-200/60 bg-white">
                 <table className="w-full text-xs text-left border-collapse">
                   <thead>
-                    <tr className="bg-slate-50/75 border-b border-slate-100 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                    {/* Thanh tiêu đề xanh thương hiệu — đồng bộ với bảng "sắp tới" ở trên */}
+                    <tr className="bg-gradient-to-r from-[#005BAC] to-blue-500 border-b border-blue-700/30 text-white font-extrabold uppercase tracking-wider text-[10px]">
                       <th className="py-3 px-4">{isVehicle ? "Xe" : "Phòng"}</th>
                       <th className="py-3 px-4">Thời gian</th>
                       <th className="py-3 px-4">Chủ trì</th>

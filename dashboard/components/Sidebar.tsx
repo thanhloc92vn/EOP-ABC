@@ -23,7 +23,7 @@ import {
   ChevronDown,
   MapPin,
   Newspaper,
-  Palmtree,
+  CalendarOff,
   Plane,
   TrendingUp
 } from "lucide-react";
@@ -84,7 +84,7 @@ function SidebarLinks({ isApprover, pathname, setSidebarOpen }: { isApprover: bo
   }[] = [
     { label: "Đăng ký xe", href: "/dang-ky?tab=xe", tab: "xe", dk: null, icon: CarFront },
     { label: "Đăng ký phòng họp", href: "/dang-ky?tab=phong-hop", tab: "phong-hop", dk: null, icon: DoorOpen },
-    { label: "Đăng ký nghỉ phép", href: "/calendar?dk=nghi-phep", tab: null, dk: "nghi-phep", icon: Palmtree },
+    { label: "Đăng ký nghỉ phép", href: "/calendar?dk=nghi-phep", tab: null, dk: "nghi-phep", icon: CalendarOff },
     { label: "Đăng ký công tác", href: "/calendar?dk=cong-tac", tab: null, dk: "cong-tac", icon: Plane },
   ];
 
