@@ -19,6 +19,8 @@ import {
 } from "@/lib/approvers";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import { parseLeaveTask, computeLeaveQuota } from "@/lib/annualLeave";
+import TripDistanceModal from "@/components/TripDistanceModal";
+import { useTripDistances, findDistance } from "@/lib/tripDistances";
 import {
   Search,
   ChevronLeft,
@@ -37,7 +39,9 @@ import {
   X,
   Compass,
   Coins,
-  Trash2
+  Trash2,
+  CalendarOff,
+  MapPin
 } from "lucide-react";
 
 interface Task {
@@ -206,6 +210,16 @@ function CalendarContent() {
   const [tripTravelEstimate, setTripTravelEstimate] = useState<number>(0);
   const [tripOtherExpenses, setTripOtherExpenses] = useState<OtherExpense[]>([]);
   const [hotelRate, setHotelRate] = useState<number>(350000);
+
+  // Danh mục cung đường (migration 061) — dùng để tự điền ô "Độ dài (KM)".
+  const [isDistanceModalOpen, setIsDistanceModalOpen] = useState(false);
+  const [distancePrefill, setDistancePrefill] = useState<{ from: string; to: string }>({ from: "", to: "" });
+  const { rows: tripDistanceRows, error: tripDistanceErr, reload: reloadTripDistances } = useTripDistances(isTripModalOpen);
+  // Ghi nhớ giá trị MÁY đã điền cho từng chặng / cho ô "Nơi đến" chặng 1. Nhờ nó
+  // mà tự điền không bao giờ đè lên số người dùng tự gõ: chỉ ghi khi ô còn trống
+  // hoặc vẫn đang giữ đúng giá trị máy điền lần trước.
+  const autoDistanceRef = useRef<Record<number, string>>({});
+  const autoDestRef = useRef("");
 
   const selectedMonth = currentDate.getMonth();
   const selectedYear = currentDate.getFullYear();
@@ -799,11 +813,42 @@ function CalendarContent() {
   // Update dates in first route segment when modalStart changes
   useEffect(() => {
     if (modalStart) {
-      setTripRoutes(routes => 
+      setTripRoutes(routes =>
         routes.map((r, i) => i === 0 ? { ...r, date: modalStart } : r)
       );
     }
   }, [modalStart]);
+
+  // "Điểm công tác chính" chảy xuống ô "Nơi đến" của chặng 1 — gõ một lần thay
+  // vì hai. KHÔNG khoá cứng: sửa tay ô "Nơi đến" xong thì máy thôi đụng vào,
+  // vì lúc đó giá trị trong ô đã khác thứ máy điền lần cuối.
+  useEffect(() => {
+    const dest = tripDestination.trim();
+    const cur = tripRoutes[0]?.to ?? "";
+    if (cur && cur !== autoDestRef.current) return;
+    if (cur === dest) return;
+    autoDestRef.current = dest;
+    setTripRoutes((prev) => prev.map((r, i) => (i === 0 ? { ...r, to: dest } : r)));
+  }, [tripDestination, tripRoutes]);
+
+  // Tự điền số km theo danh mục cung đường. Tra cả hai chiều (xem lib/tripDistances),
+  // nên chặng về cũng được điền mà không phải lưu thêm dòng ngược.
+  useEffect(() => {
+    if (tripDistanceRows.length === 0) return;
+    let changed = false;
+    const next = tripRoutes.map((r, i) => {
+      const hit = findDistance(tripDistanceRows, r.from, r.to);
+      if (!hit) return r;
+      const value = String(hit.distance_km);
+      const cur = (r.distance || "").trim();
+      if (cur && cur !== autoDistanceRef.current[i]) return r; // người dùng đã gõ tay
+      if (cur === value) return r;
+      autoDistanceRef.current[i] = value;
+      changed = true;
+      return { ...r, distance: value };
+    });
+    if (changed) setTripRoutes(next);
+  }, [tripDistanceRows, tripRoutes]);
 
   // Auto-calculate nights for the first route segment when tripDaysCount changes
   useEffect(() => {
@@ -1753,8 +1798,12 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
               Từ 768px trở lên form dàn 2 cột cho thấp bớt chiều dọc. */}
           <div className="bg-white rounded-2xl w-full max-w-md md:max-w-2xl max-h-[92vh] flex flex-col shadow-2xl border border-slate-100 animate-in fade-in-50 zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-slate-100 px-5 sm:px-6 pt-5 pb-3 shrink-0">
-              <div className="flex items-center gap-2">
-                <span className="text-lg">🌴</span>
+              <div className="flex items-center gap-2.5">
+                {/* Huy hiệu vuông bo góc + icon line — cùng kiểu tiêu đề form ở /dang-ky,
+                    thay emoji 🌴 cho đồng bộ với phần còn lại của hệ thống. */}
+                <span className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-600 to-cyan-500 flex items-center justify-center shadow-sm">
+                  <CalendarOff size={16} className="text-white" />
+                </span>
                 <h3 className="font-heading font-extrabold text-sm text-slate-800">Xin nghỉ phép</h3>
               </div>
               <button type="button" onClick={() => setIsLeaveModalOpen(false)} className="text-slate-400 hover:text-slate-600 transition-colors">
@@ -1846,30 +1895,38 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
               </div>
 
               {/* Phép năm còn lại + chặn đăng ký vượt hạn mức. Chỉ hiện khi đang
-                  chọn loại nghỉ có trừ phép năm — các loại khác không liên quan. */}
+                  chọn loại nghỉ có trừ phép năm — các loại khác không liên quan.
+                  Thanh hạn mức nền xanh thương hiệu, chữ trắng; khi thiếu phép thì đổi
+                  sang nền đỏ cảnh báo — lúc đó chữ quay lại tông tối cho đọc được. */}
               {isAnnualLeaveType && leaveQuota && (
                 <div className={`md:col-span-2 rounded-xl border p-3 space-y-2 ${
-                  leaveOverQuota ? "border-rose-200 bg-rose-50/60" : "border-slate-200 bg-slate-50/60"
+                  leaveOverQuota
+                    ? "border-rose-200 bg-rose-50/60"
+                    : "border-blue-700/30 bg-gradient-to-r from-[#005BAC] to-blue-500 shadow-sm"
                 }`}>
                   <div className="grid grid-cols-4 gap-2 text-center">
                     <div>
-                      <div className="text-[9px] font-bold text-slate-400 uppercase">Hạn mức</div>
-                      <div className="text-sm font-black text-slate-800 mt-0.5">{leaveQuota.total}</div>
+                      <div className={`text-[9px] font-bold uppercase ${leaveOverQuota ? "text-slate-400" : "text-white/70"}`}>Hạn mức</div>
+                      <div className={`text-sm font-black mt-0.5 ${leaveOverQuota ? "text-slate-800" : "text-white"}`}>{leaveQuota.total}</div>
                     </div>
                     <div>
-                      <div className="text-[9px] font-bold text-slate-400 uppercase">Đã nghỉ</div>
-                      <div className="text-sm font-black text-emerald-600 mt-0.5">{leaveQuota.used}</div>
+                      <div className={`text-[9px] font-bold uppercase ${leaveOverQuota ? "text-slate-400" : "text-white/70"}`}>Đã nghỉ</div>
+                      <div className={`text-sm font-black mt-0.5 ${leaveOverQuota ? "text-emerald-600" : "text-emerald-200"}`}>{leaveQuota.used}</div>
                     </div>
                     <div>
-                      <div className="text-[9px] font-bold text-slate-400 uppercase">Chờ duyệt</div>
+                      <div className={`text-[9px] font-bold uppercase ${leaveOverQuota ? "text-slate-400" : "text-white/70"}`}>Chờ duyệt</div>
                       <div className={`text-sm font-black mt-0.5 ${
-                        leaveQuota.pending > 0 ? "text-amber-600" : "text-slate-400"
+                        leaveQuota.pending > 0
+                          ? (leaveOverQuota ? "text-amber-600" : "text-amber-200")
+                          : (leaveOverQuota ? "text-slate-400" : "text-white/50")
                       }`}>{leaveQuota.pending}</div>
                     </div>
                     <div>
-                      <div className="text-[9px] font-bold text-slate-400 uppercase">Còn lại</div>
+                      <div className={`text-[9px] font-bold uppercase ${leaveOverQuota ? "text-slate-400" : "text-white/70"}`}>Còn lại</div>
                       <div className={`text-sm font-black mt-0.5 ${
-                        leaveQuota.remaining > 0 ? "text-indigo-600" : "text-rose-500"
+                        leaveQuota.remaining > 0
+                          ? (leaveOverQuota ? "text-indigo-600" : "text-white")
+                          : (leaveOverQuota ? "text-rose-500" : "text-rose-200")
                       }`}>{leaveQuota.remaining}</div>
                     </div>
                   </div>
@@ -2230,13 +2287,29 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
               cuộn hết form mới bấm được. */}
           <div className="bg-white rounded-2xl w-full max-w-2xl lg:max-w-4xl max-h-[92vh] flex flex-col shadow-2xl border border-slate-100 animate-in fade-in-50 zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-slate-100 px-5 sm:px-6 pt-5 pb-3 shrink-0">
-              <div className="flex items-center gap-2">
-                <span className="text-lg">💼</span>
+              <div className="flex items-center gap-2.5">
+                {/* Cùng huy hiệu vuông bo góc như modal Xin nghỉ phép; icon máy bay
+                    trùng với mục "Đăng ký công tác" ngoài sidebar. */}
+                <span className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-600 to-cyan-500 flex items-center justify-center shadow-sm">
+                  <Plane size={16} className="text-white" />
+                </span>
                 <h3 className="font-heading font-extrabold text-sm text-slate-800">Đăng ký lịch đi công tác</h3>
               </div>
-              <button type="button" onClick={() => setIsTripModalOpen(false)} className="text-slate-400 hover:text-slate-650 transition-colors">
-                <X size={16} />
-              </button>
+              <div className="flex items-center gap-3">
+                {/* Cấu hình vị trí: nơi lưu số km chuẩn của từng cung đường, để ô
+                    "Độ dài (KM)" bên dưới tự điền thay vì mỗi người gõ một số. */}
+                <button
+                  type="button"
+                  onClick={() => { setDistancePrefill({ from: "", to: "" }); setIsDistanceModalOpen(true); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-blue-200 bg-blue-50/60 text-blue-700 font-bold text-[11px] hover:bg-blue-100/70 transition-colors cursor-pointer"
+                  title="Lưu số km chuẩn cho từng cung đường"
+                >
+                  <MapPin size={13} /> Cấu hình vị trí
+                </button>
+                <button type="button" onClick={() => setIsTripModalOpen(false)} className="text-slate-400 hover:text-slate-650 transition-colors">
+                  <X size={16} />
+                </button>
+              </div>
             </div>
 
             <form onSubmit={handleRequestTrip} className="flex flex-col min-h-0 text-xs font-semibold text-slate-700">
@@ -2252,7 +2325,7 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                     value={tripDestination}
                     onChange={(e) => setTripDestination(e.target.value)}
                     placeholder="Ví dụ: Vũng Tàu, Tây Ninh"
-                    className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-indigo-500/20 font-semibold text-slate-800 text-xs bg-white"
+                    className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 font-semibold text-slate-800 text-xs bg-white"
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -2261,7 +2334,7 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                     required
                     value={tripTransport}
                     onChange={(e) => setTripTransport(e.target.value)}
-                    className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-indigo-500/20 bg-white font-semibold text-slate-800 text-xs"
+                    className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 bg-white font-semibold text-slate-800 text-xs"
                   >
                     <option value="🚗 Xe công ty">🚗 Xe công ty</option>
                     <option value="✈️ Máy bay">✈️ Máy bay</option>
@@ -2282,7 +2355,7 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                     required
                     value={modalStart}
                     onChange={(e) => setModalStart(e.target.value)}
-                    className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-indigo-500/20 font-semibold text-slate-800 text-xs bg-slate-50/50"
+                    className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 font-semibold text-slate-800 text-xs bg-slate-50/50"
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -2292,11 +2365,11 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                     required
                     value={modalEnd}
                     onChange={(e) => setModalEnd(e.target.value)}
-                    className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-indigo-500/20 font-semibold text-slate-800 text-xs bg-slate-50/50"
+                    className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 font-semibold text-slate-800 text-xs bg-slate-50/50"
                   />
                 </div>
                 <div className="pb-1.5">
-                  <div className="bg-indigo-50/50 border border-indigo-100 rounded-xl py-2 px-3 flex items-center gap-1.5 text-indigo-700 text-[11px] font-extrabold shadow-sm shadow-indigo-500/5">
+                  <div className="bg-blue-50/50 border border-blue-100 rounded-xl py-2 px-3 flex items-center gap-1.5 text-blue-700 text-[11px] font-extrabold shadow-sm shadow-blue-500/5">
                     <span>⚡</span>
                     <span>{tripDaysCount} ngày công tác</span>
                   </div>
@@ -2312,7 +2385,7 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                   value={tripMission}
                   onChange={(e) => setTripMission(e.target.value)}
                   rows={2}
-                  className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-indigo-500/20 font-semibold text-slate-800 text-xs placeholder:text-slate-400 bg-white resize-none"
+                  className="w-full border border-slate-200 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500/20 font-semibold text-slate-800 text-xs placeholder:text-slate-400 bg-white resize-none"
                 />
               </div>
 
@@ -2320,12 +2393,12 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
               <div className="border-t border-slate-100 pt-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="flex items-center gap-1.5 font-bold text-slate-850 text-[11px] uppercase tracking-wider">
-                    <Compass size={14} className="text-indigo-600" /> Lộ trình chi tiết (Các chặng đi)
+                    <Compass size={14} className="text-blue-600" /> Lộ trình chi tiết (Các chặng đi)
                   </span>
                   <button
                     type="button"
                     onClick={handleAddRoute}
-                    className="flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:underline cursor-pointer"
+                    className="flex items-center gap-1 text-[11px] font-bold text-blue-600 hover:underline cursor-pointer"
                   >
                     + Thêm chặng đi
                   </button>
@@ -2355,7 +2428,7 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                             value={route.from}
                             onChange={(e) => handleRouteChange(idx, "from", e.target.value)}
                             placeholder="TPHCM"
-                            className="w-full border border-slate-200 rounded-lg p-1.5 outline-none focus:ring-1 focus:ring-indigo-500 bg-white font-medium text-[11px] text-slate-800"
+                            className="w-full border border-slate-200 rounded-lg p-1.5 outline-none focus:ring-1 focus:ring-blue-500 bg-white font-medium text-[11px] text-slate-800"
                           />
                         </div>
                         <div className="space-y-1">
@@ -2366,7 +2439,7 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                             value={route.to}
                             onChange={(e) => handleRouteChange(idx, "to", e.target.value)}
                             placeholder="VD: Tây Ninh"
-                            className="w-full border border-slate-200 rounded-lg p-1.5 outline-none focus:ring-1 focus:ring-indigo-500 bg-white font-medium text-[11px] text-slate-800"
+                            className="w-full border border-slate-200 rounded-lg p-1.5 outline-none focus:ring-1 focus:ring-blue-500 bg-white font-medium text-[11px] text-slate-800"
                           />
                         </div>
                         <div className="space-y-1">
@@ -2376,8 +2449,33 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                             value={route.distance}
                             onChange={(e) => handleRouteChange(idx, "distance", e.target.value)}
                             placeholder="Auto"
-                            className="w-full border border-slate-200 rounded-lg p-1.5 outline-none focus:ring-1 focus:ring-indigo-500 bg-white font-medium text-[11px] text-slate-800"
+                            className="w-full border border-slate-200 rounded-lg p-1.5 outline-none focus:ring-1 focus:ring-blue-500 bg-white font-medium text-[11px] text-slate-800"
                           />
+                          {/* Nói thẳng vì sao ô này điền/không điền được: im lặng thì
+                              người dùng không phân biệt nổi "chưa lưu cung đường"
+                              với "gõ tên khác lúc lưu". */}
+                          {route.from.trim() && route.to.trim() && (
+                            tripDistanceErr ? (
+                              <p className="text-[9.5px] font-bold text-rose-600 leading-tight">
+                                Không đọc được danh mục vị trí
+                              </p>
+                            ) : findDistance(tripDistanceRows, route.from, route.to) ? (
+                              <p className="text-[9.5px] font-bold text-blue-600 leading-tight">
+                                Lấy từ danh mục vị trí
+                              </p>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDistancePrefill({ from: route.from, to: route.to });
+                                  setIsDistanceModalOpen(true);
+                                }}
+                                className="text-[9.5px] font-bold text-amber-600 hover:text-amber-700 underline underline-offset-2 cursor-pointer text-left leading-tight"
+                              >
+                                Chưa có trong danh mục — lưu cung đường này
+                              </button>
+                            )
+                          )}
                         </div>
                         <div className="space-y-1">
                           <label className="text-[10px] text-slate-450 font-bold uppercase">Ngày đi</label>
@@ -2386,7 +2484,7 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                             required
                             value={route.date}
                             onChange={(e) => handleRouteChange(idx, "date", e.target.value)}
-                            className="w-full border border-slate-200 rounded-lg p-1.5 outline-none focus:ring-1 focus:ring-indigo-500 bg-white font-medium text-[11px] text-slate-800"
+                            className="w-full border border-slate-200 rounded-lg p-1.5 outline-none focus:ring-1 focus:ring-blue-500 bg-white font-medium text-[11px] text-slate-800"
                           />
                         </div>
                       </div>
@@ -2400,7 +2498,7 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                             value={route.transport}
                             onChange={(e) => handleRouteChange(idx, "transport", e.target.value)}
                             placeholder="Xe công ty"
-                            className="w-full border border-slate-200 rounded-lg p-1.5 outline-none focus:ring-1 focus:ring-indigo-500 bg-white font-medium text-[11px] text-slate-800"
+                            className="w-full border border-slate-200 rounded-lg p-1.5 outline-none focus:ring-1 focus:ring-blue-500 bg-white font-medium text-[11px] text-slate-800"
                           />
                         </div>
                         <div className="space-y-1">
@@ -2411,7 +2509,7 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                             min={0}
                             value={route.nights}
                             onChange={(e) => handleRouteChange(idx, "nights", Number(e.target.value) || 0)}
-                            className="w-full border border-slate-200 rounded-lg p-1.5 outline-none focus:ring-1 focus:ring-indigo-500 bg-white font-medium text-[11px] text-slate-800"
+                            className="w-full border border-slate-200 rounded-lg p-1.5 outline-none focus:ring-1 focus:ring-blue-500 bg-white font-medium text-[11px] text-slate-800"
                           />
                         </div>
                         <div className="space-y-1">
@@ -2421,7 +2519,7 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                             value={route.reason}
                             onChange={(e) => handleRouteChange(idx, "reason", e.target.value)}
                             placeholder="VD: Qua đêm..."
-                            className="w-full border border-slate-200 rounded-lg p-1.5 outline-none focus:ring-1 focus:ring-indigo-500 bg-white font-medium text-[11px] text-slate-800"
+                            className="w-full border border-slate-200 rounded-lg p-1.5 outline-none focus:ring-1 focus:ring-blue-500 bg-white font-medium text-[11px] text-slate-800"
                           />
                         </div>
                       </div>
@@ -2433,14 +2531,14 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
               {/* Allowance and hotel config */}
               <div className="border-t border-slate-100 pt-4 space-y-3">
                 <span className="flex items-center gap-1.5 font-bold text-slate-850 text-[11px] uppercase tracking-wider">
-                  <Coins size={14} className="text-indigo-600" /> Chi phí và Phụ cấp công tác
+                  <Coins size={14} className="text-blue-600" /> Chi phí và Phụ cấp công tác
                 </span>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   {/* Phụ cấp phí */}
                   <div className="p-3 bg-slate-50/50 border border-slate-100 rounded-xl space-y-1">
                     <span className="text-[9px] text-slate-450 font-bold uppercase block">Phụ cấp công tác phí</span>
-                    <span className="text-[11px] font-black text-indigo-600 block">120.000đ/ngày</span>
+                    <span className="text-[11px] font-black text-blue-600 block">120.000đ/ngày</span>
                     <span className="text-[9px] text-slate-500 block leading-tight">Thành tiền = {formatCurrency(tripDaysCount * 120000)}</span>
                   </div>
 
@@ -2450,7 +2548,7 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                     <select
                       value={hotelRate}
                       onChange={(e) => setHotelRate(Number(e.target.value))}
-                      className="w-full border border-slate-200 rounded-lg p-1 outline-none focus:ring-1 focus:ring-indigo-500 bg-white font-semibold text-[11px] text-slate-800 cursor-pointer"
+                      className="w-full border border-slate-200 rounded-lg p-1 outline-none focus:ring-1 focus:ring-blue-500 bg-white font-semibold text-[11px] text-slate-800 cursor-pointer"
                     >
                       <option value={350000}>350.000 VNĐ / đêm</option>
                       <option value={400000}>400.000 VNĐ / đêm</option>
@@ -2472,7 +2570,7 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                       min={0}
                       value={tripTravelEstimate}
                       onChange={(e) => setTripTravelEstimate(Number(e.target.value) || 0)}
-                      className="w-full border border-slate-200 rounded-lg p-1 outline-none focus:ring-1 focus:ring-indigo-500 bg-white font-semibold text-[11px] text-slate-800"
+                      className="w-full border border-slate-200 rounded-lg p-1 outline-none focus:ring-1 focus:ring-blue-500 bg-white font-semibold text-[11px] text-slate-800"
                     />
                   </div>
                 </div>
@@ -2482,12 +2580,12 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
               <div className="border-t border-slate-100 pt-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="flex items-center gap-1.5 font-bold text-slate-850 text-[11px] uppercase tracking-wider">
-                    <FileText size={14} className="text-indigo-600" /> Hóa đơn & Chi phí khác đề nghị thanh toán
+                    <FileText size={14} className="text-blue-600" /> Hóa đơn & Chi phí khác đề nghị thanh toán
                   </span>
                   <button
                     type="button"
                     onClick={handleAddOtherExpense}
-                    className="flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:underline cursor-pointer"
+                    className="flex items-center gap-1 text-[11px] font-bold text-blue-600 hover:underline cursor-pointer"
                   >
                     + Thêm chi phí khác
                   </button>
@@ -2503,7 +2601,7 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                           value={exp.name}
                           onChange={(e) => handleOtherExpenseChange(idx, "name", e.target.value)}
                           placeholder="Tên chi phí"
-                          className="flex-2 border border-slate-200 rounded-lg p-1.5 outline-none focus:ring-1 focus:ring-indigo-500 bg-white text-[11px] font-medium text-slate-800"
+                          className="flex-2 border border-slate-200 rounded-lg p-1.5 outline-none focus:ring-1 focus:ring-blue-500 bg-white text-[11px] font-medium text-slate-800"
                         />
                         <input
                           type="number"
@@ -2512,14 +2610,14 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                           value={exp.amount}
                           onChange={(e) => handleOtherExpenseChange(idx, "amount", Number(e.target.value) || 0)}
                           placeholder="Số tiền"
-                          className="flex-1 border border-slate-200 rounded-lg p-1.5 outline-none focus:ring-1 focus:ring-indigo-500 bg-white text-[11px] font-medium text-slate-800"
+                          className="flex-1 border border-slate-200 rounded-lg p-1.5 outline-none focus:ring-1 focus:ring-blue-500 bg-white text-[11px] font-medium text-slate-800"
                         />
                         <input
                           type="text"
                           value={exp.notes}
                           onChange={(e) => handleOtherExpenseChange(idx, "notes", e.target.value)}
                           placeholder="Ghi chú"
-                          className="flex-2 border border-slate-200 rounded-lg p-1.5 outline-none focus:ring-1 focus:ring-indigo-500 bg-white text-[11px] font-medium text-slate-800"
+                          className="flex-2 border border-slate-200 rounded-lg p-1.5 outline-none focus:ring-1 focus:ring-blue-500 bg-white text-[11px] font-medium text-slate-800"
                         />
                         <button
                           type="button"
@@ -2535,29 +2633,14 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
               </div>
 
               {/* Grand Total */}
-              <div className="bg-indigo-50/60 p-4 border border-indigo-100 rounded-2xl flex items-center justify-between shadow-sm shadow-indigo-500/5">
+              <div className="bg-blue-50/60 p-4 border border-blue-100 rounded-2xl flex items-center justify-between shadow-sm shadow-blue-500/5">
                 <span className="font-extrabold text-slate-700 text-xs tracking-wider uppercase">Tổng cộng đề nghị thanh toán:</span>
-                <span className="text-lg font-black text-indigo-700">{formatCurrency(totalTripAmount)}</span>
+                <span className="text-lg font-black text-blue-700">{formatCurrency(totalTripAmount)}</span>
               </div>
 
-              {/* Người duyệt cấp 1 do hệ thống tự xác định — xem ghi chú ở
-                  resolveCap1Approver. Chỉ hiện để người gửi biết đơn tới tay ai. */}
-              <div className="bg-indigo-50/40 border border-indigo-100 rounded-xl p-3 flex items-start gap-2">
-                <CheckCircle2 size={14} className="text-indigo-500 shrink-0 mt-0.5" />
-                <div className="text-[11px] leading-relaxed">
-                  {resolveCap1Approver(modalName, false) ? (
-                    <>
-                      <span className="text-slate-500 font-semibold">Đơn sẽ chuyển tới </span>
-                      <span className="font-extrabold text-indigo-700">{resolveCap1Approver(modalName, false)}</span>
-                      <span className="text-slate-500 font-semibold"> phê duyệt, sau đó phòng HCNS xác nhận.</span>
-                    </>
-                  ) : (
-                    <span className="text-slate-500 font-semibold">
-                      Đơn sẽ nằm ở mục Duyệt yêu cầu để cấp quản lý phê duyệt, sau đó phòng HCNS xác nhận.
-                    </span>
-                  )}
-                </div>
-              </div>
+              {/* Khối báo người duyệt cấp 1 đã GỠ theo yêu cầu (21/08/2026) — luồng
+                  duyệt không đổi, `resolveCap1Approver` vẫn định tuyến như cũ ở
+                  handleRequestTrip, chỉ là không in ra form nữa. */}
 
               </div>
 
@@ -2572,7 +2655,7 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                 </button>
                 <button
                   type="submit"
-                  className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-colors cursor-pointer shadow-md shadow-indigo-500/10 text-xs text-center"
+                  className="px-6 py-2.5 bg-[#005BAC] hover:bg-blue-700 text-white font-bold rounded-xl transition-colors cursor-pointer shadow-md shadow-blue-500/10 text-xs text-center"
                 >
                   Gửi đơn công tác
                 </button>
@@ -2581,6 +2664,17 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
           </div>
         </div>
       )}
+
+      {/* Danh mục cung đường — tự portal ra document.body nên không bị lớp phủ
+          `backdrop-blur` của modal công tác nhốt lại. */}
+      <TripDistanceModal
+        open={isDistanceModalOpen}
+        onClose={() => setIsDistanceModalOpen(false)}
+        onChanged={() => { void reloadTripDistances(); }}
+        initialFrom={distancePrefill.from}
+        initialTo={distancePrefill.to}
+      />
+
       {/* Chi tiết công việc modal */}
       {isDetailsModalOpen && selectedTask && (() => {
         const isTrip = selectedTask.title.toLowerCase().startsWith("công tác");
