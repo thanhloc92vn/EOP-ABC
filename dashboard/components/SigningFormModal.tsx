@@ -444,11 +444,6 @@ export default function SigningFormModal({
             <h4 className="font-heading font-extrabold text-slate-800 text-xs leading-tight truncate">
               {existing ? `Sửa phiếu ${existing.ma_phieu || ""}` : `Lập ${meta.label.toLowerCase()}`}
             </h4>
-            <p className="text-[10px] text-slate-400 font-semibold truncate">
-              Biểu mẫu {meta.bieuMau} · {laHopDong
-                ? "trình duyệt nội dung hợp đồng trước khi ký"
-                : "tải hồ sơ lên, bóc tách bằng AI, soát lại rồi trình"}
-            </p>
           </div>
           <button type="button" onClick={onClose} disabled={!!busy}
             className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-lg transition-all cursor-pointer disabled:opacity-40">
@@ -547,9 +542,6 @@ export default function SigningFormModal({
                     {cfgSaved && (
                       <span className="text-[11px] font-bold text-emerald-600">Đã lưu.</span>
                     )}
-                    <span className="text-[10px] font-medium text-slate-400">
-                      Dùng chung cấu hình với trang Hành chính. Khoá lưu trên trình duyệt này.
-                    </span>
                   </div>
                 </div>
               )}
@@ -629,7 +621,6 @@ export default function SigningFormModal({
               <label className="flex flex-col gap-1.5 md:col-span-3">
                 <span className={labelCls}>Nội dung trình</span>
                 <input value={d.noi_dung_trinh || ""} onChange={(e) => set("noi_dung_trinh", e.target.value)}
-                  placeholder="Trình BGĐ phê duyệt: Hồ sơ thanh toán – Đợt 02 (ký lưu không bổ sung…)"
                   className={inputCls} />
               </label>
             </div>
@@ -669,7 +660,7 @@ export default function SigningFormModal({
                 <label className="flex flex-col gap-1.5">
                   <span className={labelCls}>Hạng mục</span>
                   <input value={d.hang_muc || ""} onChange={(e) => set("hang_muc", e.target.value)}
-                    placeholder="Phần còn lại cầu Lang Minh" className={inputCls} />
+                    className={inputCls} />
                 </label>
               )}
               <label className="flex flex-col gap-1.5 md:col-span-2">
@@ -706,12 +697,12 @@ export default function SigningFormModal({
                 <label className="flex flex-col gap-1.5">
                   <span className={labelCls}>Bên A</span>
                   <input value={d.ben_a || ""} onChange={(e) => set("ben_a", e.target.value)}
-                    placeholder="Chủ đầu tư, hoặc Trung Nam nếu là HĐ B-B′" className={inputCls} />
+                    className={inputCls} />
                 </label>
                 <label className="flex flex-col gap-1.5">
                   <span className={labelCls}>Bên B</span>
                   <input value={d.ben_b || ""} onChange={(e) => set("ben_b", e.target.value)}
-                    placeholder="Trung Nam, hoặc nhà thầu phụ nếu là HĐ B-B′" className={inputCls} />
+                    className={inputCls} />
                 </label>
                 <div className="grid grid-cols-[1fr_100px] gap-2">
                   {num("gia_tri_hd", "Giá trị hợp đồng")}
@@ -755,10 +746,8 @@ export default function SigningFormModal({
                       <input value={r.muc} onChange={(e) => upd("muc", e.target.value)}
                         placeholder="Tạm ứng" className={inputCls} />
                       <textarea value={r.ab} onChange={(e) => upd("ab", e.target.value)} rows={2}
-                        placeholder="Tối đa 30% GTHĐ&#10;(Phát hành bảo lãnh)"
                         className={`${inputCls} resize-y leading-relaxed`} />
                       <textarea value={r.bb} onChange={(e) => upd("bb", e.target.value)} rows={2}
-                        placeholder="Theo tiến độ thanh toán A-B"
                         className={`${inputCls} resize-y leading-relaxed`} />
                       <button type="button" onClick={() => setSoSanh((prev) => prev.filter((_, j) => j !== i))}
                         title="Xoá dòng"
@@ -768,9 +757,6 @@ export default function SigningFormModal({
                     </div>
                   );
                 })}
-                <p className="text-[10px] font-semibold text-slate-400">
-                  Xuống dòng trong ô sẽ giữ nguyên khi xuất ra Word. Dòng để trống hoàn toàn sẽ tự bị bỏ.
-                </p>
               </div>
             </section>
           )}

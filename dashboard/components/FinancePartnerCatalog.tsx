@@ -43,10 +43,11 @@ import {
 } from "@/lib/financePartners";
 import { useProjectCatalog } from "@/lib/projectCatalog";
 import { useCurrentUser } from "@/lib/useCurrentUser";
+import { deptShortCode } from "@/lib/departments";
 import { supabase } from "@/lib/supabase";
 import { crumpleToss } from "@/lib/crumpleToss";
 import {
-  Building2, Plus, Trash2, Save, RefreshCw, Loader2, Search, Landmark,
+  Building2, Plus, Trash2, Save, Loader2, Search, Landmark,
   Copy, Check, FileText, AlertTriangle, X, Users, Briefcase, HardHat, CreditCard,
 } from "lucide-react";
 
@@ -333,16 +334,6 @@ export default function FinancePartnerCatalog() {
           <option value="">Mọi loại đối tác</option>
           {PARTY_TYPES.map(t => <option key={t} value={t}>{PARTY_TYPE_LABELS[t]}</option>)}
         </select>
-
-        <button
-          type="button"
-          onClick={reload}
-          disabled={saving}
-          className="p-2 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-600 transition-all cursor-pointer disabled:opacity-50"
-          title="Tải lại"
-        >
-          <RefreshCw size={16} className={saving ? "animate-spin" : ""} />
-        </button>
       </div>
 
       {/* ─── Danh sách đối tác: MỘT CỘT DỌC, khung cuộn riêng ───
@@ -437,6 +428,7 @@ export default function FinancePartnerCatalog() {
           nextSort={(partners.at(-1)?.sort_order ?? 0) + 10}
           projects={projects}
           defaultProjectCode={projectFilter}
+          defaultDepartment={deptShortCode(user.department)}
           runWrite={runWrite}
           onClose={() => setAdding(false)}
         />
@@ -628,10 +620,11 @@ function ModalShell({ title, subtitle, onClose, children, footer }: {
 // một bước, mà trong thực tế thêm nhà thầu bao giờ cũng là "thêm cho dự án nào".
 // Dự án đổ từ danh mục `projects` (Cài đặt > Danh mục công việc > Danh sách dự
 // án triển khai), hiển thị kèm MÃ để đối chiếu với hồ sơ giấy.
-function AddPartnerModal({ saving, nextSort, projects, defaultProjectCode, runWrite, onClose }: {
+function AddPartnerModal({ saving, nextSort, projects, defaultProjectCode, defaultDepartment, runWrite, onClose }: {
   saving: boolean; nextSort: number;
   projects: { id: string; code: string; name: string }[];
   defaultProjectCode: string;
+  defaultDepartment: string;
   runWrite: (fn: () => Promise<{ error: unknown }>, msg: string) => Promise<boolean>;
   onClose: () => void;
 }) {
@@ -645,7 +638,9 @@ function AddPartnerModal({ saving, nextSort, projects, defaultProjectCode, runWr
   const [projectCode, setProjectCode] = useState(defaultProjectCode);
   const [contractNo, setContractNo] = useState("");
   const [flow, setFlow] = useState<"thu" | "chi">("chi");
-  const [department, setDepartment] = useState("");
+  // Tự nhận theo phòng của người đang đăng nhập (NV phòng Kế hoạch Đấu thầu ->
+  // "PKHĐT"). Vẫn sửa được: thỉnh thoảng HCNS nhập hộ phòng khác.
+  const [department, setDepartment] = useState(defaultDepartment);
   const [content, setContent] = useState("");
 
   const project = projects.find(p => p.code === projectCode);
@@ -747,7 +742,6 @@ function AddPartnerModal({ saving, nextSort, projects, defaultProjectCode, runWr
     >
       {/* Thông tin đơn vị */}
       <div className="space-y-3">
-        <h5 className={labelCls}>Thông tin đơn vị</h5>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
           <label className="flex flex-col gap-1.5 md:col-span-2">
             <span className={labelCls}>Tên đầy đủ *</span>
@@ -771,12 +765,7 @@ function AddPartnerModal({ saving, nextSort, projects, defaultProjectCode, runWr
 
       {/* Dự án + hợp đồng đầu tiên */}
       <div className="space-y-3">
-        <div className="flex items-baseline justify-between gap-2 flex-wrap">
-          <h5 className={labelCls}>Dự án &amp; hợp đồng</h5>
-          <span className="text-[10px] text-slate-400 font-medium">
-            Danh sách lấy từ Cài đặt → Danh mục công việc → Dự án triển khai
-          </span>
-        </div>
+        <h5 className={labelCls}>Dự án &amp; hợp đồng</h5>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
           <label className="flex flex-col gap-1.5">
             <span className={labelCls}>Dự án</span>
@@ -813,13 +802,14 @@ function AddPartnerModal({ saving, nextSort, projects, defaultProjectCode, runWr
             <label className="flex flex-col gap-1.5">
               <span className={labelCls}>Phòng ban</span>
               <input value={department} onChange={e => setDepartment(e.target.value)}
-                placeholder="VD PKHĐT" className={inputCls} />
+                title="Tự nhận theo phòng ban của tài khoản đang đăng nhập — sửa được nếu nhập hộ phòng khác."
+                className={inputCls} />
             </label>
           </div>
           <label className="flex flex-col gap-1.5 md:col-span-2">
             <span className={labelCls}>Nội dung thanh toán mẫu</span>
             <textarea value={content} onChange={e => setContent(e.target.value)} rows={2}
-              placeholder="VD Thanh toán đợt 1 HĐ số ... — dán thẳng sang phiếu đề nghị chuyển tiền"
+              placeholder="VD Thanh toán đợt 1 HĐ số ..."
               className={`${inputCls} resize-y leading-relaxed`} />
           </label>
         </div>
@@ -832,25 +822,20 @@ function AddPartnerModal({ saving, nextSort, projects, defaultProjectCode, runWr
           <label className="flex flex-col gap-1.5">
             <span className={labelCls}>Số tài khoản</span>
             <input value={account} onChange={e => setAccount(e.target.value)}
-              placeholder="VD 0942870512" className={`${inputCls} font-mono`} />
+              className={`${inputCls} font-mono`} />
           </label>
           <label className="flex flex-col gap-1.5">
             <span className={labelCls}>Ngân hàng</span>
             <input value={bank} onChange={e => setBank(e.target.value)}
-              placeholder="VD Ngân hàng ACB" className={inputCls} />
+              className={inputCls} />
           </label>
           <label className="flex flex-col gap-1.5">
             <span className={labelCls}>Chi nhánh / PGD</span>
             <input value={branch} onChange={e => setBranch(e.target.value)}
-              placeholder="VD CN Tân Bình" className={inputCls} />
+              className={inputCls} />
           </label>
         </div>
       </div>
-
-      <p className="text-[10px] text-slate-400 font-medium">
-        Chưa có thông tin ngân hàng hoặc chưa ký hợp đồng thì cứ để trống — thêm đối tác
-        trước, bổ sung sau. Một đối tác chạy nhiều dự án thì thêm tiếp hợp đồng trong màn hình sửa.
-      </p>
     </ModalShell>
   );
 }

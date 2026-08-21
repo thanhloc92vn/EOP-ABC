@@ -118,3 +118,50 @@ export function useDepartments(): DepartmentLists {
 
   return lists;
 }
+
+// ============================================================
+// deptShortCode — "Phòng Kế Hoạch Đấu Thầu" -> "P. KHĐT"
+//
+// Dùng để tự điền ô "Phòng ban" trong các form nhập liệu theo đúng phòng của
+// người đang đăng nhập (useCurrentUser().department), thay vì bắt gõ tay mỗi
+// lần. Lấy chữ cái đầu mỗi từ, bỏ từ nối ("và", "&"), giữ nguyên dấu tiếng
+// Việt (đấu -> Đ).
+//
+// Ngoại lệ BĐH dự án: "BĐH Tây Ninh" viết tắt thành "BTN" thì không ai đọc ra
+// dự án nào — giữ nguyên tên.
+// ============================================================
+const DEPT_STOP_WORDS = new Set(["và", "&"]);
+
+export function deptShortCode(name: string): string {
+  const raw = (name || "").trim();
+  if (!raw || /^chưa xếp/i.test(raw)) return "";
+  if (/^(bđh|bql|ban điều hành)\s/i.test(raw)) return raw;
+
+  const words = raw
+    .replace(/[,.()\-–/]+/g, " ")
+    .split(/\s+/)
+    .filter(w => w && !DEPT_STOP_WORDS.has(w.toLowerCase()));
+  if (words.length === 0) return "";
+
+  // Bỏ dấu thanh trước khi lấy chữ cái đầu: "Dự Án" -> "DA" chứ không phải
+  // "DÁ". Riêng Đ giữ nguyên vì đó là chữ cái khác chữ D (PATLĐ, BLĐ).
+  const initials = words
+    .map(w =>
+      w.normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")   // dấu thanh/mũ
+        .replace(/[ơƠ]/g, "o")
+        .replace(/[ưƯ]/g, "u")
+        .charAt(0)
+        .toUpperCase()
+    )
+    .filter(Boolean);
+  if (initials.length === 0) return "";
+
+  // Tách riêng chữ "Phòng" thành "P." rồi cách một khoảng cho dễ đọc:
+  // "P. KHĐT" thay vì "PKHĐT" dính liền. Riêng "Ban Lãnh Đạo" vẫn viết liền
+  // "BLĐ" — đúng cách gọi quen thuộc, không ai viết "B. LĐ".
+  if (initials.length > 1 && /^phòng$/i.test(words[0])) {
+    return `${initials[0]}. ${initials.slice(1).join("")}`;
+  }
+  return initials.join("");
+}

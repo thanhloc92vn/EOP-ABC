@@ -877,9 +877,6 @@ function PlanRowModal({ row, onSave, onClose }: {
             <h4 className="font-heading font-extrabold text-slate-800 text-xs leading-tight truncate">
               {row.id ? "Sửa dòng kế hoạch" : "Thêm dòng kế hoạch tài chính"}
             </h4>
-            <p className="text-[10px] text-slate-400 font-semibold truncate">
-              Chọn từ danh mục có sẵn, hạn chế gõ tay
-            </p>
           </div>
           <button type="button" onClick={onClose} disabled={saving}
             className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-lg transition-all cursor-pointer disabled:opacity-40">
@@ -1053,7 +1050,6 @@ function PlanRowModal({ row, onSave, onClose }: {
               value={d.content}
               onChange={e => set("content", e.target.value)}
               rows={2}
-              placeholder="VD: Thanh toán HSTT Đợt 5 - 0812/HĐTP/TNE&C-DAINAM ngày 08/12/2025"
               className={`${inputCls} resize-none leading-relaxed`}
             />
           </label>
@@ -1079,7 +1075,6 @@ function PlanRowModal({ row, onSave, onClose }: {
               <input
                 value={d.fund_source}
                 onChange={e => set("fund_source", e.target.value)}
-                placeholder="Nguồn chi trả khoản này"
                 className={inputCls}
               />
             </label>
