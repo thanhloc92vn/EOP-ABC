@@ -5,6 +5,8 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
+import JdTemplateModal from "@/components/JdTemplateModal";
+import { useJdTemplates, type JdTemplate } from "@/lib/jdTemplates";
 import { isManagerRole, normalizeName } from "@/lib/approvers";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import { useDepartments } from "@/lib/departments";
@@ -32,10 +34,10 @@ import {
   Send,
   RotateCcw,
   AlertCircle,
-  Settings,
   Key,
-  Info,
   Database,
+  BookMarked,
+  Undo2,
   X
 } from "lucide-react";
 
@@ -873,7 +875,27 @@ const getColumnsForTab = (tab: string) => {
 
 // ─── MAIN RECRUITMENT PAGE ────────────────────────────────────────────────────
 export default function RecruitmentPage() {
-  const [activeTab, setActiveTab] = useState<"dashboard" | "table_view" | "scorer" | "settings">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "table_view" | "scorer">("dashboard");
+
+  // ─── Thư viện JD (migration 062) ───
+  // Chỉ tải khi đang ở tab Chấm điểm CV — người vào xem dashboard không cần.
+  const [jdModalOpen, setJdModalOpen] = useState(false);
+  const { rows: jdRows, reload: reloadJd } = useJdTemplates(activeTab === "scorer");
+  // Nạp JD là GHI ĐÈ ô mô tả. Giữ lại bản cũ để bấm "Hoàn tác" lấy về —
+  // rẻ hơn nhiều so với bắt người dùng xác nhận mỗi lần chọn.
+  const [jdUndo, setJdUndo] = useState<{ text: string; name: string } | null>(null);
+
+  /** Bấm một vị trí trong thư viện -> nạp thẳng nội dung vào ô mô tả. */
+  const applyJdTemplate = (r: JdTemplate) => {
+    setJdUndo({ text: jdText, name: r.position });
+    setJdText(r.content);
+  };
+
+  const undoJdTemplate = () => {
+    if (!jdUndo) return;
+    setJdText(jdUndo.text);
+    setJdUndo(null);
+  };
   const [tableSubTab, setTableSubTab] = useState<"tong_hop" | "vong_1" | "vong_2" | "thu_viec">("tong_hop");
   const [candidates, setCandidates] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1921,7 +1943,7 @@ export default function RecruitmentPage() {
               }`}
             >
               <ArrowUpDown size={14} />
-              Tổng quan (Dashboard)
+              Tổng quan
             </button>
             <button
               onClick={() => setActiveTab("table_view")}
@@ -1932,7 +1954,7 @@ export default function RecruitmentPage() {
               }`}
             >
               <FileText size={14} />
-              Bảng danh sách chi tiết (Sheets) {candidates.length > 0 && `(${candidates.length})`}
+              Danh sách ứng viên {candidates.length > 0 && `(${candidates.length})`}
             </button>
             <button
               onClick={() => setActiveTab("scorer")}
@@ -1943,18 +1965,7 @@ export default function RecruitmentPage() {
               }`}
             >
               <Upload size={14} />
-              Chấm điểm CV (AI Scorer)
-            </button>
-            <button
-              onClick={() => setActiveTab("settings")}
-              className={`flex items-center gap-2 px-6 py-3 text-xs font-bold border-b-2 transition-all ${
-                activeTab === "settings"
-                  ? "border-[#005BAC] text-[#005BAC]"
-                  : "border-transparent text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              <Settings size={14} />
-              Cấu hình hệ thống (Settings)
+              Chấm điểm CV
             </button>
             <button
               onClick={() => setIsReportOpen(true)}
@@ -3077,6 +3088,16 @@ export default function RecruitmentPage() {
           {/* TAB 2: AI SCORER PANEL */}
           {activeTab === "scorer" && (
             <div className="max-w-7xl mx-auto space-y-6">
+              {/* Toast Alert */}
+              {saved && (
+                <div className="fixed bottom-6 right-6 z-50 animate-bounce">
+                  <div className="bg-emerald-600 text-white px-6 py-3 rounded-xl shadow-lg flex items-center gap-3 font-semibold text-sm">
+                    <CheckCircle className="w-5 h-5 text-emerald-200" />
+                    Cập nhật cấu hình thành công!
+                  </div>
+                </div>
+              )}
+
               {/* Config Panel */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* JD Input */}
@@ -3091,6 +3112,60 @@ export default function RecruitmentPage() {
                     placeholder="Dán nội dung Job Description vào đây…&#10;Ví dụ: Vị trí Trợ lý Giám đốc, tốt nghiệp Cao đẳng/Đại học chuyên ngành Xây dựng cầu đường, kinh nghiệm 2 năm..."
                     className="w-full resize-none text-xs bg-white/50 border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-400/20 text-slate-700 placeholder:text-slate-400 shadow-sm"
                   />
+
+                  {/* ─── Thư viện JD (bảng `jd_templates`, migration 062) ───
+                      Nút mở màn hình quản lý, và ngay dưới là danh sách vị trí
+                      đã lưu — bấm một cái là nạp thẳng JD vào ô mô tả ở trên,
+                      không phải mở file ngoài copy nữa. */}
+                  <div className="pt-1 space-y-2.5">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => setJdModalOpen(true)}
+                        className="flex items-center gap-1.5 text-[11px] font-bold text-[#005BAC] border border-[#005BAC]/30 hover:bg-[#005BAC]/5 px-3 py-1.5 rounded-xl transition-all active:scale-95"
+                      >
+                        <BookMarked size={12} /> Cấu hình JD
+                      </button>
+
+                      {/* Nạp JD là ghi đè ô mô tả — cho đường lùi thay vì hộp
+                          thoại xác nhận mỗi lần bấm. */}
+                      {jdUndo && (
+                        <span className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1.5 rounded-xl">
+                          Đã nạp JD &laquo;{jdUndo.name}&raquo;
+                          <button
+                            type="button"
+                            onClick={undoJdTemplate}
+                            className="flex items-center gap-1 text-slate-500 hover:text-slate-700 underline underline-offset-2"
+                          >
+                            <Undo2 size={10} /> Hoàn tác
+                          </button>
+                        </span>
+                      )}
+                    </div>
+
+                    {jdRows.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {jdRows.map((r) => (
+                          <button
+                            key={r.id}
+                            type="button"
+                            onClick={() => applyJdTemplate(r)}
+                            title={`Nạp JD "${r.position}" vào ô mô tả (${r.content.trim().length} ký tự)`}
+                            className="max-w-full text-[11px] font-bold text-slate-600 bg-white border border-slate-200 hover:border-[#005BAC] hover:text-[#005BAC] px-3 py-1.5 rounded-xl transition-all active:scale-95 shadow-sm truncate"
+                          >
+                            {r.position}
+                            {r.department && (
+                              <span className="font-semibold text-slate-400"> · {r.department}</span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-[10px] text-slate-400 font-semibold italic">
+                        Chưa lưu bản JD nào. Bấm &laquo;Cấu hình JD&raquo; để thêm bản đầu tiên — lần sau chỉ cần bấm chọn là nạp thẳng vào ô trên.
+                      </p>
+                    )}
+                  </div>
                 </div>
 
                 {/* Settings */}
@@ -3109,6 +3184,54 @@ export default function RecruitmentPage() {
                         {NGUON_OPTIONS.map((o) => <option key={o}>{o}</option>)}
                       </select>
                     </div>
+
+                    {/* Cấu hình hệ thống — gộp từ tab Settings cũ */}
+                    <form onSubmit={handleSaveSettings} className="pt-4 border-t border-slate-200/60 space-y-3">
+                      <p className="font-heading font-bold text-[#005BAC] text-xs uppercase tracking-wider flex items-center gap-1.5">
+                        <Key size={13} /> Bảo mật & Kết nối
+                      </p>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">OpenAI API Key</label>
+                        <input
+                          type="password"
+                          value={apiKey}
+                          onChange={(e) => setApiKey(e.target.value)}
+                          placeholder="sk-proj-..."
+                          className="w-full text-xs bg-white border border-slate-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500/20 font-medium text-slate-700"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">Google Apps Script Webhook</label>
+                        <input
+                          type="text"
+                          value={webhookUrl}
+                          onChange={(e) => setWebhookUrl(e.target.value)}
+                          placeholder="https://script.google.com/macros/s/.../exec"
+                          className="w-full text-xs bg-white border border-slate-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500/20 font-medium text-slate-700"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">ChatGPT Model</label>
+                        <select
+                          value={model}
+                          onChange={(e) => setModel(e.target.value)}
+                          className="w-full text-xs text-slate-600 font-semibold bg-white border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                        >
+                          <option value="gpt-4o-mini">gpt-4o-mini (Nhanh & Tối ưu chi phí)</option>
+                          <option value="gpt-4o">gpt-4o (Độ chính xác cao hơn)</option>
+                        </select>
+                      </div>
+
+                      <button
+                        type="submit"
+                        className="w-full text-xs font-bold text-[#005BAC] border border-[#005BAC]/30 hover:bg-[#005BAC]/5 py-2 rounded-xl transition-all active:scale-95"
+                      >
+                        Lưu cấu hình hệ thống
+                      </button>
+                    </form>
                   </div>
 
                   <div className="pt-6 space-y-2">
@@ -3224,102 +3347,19 @@ export default function RecruitmentPage() {
                 </div>
               )}
 
-              {/* Empty state */}
-              {results.length === 0 && files.length === 0 && !processing && (
-                <div className="text-center py-12 text-slate-400 space-y-2">
-                  <CheckCircle size={40} className="mx-auto text-slate-200" />
-                  <p className="text-xs font-semibold italic">Tải lên tệp CV của ứng viên và dán JD công việc ở trên để bắt đầu chấm điểm tự động.</p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* TAB 3: SYSTEM SETTINGS PANEL */}
-          {activeTab === "settings" && (
-            <div className="max-w-4xl mx-auto space-y-6">
-              {/* Toast Alert */}
-              {saved && (
-                <div className="fixed bottom-6 right-6 z-50 animate-bounce">
-                  <div className="bg-emerald-600 text-white px-6 py-3 rounded-xl shadow-lg flex items-center gap-3 font-semibold text-sm">
-                     <CheckCircle className="w-5 h-5 text-emerald-200" />
-                    Cập nhật cấu hình thành công!
-                  </div>
-                </div>
-              )}
-
-              {/* Setup Configuration Form */}
-              <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-premium">
-                <h2 className="font-heading font-bold text-slate-800 text-sm flex items-center gap-2 mb-5">
-                  <Key size={18} className="text-[#005BAC]" /> Cấu hình bảo mật & Kết nối
-                </h2>
-
-                <form onSubmit={handleSaveSettings} className="space-y-5 text-xs text-slate-600 font-semibold">
-                  {/* API Key */}
-                  <div className="space-y-1">
-                    <label className="text-slate-500">OpenAI API Key</label>
-                    <input
-                      type="password"
-                      value={apiKey}
-                      onChange={(e) => setApiKey(e.target.value)}
-                      placeholder="sk-proj-..."
-                      className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40 text-xs font-medium text-slate-700"
-                    />
-                    <p className="text-[10px] text-slate-400 font-normal mt-1">Khoá bảo mật API dùng để thực hiện chấm điểm và trích xuất dữ liệu CV bằng AI.</p>
-                  </div>
-
-                  {/* Google Apps Script Webhook URL */}
-                  <div className="space-y-1">
-                    <label className="text-slate-500">Google Apps Script Webhook URL</label>
-                    <input
-                      type="text"
-                      value={webhookUrl}
-                      onChange={(e) => setWebhookUrl(e.target.value)}
-                      placeholder="https://script.google.com/macros/s/.../exec"
-                      className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40 text-xs font-medium text-slate-700"
-                    />
-                    <p className="text-[10px] text-slate-400 font-normal mt-1">Đường dẫn Webhook Google Apps Script dùng để đồng bộ dữ liệu ứng viên từ Dashboard sang Google Sheets.</p>
-                  </div>
-
-                  {/* ChatGPT Model */}
-                  <div className="space-y-1">
-                    <label className="text-slate-500">ChatGPT Model</label>
-                    <select
-                      value={model}
-                      onChange={(e) => setModel(e.target.value)}
-                      className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40 cursor-pointer text-xs font-semibold text-slate-600 bg-white"
-                    >
-                      <option value="gpt-4o-mini">gpt-4o-mini (Nhanh & Tối ưu chi phí)</option>
-                      <option value="gpt-4o">gpt-4o (Độ chính xác cao hơn)</option>
-                    </select>
-                  </div>
-
-                  <div className="pt-4 border-t border-slate-100 flex justify-end">
-                    <button
-                      type="submit"
-                      className="px-6 py-2.5 bg-[#005BAC] hover:bg-blue-700 text-white font-bold rounded-xl active:scale-95 transition-all shadow"
-                    >
-                      Lưu cấu hình hệ thống
-                    </button>
-                  </div>
-                </form>
-              </div>
-
-              {/* System Info */}
-              <div className="glass bg-white rounded-2xl p-6 border border-slate-200/50 shadow-sm space-y-4">
-                <h2 className="font-heading font-bold text-slate-800 text-sm flex items-center gap-2">
-                  <Info size={18} className="text-[#005BAC]" /> Thông tin nền tảng
-                </h2>
-                <div className="text-xs font-semibold text-slate-600">
-                  <div className="bg-slate-50 rounded-xl p-4 space-y-0.5 w-fit min-w-[200px]">
-                    <p className="text-slate-400 text-[10px]">Phiên bản</p>
-                    <p className="text-[#005BAC] font-bold">HR Platform 1.0</p>
-                  </div>
-                </div>
-              </div>
             </div>
           )}
         </main>
       </div>
+
+      {/* Thư viện JD — modal portal ra body (thẻ cha có backdrop-filter) */}
+      <JdTemplateModal
+        open={jdModalOpen}
+        onClose={() => setJdModalOpen(false)}
+        onChanged={reloadJd}
+        onPick={applyJdTemplate}
+        draftContent={jdText}
+      />
 
       {/* Manual Candidate Add Modal */}
       {isAddOpen && (
