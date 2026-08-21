@@ -3151,11 +3151,11 @@ export default function RecruitmentPage() {
                             type="button"
                             onClick={() => applyJdTemplate(r)}
                             title={`Nạp JD "${r.position}" vào ô mô tả (${r.content.trim().length} ký tự)`}
-                            className="max-w-full text-[11px] font-bold text-slate-600 bg-white border border-slate-200 hover:border-[#005BAC] hover:text-[#005BAC] px-3 py-1.5 rounded-xl transition-all active:scale-95 shadow-sm truncate"
+                            className="group max-w-full text-[11px] font-bold text-[#005BAC] bg-blue-50 border border-blue-200 hover:bg-[#005BAC] hover:text-white hover:border-[#005BAC] px-3 py-1.5 rounded-xl transition-all active:scale-95 shadow-sm truncate"
                           >
                             {r.position}
                             {r.department && (
-                              <span className="font-semibold text-slate-400"> · {r.department}</span>
+                              <span className="font-semibold text-blue-400 group-hover:text-white/70"> · {r.department}</span>
                             )}
                           </button>
                         ))}
