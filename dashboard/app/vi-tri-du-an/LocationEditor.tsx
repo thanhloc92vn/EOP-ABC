@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { apiFetch } from "@/lib/apiClient";
-import { X, MapPin, Loader2, Check, Trash2, Search, AlertCircle, Navigation, Globe, Plus } from "lucide-react";
+import { X, MapPin, Loader2, Check, Trash2, Search, AlertCircle, Navigation, Globe, Plus, Camera } from "lucide-react";
 import type { ProjectItem } from "./types";
 import { VN_PROVINCE_NAMES } from "@/lib/vnProvinces";
 
@@ -52,6 +52,7 @@ export function parseLatLng(input: string): [number, number] | null {
 type Draft = {
   mapsLink: string; // ô TRÊN: link Google Maps / toạ độ — vị trí BĐH (để chỉ đường)
   earthLink: string; // ô DƯỚI: link Google Earth — xem thiết kế dự án
+  panoLink: string; // link ảnh 360 độ của dự án
   status: string;
   investor: string;
   packageName: string;
@@ -66,6 +67,7 @@ const NEW_KEY = "__new__";
 const EMPTY_DRAFT: Draft = {
   mapsLink: "",
   earthLink: "",
+  panoLink: "",
   status: "active",
   investor: "",
   packageName: "",
@@ -111,6 +113,7 @@ export default function LocationEditor({
     drafts[p.bdhName] ?? {
       mapsLink: p.loc ? `${p.loc.lat}, ${p.loc.lng}` : "",
       earthLink: p.loc?.google_earth_url || "",
+      panoLink: p.loc?.panorama_url || "",
       status: p.loc?.status || "active",
       investor: p.loc?.investor || "",
       packageName: p.loc?.package || "",
@@ -198,6 +201,7 @@ export default function LocationEditor({
       package: draft.packageName || null,
       province: draft.province || null,
       google_earth_url: draft.earthLink.trim() || null, // link Google Earth (xem thiết kế)
+      panorama_url: draft.panoLink.trim() || null, // link ảnh 360 độ
       created_by: email,
       updated_at: new Date().toISOString(),
       ...(extra || {}),
@@ -381,6 +385,18 @@ export default function LocationEditor({
                 />
               </div>
 
+              <div className="space-y-1">
+                <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500">
+                  <Camera size={11} className="text-amber-500" /> Hình ảnh 360 độ (tuỳ chọn)
+                </label>
+                <input
+                  value={newDraft.panoLink}
+                  onChange={(e) => setNewDraft((d) => ({ ...d, panoLink: e.target.value }))}
+                  placeholder="Dán link ảnh 360 (Street View, Kuula, Matterport…)"
+                  className="w-full text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:border-amber-500 placeholder:text-slate-400"
+                />
+              </div>
+
               <div className="grid grid-cols-2 gap-2">
                 <select
                   value={newDraft.status}
@@ -497,6 +513,18 @@ export default function LocationEditor({
                     onChange={(e) => setDraft(p.bdhName, { earthLink: e.target.value }, draft)}
                     placeholder="Dán link Google Earth (earth.google.com/…) hoặc My Maps"
                     className="w-full text-xs font-medium text-slate-700 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 focus:outline-none focus:border-emerald-500 placeholder:text-slate-400"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500">
+                    <Camera size={11} className="text-amber-500" /> Hình ảnh 360 độ (tuỳ chọn)
+                  </label>
+                  <input
+                    value={draft.panoLink}
+                    onChange={(e) => setDraft(p.bdhName, { panoLink: e.target.value }, draft)}
+                    placeholder="Dán link ảnh 360 (Street View, Kuula, Matterport…)"
+                    className="w-full text-xs font-medium text-slate-700 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 focus:outline-none focus:border-amber-500 placeholder:text-slate-400"
                   />
                 </div>
 

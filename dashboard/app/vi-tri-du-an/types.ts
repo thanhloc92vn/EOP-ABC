@@ -15,6 +15,7 @@ export type Located = {
   lng: number;
   kml_url: string | null;
   google_earth_url: string | null;
+  panorama_url: string | null;
 };
 
 // Một dự án = một BĐH (lấy từ departments); loc = null nghĩa là chưa có toạ độ.

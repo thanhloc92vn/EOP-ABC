@@ -22,6 +22,7 @@ import {
   MapPinOff,
   Settings2,
   Map as MapIcon,
+  Camera,
 } from "lucide-react";
 import type { Located, ProjectItem } from "./types";
 import LocationEditor from "./LocationEditor";
@@ -179,7 +180,7 @@ export default function ProjectMap() {
       supabase
         .from("project_locations")
         .select(
-          "id,bdh_name,name,package,investor,progress,status,project_type,province,lat,lng,kml_url,google_earth_url"
+          "id,bdh_name,name,package,investor,progress,status,project_type,province,lat,lng,kml_url,google_earth_url,panorama_url"
         ),
     ]);
 
@@ -642,6 +643,16 @@ export default function ProjectMap() {
                       <Globe size={16} /> Google Earth
                     </a>
                   </div>
+                  {selected.loc.panorama_url && (
+                    <a
+                      href={selected.loc.panorama_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-center gap-2 bg-slate-100 hover:bg-slate-200 active:scale-[0.98] text-slate-700 text-sm font-bold py-3.5 rounded-xl transition-all"
+                    >
+                      <Camera size={16} /> Hình ảnh 360 độ
+                    </a>
+                  )}
                   {selected.loc.kml_url && (
                     <a
                       href={selected.loc.kml_url}
