@@ -20,7 +20,7 @@ import {
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import { parseLeaveTask, computeLeaveQuota } from "@/lib/annualLeave";
 import TripDistanceModal from "@/components/TripDistanceModal";
-import { useTripDistances, findDistance } from "@/lib/tripDistances";
+import { useTripDistances, matchDistance } from "@/lib/tripDistances";
 import {
   Search,
   ChevronLeft,
@@ -837,7 +837,7 @@ function CalendarContent() {
     if (tripDistanceRows.length === 0) return;
     let changed = false;
     const next = tripRoutes.map((r, i) => {
-      const hit = findDistance(tripDistanceRows, r.from, r.to);
+      const hit = matchDistance(tripDistanceRows, r.from, r.to).row;
       if (!hit) return r;
       const value = String(hit.distance_km);
       const cur = (r.distance || "").trim();
@@ -2454,16 +2454,26 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                           {/* Nói thẳng vì sao ô này điền/không điền được: im lặng thì
                               người dùng không phân biệt nổi "chưa lưu cung đường"
                               với "gõ tên khác lúc lưu". */}
-                          {route.from.trim() && route.to.trim() && (
-                            tripDistanceErr ? (
+                          {route.from.trim() && route.to.trim() && (() => {
+                            if (tripDistanceErr) return (
                               <p className="text-[9.5px] font-bold text-rose-600 leading-tight">
                                 Không đọc được danh mục vị trí
                               </p>
-                            ) : findDistance(tripDistanceRows, route.from, route.to) ? (
+                            );
+                            const m = matchDistance(tripDistanceRows, route.from, route.to);
+                            if (m.row) return (
                               <p className="text-[9.5px] font-bold text-blue-600 leading-tight">
-                                Lấy từ danh mục vị trí
+                                Lấy từ danh mục: {m.row.from_location} – {m.row.to_location}
                               </p>
-                            ) : (
+                            );
+                            // Nhiều dòng cùng chứa từ khoá -> KHÔNG đoán, bảo người
+                            // dùng gõ rõ hơn thay vì điền đại một số km sai.
+                            if (m.ambiguous) return (
+                              <p className="text-[9.5px] font-bold text-amber-600 leading-tight">
+                                Có nhiều vị trí trùng tên — gõ rõ hơn
+                              </p>
+                            );
+                            return (
                               <button
                                 type="button"
                                 onClick={() => {
@@ -2474,8 +2484,8 @@ ${cap1Approver ? `Người duyệt: ${cap1Approver}` : ""}
                               >
                                 Chưa có trong danh mục — lưu cung đường này
                               </button>
-                            )
-                          )}
+                            );
+                          })()}
                         </div>
                         <div className="space-y-1">
                           <label className="text-[10px] text-slate-450 font-bold uppercase">Ngày đi</label>

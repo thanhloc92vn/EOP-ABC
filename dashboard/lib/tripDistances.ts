@@ -51,18 +51,39 @@ export function locationKey(s: string): string {
     .trim();
 }
 
+/** Độ dài tối thiểu của phần "từ khoá chính" thì mới cho khớp kiểu chứa nhau. */
+const MIN_PARTIAL = 3;
+
 /**
- * Tra số km của một cung đường. Trả về `null` khi chưa có trong danh mục.
+ * Hai tên có cùng chỉ MỘT địa điểm không? Khớp khi trùng khít, hoặc khi tên này
+ * CHỨA tên kia: tên thật trong công ty hay có tiền tố ("BĐH Tây Ninh",
+ * "KCN Trảng Bàng") mà người khai đơn chỉ gõ phần chính ("Tây Ninh").
  *
- * Tra CẢ HAI CHIỀU: khoảng cách A→B và B→A là một, người dùng chỉ phải nhập
- * một dòng cho mỗi cặp điểm.
- *
- * ⚠ So khớp bằng `locationKey` tính LẠI từ `from_location`/`to_location`, KHÔNG
- * đọc hai cột `norm_*` dưới CSDL. Hai cột đó chỉ để unique index chống trùng
- * dòng; dòng lưu trước khi luật bỏ dấu câu ở trên ra đời vẫn giữ khoá cũ, tin
- * vào chúng là tra trượt những dòng đã có sẵn.
+ * Chặn dưới 3 ký tự để "An" không nuốt "Long An" / "Nghệ An".
  */
-export function findDistance(
+function sameSpot(x: string, y: string): boolean {
+  if (x === y) return true;
+  const short = x.length <= y.length ? x : y;
+  const long = short === x ? y : x;
+  return short.length >= MIN_PARTIAL && long.includes(short);
+}
+
+function keyRows(rows: TripDistance[]) {
+  // ⚠ Tính LẠI khoá từ `from_location`/`to_location`, KHÔNG đọc hai cột `norm_*`
+  // dưới CSDL. Hai cột đó chỉ để unique index chống trùng dòng; dòng lưu trước
+  // khi luật normalize đổi vẫn giữ khoá cũ, tin vào chúng là tra trượt dòng có sẵn.
+  return rows.map((r) => ({
+    row: r,
+    f: locationKey(r.from_location),
+    t: locationKey(r.to_location),
+  }));
+}
+
+/**
+ * Tra dòng TRÙNG KHÍT cặp điểm (cả hai chiều). Dùng cho việc chống trùng khi
+ * thêm/sửa danh mục — chỗ đó phải chặt, khớp gần là ghi đè nhầm dòng người khác.
+ */
+export function findExactDistance(
   rows: TripDistance[],
   from: string,
   to: string
@@ -70,15 +91,61 @@ export function findDistance(
   const a = locationKey(from);
   const b = locationKey(to);
   if (!a || !b || a === b) return null;
-  const keyed = rows.map((r) => ({
-    row: r,
-    f: locationKey(r.from_location),
-    t: locationKey(r.to_location),
-  }));
-  const hit =
-    keyed.find((k) => k.f === a && k.t === b) ||
-    keyed.find((k) => k.f === b && k.t === a);
+  const hit = keyRows(rows).find(
+    (k) => (k.f === a && k.t === b) || (k.f === b && k.t === a)
+  );
   return hit ? hit.row : null;
+}
+
+export interface DistanceMatch {
+  row: TripDistance | null;
+  /** Nhiều dòng cùng thoả kiểu "chứa từ khoá" — KHÔNG đoán bừa, để người dùng gõ rõ hơn. */
+  ambiguous: boolean;
+}
+
+/**
+ * Tra số km của một cung đường để TỰ ĐIỀN vào form công tác.
+ *
+ * Tra CẢ HAI CHIỀU (A→B và B→A là một khoảng cách), và hai bậc:
+ *   1. trùng khít -> lấy luôn;
+ *   2. không có thì tìm theo từ khoá chính ("Tây Ninh" ↔ "BĐH Tây Ninh").
+ *
+ * Bậc 2 chỉ điền khi có ĐÚNG MỘT dòng thoả. Hai dòng trở lên (vừa "BĐH Tây
+ * Ninh" vừa "KCN Tây Ninh") thì trả `ambiguous` để màn hình bảo người dùng gõ
+ * rõ hơn — điền đại một số km sai vào giấy đề nghị thanh toán tệ hơn là không
+ * điền gì.
+ */
+export function matchDistance(
+  rows: TripDistance[],
+  from: string,
+  to: string
+): DistanceMatch {
+  const a = locationKey(from);
+  const b = locationKey(to);
+  if (!a || !b || a === b) return { row: null, ambiguous: false };
+
+  const keyed = keyRows(rows);
+  const exact = keyed.find(
+    (k) => (k.f === a && k.t === b) || (k.f === b && k.t === a)
+  );
+  if (exact) return { row: exact.row, ambiguous: false };
+
+  const near = keyed.filter(
+    (k) =>
+      (sameSpot(k.f, a) && sameSpot(k.t, b)) ||
+      (sameSpot(k.f, b) && sameSpot(k.t, a))
+  );
+  if (near.length === 1) return { row: near[0].row, ambiguous: false };
+  return { row: null, ambiguous: near.length > 1 };
+}
+
+/** Dạng gọn của `matchDistance` khi chỉ cần biết có số km hay không. */
+export function findDistance(
+  rows: TripDistance[],
+  from: string,
+  to: string
+): TripDistance | null {
+  return matchDistance(rows, from, to).row;
 }
 
 /** Gợi ý địa danh đã có trong danh mục — đổ vào <datalist> cho ô nhập. */

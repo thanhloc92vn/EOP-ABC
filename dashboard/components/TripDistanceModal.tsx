@@ -25,7 +25,7 @@ import { useCurrentUser } from "@/lib/useCurrentUser";
 import {
   useTripDistances,
   locationKey,
-  findDistance,
+  findExactDistance,
   type TripDistance,
 } from "@/lib/tripDistances";
 import {
@@ -104,10 +104,17 @@ export default function TripDistanceModal({ open, onClose, onChanged, initialFro
   const canEditRow = (r: TripDistance) =>
     user.isAdmin || (r.created_by || "").toLowerCase() === user.email.toLowerCase();
 
-  /** Dòng đang trùng cặp điểm với ô đang nhập (kể cả nhập ngược chiều). */
+  /**
+   * Dòng đang trùng cặp điểm với ô đang nhập (kể cả nhập ngược chiều).
+   *
+   * Dùng bản so khớp TRÙNG KHÍT, không phải bản nới theo từ khoá của form công
+   * tác: ở đây khớp nhầm là GHI ĐÈ số km của dòng người khác, chứ không chỉ là
+   * điền hụt một ô. Thêm "Tây Ninh – TPHCM" khi đã có "BĐH Tây Ninh – TPHCM"
+   * thì đó là hai dòng riêng, người dùng tự dọn nếu muốn.
+   */
   const duplicate = useMemo(() => {
     if (!from.trim() || !to.trim()) return null;
-    const hit = findDistance(rows, from, to);
+    const hit = findExactDistance(rows, from, to);
     return hit && hit.id !== editId ? hit : null;
   }, [rows, from, to, editId]);
 
