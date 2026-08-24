@@ -5,7 +5,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
-import { fetchApprovalPermissions, normalizeName } from "@/lib/approvers";
+import { fetchApprovalPermissions, fetchApprovalGroups, resolveJustificationApproverName, normalizeName } from "@/lib/approvers";
 import { useDepartments } from "@/lib/departments";
 import { useTenantConfig } from "@/lib/tenantConfig";
 import { fetchAvatarMap, pickAvatar } from "@/lib/avatar";
@@ -704,6 +704,14 @@ export default function CBPage() {
   // Authorization states
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [hasFullAccess, setHasFullAccess] = useState(false);
+
+  // Danh bạ ĐẦY ĐỦ (tên / chức danh / phòng ban) từ view `employees_directory` — view
+  // này không chứa PII nên mọi tài khoản đều đọc được. Bắt buộc phải tách khỏi state
+  // `employees`: `employees` bị cắt còn đúng dòng của chính người đăng nhập khi họ
+  // không có cờ Xem lương, dò người duyệt trong đó thì luôn ra chính họ.
+  const [approverDirectory, setApproverDirectory] = useState<{
+    name: string; role: string; department: string;
+  }[]>([]);
 
   // Loại HĐLĐ của CHÍNH người đang đăng nhập, lấy qua RPC `my_contract_type`
   // (migration 040). Người không có cờ "Xem lương & HĐLĐ" bị RLS chặn đọc bảng
@@ -3320,6 +3328,20 @@ export default function CBPage() {
       };
       setCurrentUser(userInfo);
 
+      // Danh bạ toàn công ty + các tổ có luồng duyệt riêng — chỉ để suy ra người
+      // phê duyệt giải trình, không đổ vào `employees` (danh sách hiển thị vẫn phải
+      // bị cắt theo quyền). Phòng ban chuẩn hoá cùng kiểu với `employees` để so khớp.
+      await fetchApprovalGroups();
+      const { data: dirData } = await supabase
+        .from("employees_directory")
+        .select("name, role, department")
+        .order("name", { ascending: true });
+      setApproverDirectory((dirData || []).map((e: any) => ({
+        name: e.name || "",
+        role: e.role || "",
+        department: normalizeDeptClient(e.department),
+      })));
+
       const loadedEmployees = await loadEmployeesData(email, fullAccess, userInfo.name, empData);
       await fetchContracts(loadedEmployees);
       // Chỉ hỏi khi người dùng KHÔNG đọc được bảng contracts; nhóm C&B đã có sẵn
@@ -3643,86 +3665,22 @@ export default function CBPage() {
     return showAllMachineLogs ? filteredAttendanceLogs : filteredAttendanceLogs.slice(0, MACHINE_LOGS_PREVIEW_COUNT);
   }, [filteredAttendanceLogs, showAllMachineLogs]);
 
-  // Helper to determine if a role represents a manager/department head
-  const isManagerRole = (role: string): boolean => {
-    if (!role) return false;
-    const lower = role.trim().toLowerCase();
-    
-    // Check for common abbreviation prefixes like "tp." or "tp " or matching phrases
-    return lower.startsWith("tp.") || 
-           lower.startsWith("tp ") || 
-           lower === "tp" ||
-           lower.includes("trưởng phòng") || 
-           lower.includes("trưởng bộ phận") || 
-           lower.includes("chỉ huy trưởng") || 
-           lower.includes("kế toán trưởng") || 
-           lower.includes("ktt") ||
-           lower.includes("phó giám đốc") || 
-           lower.includes("pgđ") ||
-           lower.includes("chỉ huy phó") || 
-           lower.includes("chỉ huy");
-  };
-
-  // Helper to find department manager for autofill (robust, systematic & intelligent)
-  const getManagerForDepartment = (deptName: string) => {
-    const normalizedTarget = normalizeDeptClient(deptName);
-    
-    // 1. Filter employees in the same normalized department
-    const deptMembers = employees.filter(emp => normalizeDeptClient(emp.department) === normalizedTarget);
-    
-    // 2. Search systematically for a department head based on title/role (like TP. HCNS)
-    let manager = deptMembers.find(m => isManagerRole(m.role));
-
-    // 3. Specific override for HCNS (Hành chính Nhân sự) as requested by user:
-    // ưu tiên đúng Trưởng phòng HCNS khai trong tenant_config.hcns_head_name
-    const headNorm = normalizeName(tenantCfg.hcns_head_name || "");
-    if (normalizedTarget === "Phòng Hành Chính Nhân Sự" && headNorm) {
-      const daoEmp = deptMembers.find(m => {
-        const nameLower = (m.name || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[đĐ]/g, "d");
-        return nameLower.includes(headNorm);
-      });
-      if (daoEmp) manager = daoEmp;
-    }
-
-    // 4. Fallback search for assistant / team leader / deputy head
-    if (!manager) {
-      manager = deptMembers.find(m => {
-        const roleLower = (m.role || "").toLowerCase();
-        return roleLower.includes("tổ trưởng") || roleLower.includes("phó phòng") || roleLower.includes("phó bộ phận");
-      });
-    }
-
-    if (manager) return manager.name;
-
-    // 5. Hardcoded fallbacks if no employee record is found in DB matching department head
-    if (normalizedTarget === "Phòng Hành Chính Nhân Sự") {
-      return tenantCfg.hcns_head_name; // Trưởng phòng HCNS khai trong tenant_config
-    }
-    if (normalizedTarget === "Phòng Kỹ Thuật") {
-      return "Phó Giám Đốc";
-    }
-    if (normalizedTarget === "Phòng Vật Tư Thiết Bị") {
-      return "TP Vật Tư Thiết Bị";
-    }
-    if (normalizedTarget === "Phòng Kế Hoạch Đấu Thầu" || normalizedTarget === "Phòng Kế Hoạch") {
-      return "TP Kế Hoạch";
-    }
-    if (normalizedTarget === "Phòng An Toàn Lao Động" || normalizedTarget === "Phòng ATLĐ") {
-      return "TP ATLĐ";
-    }
-    if (normalizedTarget === "Phòng Tài Chính Kế Toán") {
-      return "Kế Toán Trưởng";
-    }
-    if (normalizedTarget === "Phòng Dự Án" || normalizedTarget === "Phòng Quản Lý Dự Án") {
-      return "PP Dự Án";
-    }
-
-    // Hard fallback to the first employee in the department list
-    if (deptMembers.length > 0) {
-      return deptMembers[0].name;
-    }
-    return "";
-  };
+  // Người phê duyệt giải trình — SUY RA bằng đúng khung cấp 1 của nghỉ phép / công
+  // tác / đăng ký xe (lib/approvers.ts), thay cho bản chép riêng của trang này.
+  //
+  // Bản cũ dò trưởng phòng trong mảng `employees` — mà mảng đó đã bị cắt còn đúng
+  // một dòng của chính người đăng nhập với tài khoản không có cờ Xem lương
+  // (loadEmployeesData), nên "phòng" chỉ còn một thành viên là chính họ. Cộng thêm
+  // nhánh dự phòng bắt "tổ trưởng"/"phó phòng", một Tổ trưởng mở biểu mẫu là thấy
+  // chính tên mình ở ô Người phê duyệt (24/08/2026), đơn không bao giờ tới tay TP.
+  // Các chuỗi chức danh viết cứng ("TP Vật Tư Thiết Bị", "Phó Giám Đốc"…) cũng bỏ
+  // theo: chúng không khớp tên thật của ai nên đơn rơi vào vùng chết.
+  const getJustificationApprover = (employeeName: string, deptName: string) =>
+    resolveJustificationApproverName({
+      requesterName: employeeName,
+      requesterDepartment: deptName,
+      people: approverDirectory,
+    });
 
   const fetchExplanations = async () => {
     setLoadingExplanations(true);
@@ -5700,9 +5658,9 @@ export default function CBPage() {
                                 if (emp) {
                                   setExpFormEmployeeName(emp.name);
                                   setExpFormDepartment(emp.department || "Phòng HCNS");
-                                  // Auto-fill manager
-                                  const managerName = getManagerForDepartment(emp.department);
-                                  setExpFormApprover(managerName);
+                                  // Tự điền người duyệt theo đúng khung cấp 1 chung. Rỗng =
+                                  // không suy ra được ai, người dùng gõ tay như cũ.
+                                  setExpFormApprover(getJustificationApprover(emp.name, emp.department));
                                 }
                               }
                             }}

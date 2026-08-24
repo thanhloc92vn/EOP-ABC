@@ -340,6 +340,56 @@ export function isJustificationCap1Approver(params: Cap1Params & {
   return cap1DepartmentManager(params);
 }
 
+// ━━━ Giải trình công — TÊN người duyệt cấp 1, để tự điền ô "Người phê duyệt" ━━━
+// Cặp đôi của isJustificationCap1Approver: hàm kia trả lời "người này có duyệt
+// được đơn đó không", hàm này trả lời "đơn này nên về tay ai". Bám đúng cùng thứ tự
+// để hai bên không trôi lệch: tổ trưởng của CHÍNH tổ người giải trình -> Trưởng
+// phòng cùng đơn vị -> Phó phòng cùng đơn vị. Giống resolveBookingCap1Approvers,
+// chỉ khác ở chỗ ô trên biểu mẫu C&B chỉ chứa được MỘT tên nên phải ưu tiên.
+//
+// `people` PHẢI là danh bạ ĐẦY ĐỦ (view employees_directory), không phải mảng nhân
+// sự đã lọc theo quyền: trang C&B cắt danh sách còn đúng một dòng của chính người
+// đăng nhập, dò trưởng phòng trong đó thì luôn ra chính họ (lỗi 24/08/2026: tổ
+// trưởng mở biểu mẫu thấy tên mình ở ô người phê duyệt).
+//
+// Loại chính người giải trình khỏi ứng viên — cap1Opening cấm tự duyệt, để tên họ
+// ở đây là đơn nằm im không ai xử lý được. Trả "" = không suy ra được ai; nơi gọi
+// để ô trống cho người dùng gõ tay, đơn vẫn về HCNS/Admin qua nhánh quyền bao quát.
+export function resolveJustificationApproverName<T extends {
+  name: string; role?: string | null; department?: string | null;
+}>(params: {
+  requesterName: string;
+  /** Phòng ban của người giải trình, tra từ danh bạ (đã chuẩn hoá cùng kiểu với `people`). */
+  requesterDepartment?: string | null;
+  people: T[];
+}): string {
+  const { requesterName, requesterDepartment, people } = params;
+
+  // Thuộc tổ có luồng riêng -> CHỈ tổ trưởng tổ đó, không rơi xuống nhánh phòng ban
+  // (cap1Opening chốt xong ở bước này). Tổ trưởng KHÔNG nằm trong member_names của
+  // tổ mình nên đơn của chính họ vẫn đi tiếp xuống Trưởng/Phó phòng như mong đợi.
+  const group = getApprovalGroupOfMember(requesterName);
+  if (group) {
+    const leader = group.leader_name || "";
+    return normalizeName(leader) === normalizeName(requesterName) ? "" : leader;
+  }
+
+  const dept = normalizeName(requesterDepartment);
+  if (!dept) return "";
+
+  const sameDept = people.filter(e =>
+    normalizeName(e.department) === dept &&
+    normalizeName(e.name) !== normalizeName(requesterName) &&
+    isDepartmentManagerRole(e.role)
+  );
+
+  const isTruongPhong = (role?: string | null) => {
+    const r = normalizeName(role);
+    return r.includes("truong phong") && !r.includes("pho truong phong");
+  };
+  return (sameDept.find(e => isTruongPhong(e.role)) || sameDept[0])?.name || "";
+}
+
 // ━━━ NGOẠI LỆ DUYỆT NGHỈ 1 NGÀY (bảng leave_exceptions) ━━━
 // Mỗi dòng = "approver được duyệt cấp 1 đơn nghỉ 1 NGÀY của assignee" (đặc cách
 // theo quy định nội bộ). Khớp tên kiểu "chứa, không phân biệt hoa thường & dấu"
