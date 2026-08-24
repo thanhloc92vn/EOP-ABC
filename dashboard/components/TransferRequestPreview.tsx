@@ -20,7 +20,7 @@ import { useState } from "react";
 import { createPortal } from "react-dom";
 import { Eye, X, Download, Loader2 } from "lucide-react";
 import { apiFetch } from "@/lib/apiClient";
-import { docSoVietNam } from "@/lib/wordExporter";
+import { asciiFileNamePart, docSoVietNam } from "@/lib/wordExporter";
 
 export type TransferRequestData = {
   employeeName: string;
@@ -77,7 +77,7 @@ export async function exportTransferRequestDocx(d: TransferRequestData): Promise
   const url = window.URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `Giay_De_Nghi_Chuyen_Tien_${(d.supplierName || "NCC").replace(/\s+/g, "_")}.docx`;
+  a.download = `Giay_De_Nghi_Chuyen_Tien_${asciiFileNamePart(d.supplierName, "NCC")}.docx`;
   document.body.appendChild(a);
   a.click();
   a.remove();

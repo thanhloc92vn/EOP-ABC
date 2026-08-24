@@ -1,3 +1,25 @@
+/**
+ * Chuyển một mẩu tên tiếng Việt thành phần tên tệp thuần ASCII.
+ * "Công ty TNHH Hữu Biên" → "Cong_ty_TNHH_Huu_Bien"
+ *
+ * Giữ nguyên hoa/thường vì tên tệp xuất ra đang theo kiểu Giay_De_Nghi_...,
+ * chỉ bỏ dấu và gom mọi ký tự lạ về "_". Đ/đ phải xử lý riêng: NFD không tách
+ * được chúng ra thành D + dấu như các nguyên âm.
+ */
+export function asciiFileNamePart(s: string, fallback = "File"): string {
+  return (
+    s
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .replace(/đ/g, "d")
+      .replace(/Đ/g, "D")
+      // Gạch chéo, dấu hai chấm… là ký tự cấm trong tên tệp trên Windows —
+      // gom chung vào đây luôn thay vì chỉ thay khoảng trắng.
+      .replace(/[^a-zA-Z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "") || fallback
+  );
+}
+
 // Number to Vietnamese words helper
 export function docSoVietNam(num: number): string {
   if (num === 0) return "Không đồng";
