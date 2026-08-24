@@ -5750,7 +5750,7 @@ export default function CBPage() {
                           <input
                             type="text"
                             required
-                            placeholder="Tên trưởng phòng phê duyệt..."
+                            placeholder="Tên người phê duyệt..."
                             value={expFormApprover}
                             onChange={(e) => setExpFormApprover(e.target.value)}
                             className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold focus:border-[#005BAC] focus:ring-1 focus:ring-[#005BAC] outline-none"
