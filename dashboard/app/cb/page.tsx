@@ -5746,7 +5746,7 @@ export default function CBPage() {
 
                         {/* Người phê duyệt */}
                         <div className="space-y-1">
-                          <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">Người phê duyệt (Trưởng phòng) *</label>
+                          <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">Người phê duyệt *</label>
                           <input
                             type="text"
                             required
