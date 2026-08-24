@@ -2,6 +2,24 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Getting Started
 
+### Biến môi trường
+
+`.env*` nằm trong `.gitignore`, nên bản clone mới **không có** file cấu hình —
+phải tự tạo `dashboard/.env.local` trước khi chạy. Hai biến bắt buộc:
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=https://<project>.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key>
+```
+
+Thiếu chúng thì `lib/supabase.ts` ném `supabaseUrl is required` và mọi trang trả
+về 500 (Sidebar import supabase nên layout chết ngay từ đầu). Các biến còn lại —
+`SMTP_*`, `OPENAI_*`, `NEXT_PUBLIC_APPS_SCRIPT_URL`, `APPS_SCRIPT_SECRET`,
+`NEXT_PUBLIC_SITE_URL` — chỉ tắt/bật từng tính năng, để trống vẫn chạy được.
+Đổi env xong nhớ khởi động lại dev server.
+
+### Chạy
+
 First, run the development server:
 
 ```bash
