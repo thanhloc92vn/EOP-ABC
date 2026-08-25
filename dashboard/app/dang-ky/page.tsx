@@ -214,6 +214,10 @@ function BookingContent() {
   const [trimRemovedDays, setTrimRemovedDays] = useState<string[]>([]);
   const [trimNote, setTrimNote] = useState("");
 
+  // Popup xác nhận xoá hẳn lịch 1 ngày — thay cho window.confirm/prompt của trình duyệt.
+  const [deleteTarget, setDeleteTarget] = useState<BookingRow | null>(null);
+  const [deleteNote, setDeleteNote] = useState("");
+
   // Sửa ngày giờ ngay trong popup — CHỈ Admin và người có cờ điều phối xe/phòng.
   // Trưởng bộ phận không sửa được giờ (chỉ duyệt / từ chối / xoá) để tránh mỗi
   // phòng tự đổi lịch một kiểu, mất vai trò điều phối tập trung của Hành chính.
@@ -909,15 +913,23 @@ function BookingContent() {
       setTrimNote("");
       return;
     }
-    if (!window.confirm(`Xoá hẳn lịch book "${b.host_name}" (${b.resource_name})? Hành động này không thể hoàn tác.`)) return;
-    const defaultNote = `${isVehicle ? "Xe" : "Phòng họp"} ưu tiên Ban lãnh đạo`;
-    const note = window.prompt("Ghi chú lý do xoá (sẽ gửi kèm email báo cho người đăng ký):", defaultNote) || "";
+    // Lịch 1 ngày: mở popup xác nhận giữa màn hình (thay window.confirm/prompt của trình duyệt).
+    setDeleteTarget(b);
+    setDeleteNote(`${isVehicle ? "Xe" : "Phòng họp"} ưu tiên Ban lãnh đạo`);
+  };
+
+  // Xác nhận xoá hẳn lịch 1 ngày từ popup tuỳ biến.
+  const handleConfirmDelete = async () => {
+    if (!currentUser || !deleteTarget || processingAction) return;
+    const b = deleteTarget;
+    const note = deleteNote.trim();
     try {
       setProcessingAction(true);
       const { error } = await supabase.from("resource_bookings").delete().eq("id", b.id);
       if (error) throw error;
 
       showToast("success", "Đã xoá lịch book. Đang gửi email báo người đăng ký...");
+      setDeleteTarget(null);
       closeBookingModal();
       fetchBookings();
 
@@ -926,7 +938,7 @@ function BookingContent() {
           smtpConfig: readSmtpConfig(),
           booking: b,
           decision: "deleted",
-          rejectReason: note.trim(),
+          rejectReason: note,
           approverName: currentUser.name,
         },
         "Chưa gửi được email báo xoá lịch"
@@ -1550,6 +1562,75 @@ function BookingContent() {
                       : trimKeptDays.length === 0
                       ? "Xoá cả lịch"
                       : `Bỏ ${trimRemovedDays.length} ngày đã chọn`}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Popup xác nhận xoá hẳn lịch 1 ngày — thay window.confirm/prompt của trình duyệt */}
+          {deleteTarget && (
+            <div
+              className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4"
+              onClick={() => !processingAction && setDeleteTarget(null)}
+            >
+              <div
+                className="bg-white w-full max-w-md rounded-2xl shadow-premium overflow-hidden animate-in zoom-in-95 duration-150 flex flex-col"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="bg-rose-600 text-white px-6 py-4 flex items-center justify-between gap-3 shrink-0">
+                  <h3 className="font-heading font-bold text-sm flex items-center gap-2">
+                    <Trash2 size={16} /> Xoá hẳn lịch book
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => setDeleteTarget(null)}
+                    disabled={processingAction}
+                    className="text-white/80 hover:text-white cursor-pointer disabled:opacity-50"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+
+                <div className="p-6 space-y-4 text-xs">
+                  <p className="text-slate-600 font-semibold leading-relaxed">
+                    Xoá hẳn lịch <b className="text-slate-800">{deleteTarget.host_name}</b> (
+                    {deleteTarget.resource_name})? Hành động này <b className="text-rose-600">không thể hoàn tác</b>.
+                  </p>
+
+                  <p className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-[11px] font-semibold text-slate-600 leading-relaxed flex gap-1.5">
+                    <AlertTriangle size={14} className="shrink-0 mt-0.5 text-amber-500" />
+                    Hệ thống sẽ gửi email báo cho người đăng ký để họ biết lịch không còn hiệu lực.
+                  </p>
+
+                  <div className="space-y-1">
+                    <label className="text-slate-500 font-bold">Ghi chú lý do xoá (gửi kèm email)</label>
+                    <input
+                      value={deleteNote}
+                      onChange={(e) => setDeleteNote(e.target.value)}
+                      placeholder="VD: Xe ưu tiên Ban lãnh đạo"
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40 font-semibold text-slate-700"
+                    />
+                  </div>
+                </div>
+
+                <div className="p-4 border-t border-slate-100 flex items-center justify-end gap-2 bg-slate-50/60 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setDeleteTarget(null)}
+                    disabled={processingAction}
+                    className="text-[11px] font-bold text-slate-500 hover:text-slate-700 px-3.5 py-2 rounded-xl cursor-pointer disabled:opacity-50"
+                  >
+                    Huỷ
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmDelete}
+                    disabled={processingAction}
+                    className="inline-flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold px-3.5 py-2 rounded-xl transition-all active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                  >
+                    <Trash2 size={13} />
+                    {processingAction ? "Đang xoá..." : "Xoá lịch book"}
                   </button>
                 </div>
               </div>
