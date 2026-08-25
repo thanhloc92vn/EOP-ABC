@@ -57,7 +57,7 @@ export type TenantConfig = {
 export const TENANT_DEFAULTS: TenantConfig = {
   company_name: "Trung Nam E&C",
   company_short: "TNEC",
-  system_title: "PM - HCNS - TNEC",
+  system_title: "EOP-ABC",
   system_subtitle: "Hệ thống HCNS",
   logo_text: "TN",
   contract_no_suffix: "TNE&C",

@@ -8,7 +8,7 @@
 
 1. Truy cập [https://console.cloud.google.com/](https://console.cloud.google.com/)
 2. Nhấn **"Select a project"** → **"New Project"**
-3. Đặt tên project (VD: `pm-hcns-tnec-app`) → nhấn **Create**
+3. Đặt tên project (VD: `eop-abc-app`) → nhấn **Create**
 
 ---
 
@@ -25,7 +25,7 @@ Trong project vừa tạo:
 
 1. Vào **"APIs & Services"** → **"Credentials"**
 2. Nhấn **"+ Create Credentials"** → chọn **"Service account"**
-3. Đặt tên (VD: `pm-hcns-tnec-sa`) → nhấn **Create and Continue** → **Done**
+3. Đặt tên (VD: `eop-abc-sa`) → nhấn **Create and Continue** → **Done**
 4. Nhấn vào Service Account vừa tạo → tab **"Keys"**
 5. Nhấn **"Add Key"** → **"Create new key"** → chọn **JSON** → **Create**
 6. File `credentials.json` sẽ tự động tải về máy
@@ -37,7 +37,7 @@ Trong project vừa tạo:
 Copy file `credentials.json` vào **thư mục gốc dự án**:
 
 ```
-PM-HCNS-TNEC/
+EOP-ABC/
 ├── credentials.json   ← ĐẶT FILE NÀY VÀO ĐÂY
 ├── main.py
 ├── requirements.txt

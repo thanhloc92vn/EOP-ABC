@@ -17,7 +17,7 @@ create table if not exists tenant_config (
 insert into tenant_config (key, value, description) values
   ('company_name',        '"Trung Nam E&C"',            'Tên công ty đầy đủ'),
   ('company_short',       '"TNEC"',                     'Tên viết tắt'),
-  ('system_title',        '"PM - HCNS - TNEC"',         'Tiêu đề hệ thống (sidebar, tab trình duyệt)'),
+  ('system_title',        '"EOP-ABC"',         'Tiêu đề hệ thống (sidebar, tab trình duyệt)'),
   ('system_subtitle',     '"Hệ thống HCNS"',            'Phụ đề dưới tiêu đề sidebar'),
   ('logo_text',           '"TN"',                       'Chữ trong ô logo vuông'),
   ('contract_no_suffix',  '"TNE&C"',                    'Hậu tố số hợp đồng: 006335/2026/HĐTV/<suffix>'),

@@ -1,6 +1,6 @@
-# PM-HCNS-TNEC - Hệ Thống Quản Trị Dự Án & Hành Chính Nhân Sự 🚀
+# EOP-ABC - Hệ Thống Quản Trị Dự Án & Hành Chính Nhân Sự 🚀
 
-Chào mừng đến với **PM-HCNS-TNEC**! Đây là hệ thống quản lý tích hợp (Project Management - Hành chính Nhân sự - Trung Nam EC). Hệ thống bao gồm ứng dụng Desktop hiện đại giúp bộ phận HR tự động hóa quy trình sàng lọc hồ sơ ứng viên (AI CV Scorer), kết nối Google Sheets và hệ thống quản trị dữ liệu nhân sự, thử việc, văn thư nội bộ.
+Chào mừng đến với **EOP-ABC**! Đây là hệ thống quản lý tích hợp (Project Management - Hành chính Nhân sự - Trung Nam EC). Hệ thống bao gồm ứng dụng Desktop hiện đại giúp bộ phận HR tự động hóa quy trình sàng lọc hồ sơ ứng viên (AI CV Scorer), kết nối Google Sheets và hệ thống quản trị dữ liệu nhân sự, thử việc, văn thư nội bộ.
 
 > **Phong cách phát triển: "Vibe Coding"** - Giao diện đẹp, trải nghiệm mượt mà, code sạch. ✨
 
@@ -79,7 +79,7 @@ Giao diện ứng dụng sẽ hiện lên sau vài giây.
 ## 📂 Cấu Trúc Dự Án
 
 ```
-PM-HCNS-TNEC/
+EOP-ABC/
 ├── core/                   # Lõi xử lý
 │   ├── ai_client.py        # Giao tiếp với AI (Logic chấm, Prompt)
 │   ├── file_reader.py      # Đọc file (PDF, OCR, Image)

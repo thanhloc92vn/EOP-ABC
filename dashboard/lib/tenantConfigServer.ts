@@ -21,7 +21,7 @@ export type ServerTenantConfig = {
 export const SERVER_TENANT_DEFAULTS: ServerTenantConfig = {
   company_name: "Trung Nam E&C",
   company_short: "TNEC",
-  system_title: "PM - HCNS - TNEC",
+  system_title: "EOP-ABC",
   system_subtitle: "Hệ thống HCNS",
   email_sender_name: "Phòng HCNS TNEC",
   chairman_name: "Huỳnh Giáp Nhân",

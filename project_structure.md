@@ -1,4 +1,4 @@
-# 🏗️ PM-HCNS-TNEC: Project Architecture & System Structure
+# 🏗️ EOP-ABC: Project Architecture & System Structure
 
 Tài liệu này bản đồ hóa toàn bộ cấu trúc dự án, luồng đi của dữ liệu và kiến trúc hệ thống để lập trình viên (hoặc AI Agent) có thể nắm bắt 100% cách hoạt động của hệ thống ngay lập tức.
 
@@ -6,7 +6,7 @@ Tài liệu này bản đồ hóa toàn bộ cấu trúc dự án, luồng đi c
 
 ## 🗺️ Bản Đồ Hệ Thống (System Overview)
 
-Hệ thống **PM-HCNS-TNEC** (Hành chính Nhân sự & Quản trị Dự án) gồm 3 khối thành phần chính liên kết chặt chẽ với nhau:
+Hệ thống **EOP-ABC** (Hành chính Nhân sự & Quản trị Dự án) gồm 3 khối thành phần chính liên kết chặt chẽ với nhau:
 
 *   **Desktop App (AI CV Scorer)**: Ứng dụng chạy local trên CustomTkinter (Python) dành cho bộ phận HR để lọc CV tự động từ thư mục cục bộ hoặc quét Gmail tự động, phân tích qua OpenAI API và lưu thông tin sang Google Sheets.
 *   **Google Workspace Integration**: Sử dụng Google Apps Script Webhook để nhận dữ liệu từ Desktop App, cập nhật vào tab `Tổng Hợp` và tự động chuyển các dòng có trạng thái `PASS CV` sang tab `Vòng 1`.
@@ -17,33 +17,33 @@ Hệ thống **PM-HCNS-TNEC** (Hành chính Nhân sự & Quản trị Dự án) 
 ## 📂 Chi Tiết Cấu Trúc Thư Mục (Directory Structure)
 
 ### 1. Thư mục Gốc (Root Directory)
-*   [main.py](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/main.py): Entry point khởi chạy ứng dụng Desktop (CustomTkinter GUI).
-*   [generate_reports.py](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/generate_reports.py): Script độc lập lấy dữ liệu ứng viên từ Supabase, phân tích bằng OpenAI và tạo báo cáo tuyển dụng Tuần/Tháng theo file mẫu (Word/Excel) trong `dashboard/public/templates/`.
-*   [sync_to_vong1.py](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/sync_to_vong1.py): Script tiện ích đồng bộ thủ công các ứng viên có trạng thái `"PASS CV"` từ tab "Tổng Hợp" sang tab "Vòng 1" trên Google Sheets.
-*   [config.json](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/config.json): Lưu API Key, tên model OpenAI và Webhook URL của Google Apps Script (không chứa thông tin nhạy cảm cứng).
+*   [main.py](file:///e:/Antigravity/EOP-ABC/main.py): Entry point khởi chạy ứng dụng Desktop (CustomTkinter GUI).
+*   [generate_reports.py](file:///e:/Antigravity/EOP-ABC/generate_reports.py): Script độc lập lấy dữ liệu ứng viên từ Supabase, phân tích bằng OpenAI và tạo báo cáo tuyển dụng Tuần/Tháng theo file mẫu (Word/Excel) trong `dashboard/public/templates/`.
+*   [sync_to_vong1.py](file:///e:/Antigravity/EOP-ABC/sync_to_vong1.py): Script tiện ích đồng bộ thủ công các ứng viên có trạng thái `"PASS CV"` từ tab "Tổng Hợp" sang tab "Vòng 1" trên Google Sheets.
+*   [config.json](file:///e:/Antigravity/EOP-ABC/config.json): Lưu API Key, tên model OpenAI và Webhook URL của Google Apps Script (không chứa thông tin nhạy cảm cứng).
 *   `requirements.txt`: Các thư viện Python phụ thuộc (`customtkinter`, `pymupdf`, `openai`, `requests`, `openpyxl`, `python-docx`, `docx2txt`, `pdfplumber`).
 
 ---
 
 ### 2. 🧠 Lõi Xử Lý Python (`/core`)
 Phần xử lý logic nền tảng của Desktop App (không phụ thuộc giao diện):
-*   [core/config_manager.py](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/core/config_manager.py): Đọc và lưu trữ cấu hình trong `config.json`.
-*   [core/file_reader.py](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/core/file_reader.py): 
+*   [core/config_manager.py](file:///e:/Antigravity/EOP-ABC/core/config_manager.py): Đọc và lưu trữ cấu hình trong `config.json`.
+*   [core/file_reader.py](file:///e:/Antigravity/EOP-ABC/core/file_reader.py): 
     *   Hỗ trợ đọc file: `.pdf`, `.docx`, `.txt`, `.png`, `.jpg`, `.jpeg`.
     *   **Cơ chế Hybrid / AI Vision**: Nếu file PDF có độ dài text trích xuất `< 50` ký tự (PDF scan), tự động chuyển sang chế độ **Scanned PDF**, render 3 trang đầu thành ảnh PNG, mã hóa Base64 để gửi lên OpenAI Vision API.
-*   [core/ai_client.py](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/core/ai_client.py):
+*   [core/ai_client.py](file:///e:/Antigravity/EOP-ABC/core/ai_client.py):
     *   Xây dựng Prompt chi tiết (System/User) cho mô hình `gpt-4o-mini` để thực hiện đồng thời: (1) Trích xuất thông tin cá nhân chuẩn hóa, (2) Chấm điểm phù hợp dựa trên mô tả công việc (JD), kỹ năng bắt buộc (Hard/Soft Skills) và áp dụng Penalty (Điểm trừ) nếu thiếu điều kiện tiên quyết.
     *   Sử dụng định dạng `response_format={"type": "json_object"}` để đảm bảo dữ liệu đầu ra là JSON sạch.
-*   [core/department_classifier.py](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/core/department_classifier.py): 
+*   [core/department_classifier.py](file:///e:/Antigravity/EOP-ABC/core/department_classifier.py): 
     *   Phân tích từ khóa trong JD và vị trí ứng tuyển để phân loại chính xác Phòng ban thụ hưởng (vd: *Phòng Kỹ Thuật*, *Phòng Kế Hoạch*, *Phòng Vật Tư Thiết Bị*,...)
     *   Gán Người đánh giá tương ứng (Reviewer) dựa trên phòng ban (vd: *Phó Giám Đốc*, *TP Kế Hoạch*, *TP Vật Tư*,...).
-*   [core/scorer.py](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/core/scorer.py): Điều phối toàn bộ luồng chấm điểm (File -> FileReader -> AIClient -> Chuẩn hóa định dạng đầu ra 16 trường).
+*   [core/scorer.py](file:///e:/Antigravity/EOP-ABC/core/scorer.py): Điều phối toàn bộ luồng chấm điểm (File -> FileReader -> AIClient -> Chuẩn hóa định dạng đầu ra 16 trường).
 
 ---
 
 ### 3. 🎨 Giao Diện Người Dùng Tkinter (`/ui`)
 Giao diện quản lý quy trình chấm CV và email của HR:
-*   [ui/main_window.py](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/ui/main_window.py): Setup giao diện chính CustomTkinter (màu tối làm chủ đạo), các tabs chức năng:
+*   [ui/main_window.py](file:///e:/Antigravity/EOP-ABC/ui/main_window.py): Setup giao diện chính CustomTkinter (màu tối làm chủ đạo), các tabs chức năng:
     *   **Tab Chấm Điểm**: Nhập JD, chọn thư mục CV, hiển thị bảng tiến độ chấm điểm thời gian thực, xem chi tiết đánh giá AI và xuất báo cáo Excel nhanh.
     *   **Tab Email Auto-Pilot**: Nhập thông tin IMAP Gmail và từ khóa. Chạy luồng quét email ngầm (`threading`), tải CV đính kèm về thư mục `downloaded_cvs` và tự động đưa vào hàng đợi chấm điểm.
     *   **Tab Cấu Hình**: Nhập API Key, chọn model LLM, dán link Webhook Google Sheets.
@@ -51,21 +51,21 @@ Giao diện quản lý quy trình chấm CV và email của HR:
 ---
 
 ### 4. 🛠️ Tiện Ích & Kết Nối (`/utils`)
-*   [utils/email_handler.py](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/utils/email_handler.py): Xử lý kết nối IMAP Gmail bảo mật (qua App Passwords), lọc thư và tải tệp đính kèm.
-*   [utils/apps_script_caller.py](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/utils/apps_script_caller.py): Định dạng dữ liệu thô thành mảng chuẩn và thực hiện request POST đồng bộ dữ liệu ứng viên sang Google Sheets Webhook. Tự động thêm dấu `'` vào số điện thoại để tránh lỗi mất số `0` ở đầu trong Sheets.
-*   [utils/process_cv_to_sheets.py](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/utils/process_cv_to_sheets.py): Điều phối luồng xử lý hàng loạt (Batch Processing) từ lúc chọn file cho tới khi ghi nhận thành công trên Google Sheets.
-*   [utils/sheets_exporter.py](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/utils/sheets_exporter.py): Client export dữ liệu thông qua Google API Credentials (nếu không dùng qua Apps Script Webhook).
+*   [utils/email_handler.py](file:///e:/Antigravity/EOP-ABC/utils/email_handler.py): Xử lý kết nối IMAP Gmail bảo mật (qua App Passwords), lọc thư và tải tệp đính kèm.
+*   [utils/apps_script_caller.py](file:///e:/Antigravity/EOP-ABC/utils/apps_script_caller.py): Định dạng dữ liệu thô thành mảng chuẩn và thực hiện request POST đồng bộ dữ liệu ứng viên sang Google Sheets Webhook. Tự động thêm dấu `'` vào số điện thoại để tránh lỗi mất số `0` ở đầu trong Sheets.
+*   [utils/process_cv_to_sheets.py](file:///e:/Antigravity/EOP-ABC/utils/process_cv_to_sheets.py): Điều phối luồng xử lý hàng loạt (Batch Processing) từ lúc chọn file cho tới khi ghi nhận thành công trên Google Sheets.
+*   [utils/sheets_exporter.py](file:///e:/Antigravity/EOP-ABC/utils/sheets_exporter.py): Client export dữ liệu thông qua Google API Credentials (nếu không dùng qua Apps Script Webhook).
 
 ---
 
 ### 5. ⚡ Google Apps Script (`/apps_script`)
 Mã nguồn chạy trên Google Workspace Editor liên kết với Google Sheets của phòng Nhân Sự:
-*   [apps_script/Code.gs](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/apps_script/Code.gs):
+*   [apps_script/Code.gs](file:///e:/Antigravity/EOP-ABC/apps_script/Code.gs):
     *   Nhận request `doPost(e)` chứa thông tin ứng viên.
     *   Thực hiện ghi dòng mới vào sheet `Tổng Hợp`.
     *   Nếu cột Trạng thái là `"PASS CV"`, tự động sao chép toàn bộ thông tin dòng đó sang sheet `Vòng 1`.
     *   Hỗ trợ cơ chế cập nhật trạng thái (`action: "update"`) và đồng bộ cưỡng bức (`action: "sync_pass"`).
-*   [apps_script/VanThu.gs](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/apps_script/VanThu.gs): Hỗ trợ các trigger tự động hóa về văn thư lưu trữ, số hóa tờ trình và công văn đến/đi trên Google Drive.
+*   [apps_script/VanThu.gs](file:///e:/Antigravity/EOP-ABC/apps_script/VanThu.gs): Hỗ trợ các trigger tự động hóa về văn thư lưu trữ, số hóa tờ trình và công văn đến/đi trên Google Drive.
 
 ---
 
@@ -98,8 +98,8 @@ Trang web quản trị tập trung dành cho các cấp quản lý và nhân s�
 1.  **Gửi đăng ký (`/dang-ky`)**: Nhân viên điền form và bấm *Gửi duyệt* → bản ghi lưu vào bảng `resource_bookings` (Supabase) với trạng thái `pending_manager`.
 2.  **Cấp 1 — Trưởng phòng xác nhận**: Trưởng/Phó phòng cùng phòng ban với người đăng ký (hoặc Admin) nhận thông báo trên chuông Header (realtime) và duyệt tại `/settings?tab=approvals&subtab=booking` → bấm *Xác nhận & chuyển HCNS* → trạng thái `pending_hcns`.
 3.  **Cấp 2 — HCNS duyệt cuối**: Người được cấp cờ `can_approve_booking` trong bảng `approval_permissions` (hiện là chị **Nguyễn Bích Như Quỳnh** — điều phối xe & phòng họp, phòng HCNS) bấm *Duyệt* hoặc *Từ chối* (bắt buộc nhập lý do khi từ chối).
-4.  **Gửi mail kết quả**: Hệ thống gọi [send-booking-email/route.ts](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/dashboard/app/api/send-booking-email/route.ts) (nodemailer) gửi email chuyên nghiệp cho người đăng ký, gồm đầy đủ thông tin buổi họp/chuyến xe, trạng thái duyệt/từ chối kèm lý do. SMTP dùng chung cấu hình trang C&B (localStorage `tnec_cb_smtp_*`), fallback biến môi trường `SMTP_USER`/`SMTP_PASS`.
-5.  **Schema**: chạy file [supabase_schema_resource_bookings.sql](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/dashboard/supabase_schema_resource_bookings.sql) trên Supabase SQL Editor (tạo bảng `resource_bookings` + thêm cột `can_approve_booking` + cấp quyền cho chị Quỳnh).
+4.  **Gửi mail kết quả**: Hệ thống gọi [send-booking-email/route.ts](file:///e:/Antigravity/EOP-ABC/dashboard/app/api/send-booking-email/route.ts) (nodemailer) gửi email chuyên nghiệp cho người đăng ký, gồm đầy đủ thông tin buổi họp/chuyến xe, trạng thái duyệt/từ chối kèm lý do. SMTP dùng chung cấu hình trang C&B (localStorage `tnec_cb_smtp_*`), fallback biến môi trường `SMTP_USER`/`SMTP_PASS`.
+5.  **Schema**: chạy file [supabase_schema_resource_bookings.sql](file:///e:/Antigravity/EOP-ABC/dashboard/supabase_schema_resource_bookings.sql) trên Supabase SQL Editor (tạo bảng `resource_bookings` + thêm cột `can_approve_booking` + cấp quyền cho chị Quỳnh).
 
 ---
 
@@ -116,13 +116,13 @@ Trang web quản trị tập trung dành cho các cấp quản lý và nhân s�
 ## ✈️ Luồng Đi Của Dữ Liệu Công Tác & Quyết Toán (Business Trip Data Flow)
 
 1.  **Đăng ký nghỉ phép/công tác (`/calendar`)**: Nhân viên tạo đơn trên giao diện Lịch trình (nút *Xin nghỉ phép*/*Đi công tác*). Đơn công tác tự tính phụ cấp, tiền khách sạn, vé di chuyển... đóng gói JSON Metadata (`<!--METADATA:{...}-->`) cuối trường `notes`; lưu vào bảng `tasks` (dùng chung với Kanban Quản lý Công việc) với `status: pending_approval`.
-2.  **Duyệt 2 cấp (Trưởng phòng/Tổ trưởng → HCNS)**: Để không phá vỡ 5 cột Kanban cố định của `tasks`, luồng duyệt dùng cột phụ **`approval_stage`** (`pending_manager` → `pending_hcns`, thêm qua [supabase_schema_task_approval_stages.sql](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/dashboard/supabase_schema_task_approval_stages.sql)) thay vì đổi `status`:
+2.  **Duyệt 2 cấp (Trưởng phòng/Tổ trưởng → HCNS)**: Để không phá vỡ 5 cột Kanban cố định của `tasks`, luồng duyệt dùng cột phụ **`approval_stage`** (`pending_manager` → `pending_hcns`, thêm qua [supabase_schema_task_approval_stages.sql](file:///e:/Antigravity/EOP-ABC/dashboard/supabase_schema_task_approval_stages.sql)) thay vì đổi `status`:
     *   **Cấp 1**: Trưởng/Phó phòng bất kỳ (hoặc người được nhân viên chỉ định tường minh trong đơn nghỉ phép, hoặc Tổ trưởng Marketing cho Nhàn/Thuận) bấm *Xác nhận & chuyển HCNS* (chuyển `approval_stage` sang `pending_hcns`) hoặc *Từ chối* (kết thúc ngay, không qua cấp 2).
-    *   **Cấp 2 (HCNS)**: Người có quyền `can_approve_trip`/`can_approve_leave` trong `approval_permissions` (hoặc Admin) bấm *Duyệt & gửi mail* — hàm `handleFinalDecision` trong [settings/page.tsx](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/dashboard/app/settings/page.tsx) trích `totalAmount` từ Metadata/Regex, tạo bản ghi `business_trips` (`cost`, `status: 'Đã duyệt'`, `task_id`), cập nhật `tasks.status` thành `in_progress`/`completed`.
-    *   Logic phân quyền dùng chung tại [lib/approvers.ts](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/dashboard/lib/approvers.ts) (`isLeaveTripCap1Approver`/`isLeaveTripCap2Approver`/`getRequestStage`) — áp dụng đồng nhất ở cả `calendar/page.tsx` (panel duyệt nhanh cấp 1), `settings/page.tsx` (tab 1 & 2 của Duyệt yêu cầu) và `Header.tsx` (chuông thông báo), tránh 3 nơi có quy tắc lệch nhau như trước.
-    *   **Email**: mỗi bước chuyển cấp/kết quả đều gọi [send-request-email/route.ts](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/dashboard/app/api/send-request-email/route.ts) (nodemailer, cùng chuẩn SMTP ưu tiên server với module Đăng ký xe/phòng họp) gửi mail có nút bấm mở thẳng trang duyệt, hoặc mail kết quả duyệt/từ chối kèm lý do cho người gửi đơn.
+    *   **Cấp 2 (HCNS)**: Người có quyền `can_approve_trip`/`can_approve_leave` trong `approval_permissions` (hoặc Admin) bấm *Duyệt & gửi mail* — hàm `handleFinalDecision` trong [settings/page.tsx](file:///e:/Antigravity/EOP-ABC/dashboard/app/settings/page.tsx) trích `totalAmount` từ Metadata/Regex, tạo bản ghi `business_trips` (`cost`, `status: 'Đã duyệt'`, `task_id`), cập nhật `tasks.status` thành `in_progress`/`completed`.
+    *   Logic phân quyền dùng chung tại [lib/approvers.ts](file:///e:/Antigravity/EOP-ABC/dashboard/lib/approvers.ts) (`isLeaveTripCap1Approver`/`isLeaveTripCap2Approver`/`getRequestStage`) — áp dụng đồng nhất ở cả `calendar/page.tsx` (panel duyệt nhanh cấp 1), `settings/page.tsx` (tab 1 & 2 của Duyệt yêu cầu) và `Header.tsx` (chuông thông báo), tránh 3 nơi có quy tắc lệch nhau như trước.
+    *   **Email**: mỗi bước chuyển cấp/kết quả đều gọi [send-request-email/route.ts](file:///e:/Antigravity/EOP-ABC/dashboard/app/api/send-request-email/route.ts) (nodemailer, cùng chuẩn SMTP ưu tiên server với module Đăng ký xe/phòng họp) gửi mail có nút bấm mở thẳng trang duyệt, hoặc mail kết quả duyệt/từ chối kèm lý do cho người gửi đơn.
 3.  **Quyết toán & Chỉnh sửa thủ công (`/cb` - Tab Chấm công -> Công tác)**:
     *   Giao diện C&B tải dữ liệu hành trình công tác từ bảng `business_trips` lên bảng theo dõi.
-    *   Nhân sự hoặc Admin có quyền `hasFullAccess` (được xác thực qua kiểm tra tài khoản Admin hoặc phòng ban HCNS trong [cb/page.tsx](file:///d:/Antigravity/PM%20-%20HCNS%20-%20TNEC/dashboard/app/cb/page.tsx)) có thể nhấp trực tiếp vào ô số tiền của cột **"Tổng chi phí thực tế"** để mở chế độ nhập liệu thủ công (Inline Input) trong trường hợp có sai sót hoặc cần quyết toán lại.
+    *   Nhân sự hoặc Admin có quyền `hasFullAccess` (được xác thực qua kiểm tra tài khoản Admin hoặc phòng ban HCNS trong [cb/page.tsx](file:///e:/Antigravity/EOP-ABC/dashboard/app/cb/page.tsx)) có thể nhấp trực tiếp vào ô số tiền của cột **"Tổng chi phí thực tế"** để mở chế độ nhập liệu thủ công (Inline Input) trong trường hợp có sai sót hoặc cần quyết toán lại.
     *   Khi nhấn phím `Enter` hoặc click ra ngoài (`onBlur`), hệ thống gọi hàm `handleUpdateTravelCost` để ghi đè số tiền mới trực tiếp vào cơ sở dữ liệu Supabase.
 

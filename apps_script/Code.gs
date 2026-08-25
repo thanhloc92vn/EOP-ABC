@@ -1,6 +1,6 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║  PM-HCNS-TNEC V2 + Dashboard API – Google Apps Script       ║
+ * ║  EOP-ABC V2 + Dashboard API – Google Apps Script             ║
  * ║  doGet  → Trả dữ liệu JSON (Read, Dashboard API)            ║
  * ║  doPost → Append / Update / Delete row (Write, CRUD)        ║
  * ╚══════════════════════════════════════════════════════════════╝
@@ -128,7 +128,7 @@ function doGet(e) {
       }
     }
 
-    return response({ status: "OK", message: "PM - HCNS - TNEC API Ready" });
+    return response({ status: "OK", message: "EOP-ABC API Ready" });
 
   } catch (err) {
     return response({ success: false, error: err.message });
