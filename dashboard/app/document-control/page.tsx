@@ -7,6 +7,7 @@ import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import { uploadClericalFile, resolveClericalUrl, isPrivateRef, displayNameFromRef } from "@/lib/clericalFiles";
+import { useConfirmBox } from "@/components/ConfirmDialog";
 import {
   FileDown,
   FileUp,
@@ -70,6 +71,7 @@ interface BatchItem {
 }
 
 export default function DocumentControlPage() {
+  const { ask, confirmNode } = useConfirmBox();
   const [activeTab, setActiveTab] = useState<string>("incoming"); // incoming, outgoing_1, outgoing_2, outgoing_hdqt, settings
   const [docs, setDocs] = useState<ClericalDoc[]>([]);
   const [loading, setLoading] = useState(true);
@@ -617,15 +619,21 @@ export default function DocumentControlPage() {
   };
 
   // Delete Document
-  const handleDeleteDoc = async (id: string) => {
-    if (!window.confirm("Bạn có chắc chắn muốn xoá công văn này không? Dữ liệu sẽ bị xoá vĩnh viễn trên Supabase.")) return;
-    try {
-      const { error } = await supabase.from("clerical_documents").delete().eq("id", id);
-      if (error) throw error;
-      setDocs((prev) => prev.filter((d) => d.id !== id));
-    } catch (e) {
-      alert("Lỗi khi xoá: " + (e as Error).message);
-    }
+  const handleDeleteDoc = (id: string) => {
+    ask({
+      title: "Xoá công văn này?",
+      message: "Dữ liệu sẽ bị xoá vĩnh viễn trên Supabase, không thể khôi phục.",
+      confirmLabel: "Xoá",
+      onConfirm: async () => {
+        try {
+          const { error } = await supabase.from("clerical_documents").delete().eq("id", id);
+          if (error) throw error;
+          setDocs((prev) => prev.filter((d) => d.id !== id));
+        } catch (e) {
+          alert("Lỗi khi xoá: " + (e as Error).message);
+        }
+      },
+    });
   };
 
   // File Upload drag/drop handlers
@@ -1869,6 +1877,7 @@ export default function DocumentControlPage() {
           </div>
         </div>
       )}
+      {confirmNode}
     </div>
   );
 }
