@@ -10,6 +10,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { X, ShieldCheck, UserPlus, Trash2, Save, Info, Users, CalendarClock, Plus, Search } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { invalidateApproverCaches, normalizeName } from "@/lib/approvers";
+import { useDialogs } from "@/components/ConfirmDialog";
 
 type PermissionRow = {
   id: string;
@@ -165,6 +166,8 @@ export default function UserPermissionsModal({
   employeeDirectory: DirectoryEmployee[];
   initialTab?: UserPermissionsTab;
 }) {
+  // Hộp thông báo / xác nhận căn giữa, đồng bộ giao diện (thay window.alert & confirm)
+  const { notify, confirm, dialogsNode } = useDialogs();
   const [tab, setTab] = useState<UserPermissionsTab>(initialTab);
 
   // ─── Tab 1: cờ quyền ───
@@ -214,7 +217,7 @@ export default function UserPermissionsModal({
       setRows((data || []) as PermissionRow[]);
     } catch (err) {
       console.error("Error fetching approval_permissions:", err);
-      alert("Không tải được danh sách phân quyền!");
+      notify("Không tải được danh sách phân quyền!");
     } finally {
       setLoading(false);
     }
@@ -237,7 +240,7 @@ export default function UserPermissionsModal({
       })));
     } catch (err) {
       console.error("Error fetching approval_groups:", err);
-      alert("Không tải được danh sách nhóm duyệt!");
+      notify("Không tải được danh sách nhóm duyệt!");
     } finally {
       setLoadingGroups(false);
     }
@@ -254,7 +257,7 @@ export default function UserPermissionsModal({
       setExceptions((data || []) as ExceptionRow[]);
     } catch (err) {
       console.error("Error fetching leave_exceptions:", err);
-      alert("Không tải được danh sách đặc cách!");
+      notify("Không tải được danh sách đặc cách!");
     } finally {
       setLoadingExceptions(false);
     }
@@ -316,7 +319,7 @@ export default function UserPermissionsModal({
     // lệch với những gì đang hiện trên màn hình.
     const typed = (addNameRef.current?.value || "").trim();
     if (!typed) {
-      alert("Hãy gõ hoặc chọn tên nhân viên trong Danh sách nhân viên.");
+      notify("Hãy gõ hoặc chọn tên nhân viên trong Danh sách nhân viên.");
       return;
     }
     const key = normalizeName(typed);
@@ -324,7 +327,7 @@ export default function UserPermissionsModal({
       addEmployeeOptions.find(o => normalizeName(o.name) === key) ||
       addEmployeeOptions.filter(o => normalizeName(o.name).includes(key))[0];
     if (!emp) {
-      alert(`Không tìm thấy "${typed}" trong Danh sách nhân viên.\nGõ một phần tên rồi chọn trong danh sách gợi ý.`);
+      notify(`Không tìm thấy "${typed}" trong Danh sách nhân viên.\nGõ một phần tên rồi chọn trong danh sách gợi ý.`);
       return;
     }
     // Đã có dòng phân quyền -> mở thẳng dòng đó để sửa, không tạo dòng trùng
@@ -349,7 +352,7 @@ export default function UserPermissionsModal({
       if (data?.id) setSelectedId(data.id);
     } catch (err: any) {
       console.error("Error adding permission row:", err);
-      alert("Không thêm được: " + (err.message || err) + "\n(Chỉ tài khoản Admin mới có quyền này.)");
+      notify("Không thêm được: " + (err.message || err) + "\n(Chỉ tài khoản Admin mới có quyền này.)");
     } finally {
       setSaving(false);
     }
@@ -359,7 +362,7 @@ export default function UserPermissionsModal({
     if (!selectedRow) return;
     const emailVal = normalizeEmailList(selectedRow.email);
     if (!emailVal) {
-      alert("Email không được để trống — đây là khoá khớp với tài khoản đăng nhập.");
+      notify("Email không được để trống — đây là khoá khớp với tài khoản đăng nhập.");
       return;
     }
     try {
@@ -381,11 +384,11 @@ export default function UserPermissionsModal({
         .update(payload)
         .eq("id", selectedRow.id);
       if (error) throw error;
-      alert(`Đã lưu phân quyền cho ${selectedRow.name || selectedRow.email}.\nNgười này cần tải lại trang để quyền mới có hiệu lực.`);
+      notify(`Đã lưu phân quyền cho ${selectedRow.name || selectedRow.email}.\nNgười này cần tải lại trang để quyền mới có hiệu lực.`);
       await fetchRows();
     } catch (err: any) {
       console.error("Error saving permission row:", err);
-      alert("Không lưu được: " + (err.message || err) + "\n(Chỉ tài khoản Admin mới có quyền này.)");
+      notify("Không lưu được: " + (err.message || err) + "\n(Chỉ tài khoản Admin mới có quyền này.)");
     } finally {
       setSaving(false);
     }
@@ -393,7 +396,11 @@ export default function UserPermissionsModal({
 
   const handleDelete = async () => {
     if (!selectedRow) return;
-    if (!confirm(`Thu hồi TOÀN BỘ quyền của ${selectedRow.name || selectedRow.email}?\nDòng phân quyền sẽ bị xoá khỏi bảng.`)) return;
+    if (!(await confirm({
+      title: `Thu hồi toàn bộ quyền của ${selectedRow.name || selectedRow.email}?`,
+      message: "Dòng phân quyền sẽ bị xoá khỏi bảng.",
+      confirmLabel: "Thu hồi",
+    }))) return;
     try {
       setSaving(true);
       const { error } = await supabase
@@ -405,7 +412,7 @@ export default function UserPermissionsModal({
       await fetchRows();
     } catch (err: any) {
       console.error("Error deleting permission row:", err);
-      alert("Không xoá được: " + (err.message || err));
+      notify("Không xoá được: " + (err.message || err));
     } finally {
       setSaving(false);
     }
@@ -431,7 +438,7 @@ export default function UserPermissionsModal({
       await fetchGroups();
     } catch (err: any) {
       console.error("Error creating approval group:", err);
-      alert("Không tạo được nhóm: " + (err.message || err));
+      notify("Không tạo được nhóm: " + (err.message || err));
     } finally {
       setSaving(false);
     }
@@ -439,7 +446,7 @@ export default function UserPermissionsModal({
 
   const handleSaveGroup = async (g: GroupRow) => {
     if (!g.name.trim() || !g.leader_name.trim()) {
-      alert("Nhóm phải có tên và tổ trưởng!");
+      notify("Nhóm phải có tên và tổ trưởng!");
       return;
     }
     try {
@@ -455,18 +462,22 @@ export default function UserPermissionsModal({
         .eq("id", g.id);
       if (error) throw error;
       invalidateApproverCaches();
-      alert(`Đã lưu nhóm "${g.name.trim()}".`);
+      notify(`Đã lưu nhóm "${g.name.trim()}".`);
       await fetchGroups();
     } catch (err: any) {
       console.error("Error saving approval group:", err);
-      alert("Không lưu được nhóm: " + (err.message || err));
+      notify("Không lưu được nhóm: " + (err.message || err));
     } finally {
       setSaving(false);
     }
   };
 
   const handleDeleteGroup = async (g: GroupRow) => {
-    if (!confirm(`Xoá nhóm duyệt "${g.name}"?\nThành viên nhóm sẽ quay lại luồng duyệt thường (Trưởng phòng ban duyệt cấp 1).`)) return;
+    if (!(await confirm({
+      title: `Xoá nhóm duyệt "${g.name}"?`,
+      message: "Thành viên nhóm sẽ quay lại luồng duyệt thường (Trưởng phòng ban duyệt cấp 1).",
+      confirmLabel: "Xoá",
+    }))) return;
     try {
       setSaving(true);
       const { error } = await supabase.from("approval_groups").delete().eq("id", g.id);
@@ -475,7 +486,7 @@ export default function UserPermissionsModal({
       await fetchGroups();
     } catch (err: any) {
       console.error("Error deleting approval group:", err);
-      alert("Không xoá được nhóm: " + (err.message || err));
+      notify("Không xoá được nhóm: " + (err.message || err));
     } finally {
       setSaving(false);
     }
@@ -503,7 +514,7 @@ export default function UserPermissionsModal({
       await fetchExceptions();
     } catch (err: any) {
       console.error("Error creating leave exception:", err);
-      alert("Không thêm được đặc cách: " + (err.message || err));
+      notify("Không thêm được đặc cách: " + (err.message || err));
     } finally {
       setSaving(false);
     }
@@ -511,7 +522,7 @@ export default function UserPermissionsModal({
 
   const handleSaveException = async (e: ExceptionRow) => {
     if (!e.approver_name.trim() || !e.assignee_name.trim()) {
-      alert("Đặc cách phải có đủ tên người duyệt và người được duyệt!");
+      notify("Đặc cách phải có đủ tên người duyệt và người được duyệt!");
       return;
     }
     try {
@@ -530,14 +541,18 @@ export default function UserPermissionsModal({
       await fetchExceptions();
     } catch (err: any) {
       console.error("Error saving leave exception:", err);
-      alert("Không lưu được đặc cách: " + (err.message || err));
+      notify("Không lưu được đặc cách: " + (err.message || err));
     } finally {
       setSaving(false);
     }
   };
 
   const handleDeleteException = async (e: ExceptionRow) => {
-    if (!confirm(`Xoá đặc cách "${e.approver_name} duyệt ${e.assignee_name}"?`)) return;
+    if (!(await confirm({
+      title: "Xoá đặc cách này?",
+      message: `Đặc cách "${e.approver_name} duyệt ${e.assignee_name}" sẽ bị xoá.`,
+      confirmLabel: "Xoá",
+    }))) return;
     try {
       setSaving(true);
       const { error } = await supabase.from("leave_exceptions").delete().eq("id", e.id);
@@ -546,7 +561,7 @@ export default function UserPermissionsModal({
       await fetchExceptions();
     } catch (err: any) {
       console.error("Error deleting leave exception:", err);
-      alert("Không xoá được đặc cách: " + (err.message || err));
+      notify("Không xoá được đặc cách: " + (err.message || err));
     } finally {
       setSaving(false);
     }
@@ -1080,6 +1095,7 @@ export default function UserPermissionsModal({
           </p>
         </div>
       </div>
+      {dialogsNode}
     </div>
   );
 }

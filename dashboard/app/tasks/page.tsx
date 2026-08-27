@@ -14,6 +14,7 @@ import { useDepartments } from "@/lib/departments";
 import { useProjectCatalog } from "@/lib/projectCatalog";
 import TaskTrackingPanel from "@/components/TaskTrackingPanel";
 import TaskCommentPanel from "@/components/TaskCommentPanel";
+import { useDialogs } from "@/components/ConfirmDialog";
 import {
   Calendar,
   Paperclip,
@@ -176,6 +177,8 @@ const getCardStyles = (status: string) => {
 };
 
 export default function TaskManagementPage() {
+  // Hộp thông báo / xác nhận căn giữa, đồng bộ giao diện (thay window.alert & confirm)
+  const { notify, confirm, dialogsNode } = useDialogs();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -426,7 +429,7 @@ export default function TaskManagementPage() {
 
   const handleAiSuggest = async () => {
     if (!newTitle) {
-      alert("Vui lòng nhập Tên công việc trước khi tạo mô tả bằng AI!");
+      notify("Vui lòng nhập Tên công việc trước khi tạo mô tả bằng AI!");
       return;
     }
     
@@ -446,13 +449,13 @@ export default function TaskManagementPage() {
       
       const data = await res.json();
       if (data.error) {
-        alert(data.error);
+        notify(data.error);
       } else if (data.description) {
         setNewDescription(data.description);
       }
     } catch (err) {
       console.error(err);
-      alert("Lỗi kết nối khi gọi AI!");
+      notify("Lỗi kết nối khi gọi AI!");
     } finally {
       setIsAiSuggesting(false);
     }
@@ -518,7 +521,7 @@ export default function TaskManagementPage() {
     // Chỉ Trưởng phòng / Phó phòng / Tổ trưởng / Admin được kết luận công việc
     // đã xong — nhân viên tự kéo vào "Đã hoàn thành" sẽ bị chặn.
     if ((isCompleting || isTracking) && !canManageTasks) {
-      alert(
+      notify(
         isTracking
           ? 'Chỉ cấp quản lý mới được chuyển công việc sang "Update thông tin" để theo dõi tiếp.'
           : 'Chỉ Trưởng phòng, Phó phòng, Tổ trưởng hoặc Admin mới được chuyển công việc sang "Đã hoàn thành".\n\n' +
@@ -635,7 +638,7 @@ export default function TaskManagementPage() {
     try {
       const url = await resolveTaskFileUrl(file.path);
       if (!url) {
-        alert(`Không mở được "${file.name}".\nTệp có thể đã bị xoá, hoặc tài khoản của bạn không có quyền đọc kho tệp công việc.`);
+        notify(`Không mở được "${file.name}".\nTệp có thể đã bị xoá, hoặc tài khoản của bạn không có quyền đọc kho tệp công việc.`);
         return;
       }
       setPreview({ file, url });
@@ -702,18 +705,18 @@ export default function TaskManagementPage() {
     // Đang tạo dở thì bỏ qua mọi cú bấm sau — đây là chỗ chặn task trùng.
     if (creatingTaskRef.current) return;
     if (!newTitle.trim()) {
-      alert("Vui lòng điền Tên công việc!");
+      notify("Vui lòng điền Tên công việc!");
       return;
     }
     if (newAssignees.length === 0) {
-      alert("Vui lòng chọn Người nhận!");
+      notify("Vui lòng chọn Người nhận!");
       return;
     }
     // Chốt lại từng tên phải có thật trong danh sách — tên gõ sai thì task không
     // hiện với ai và không gửi được email báo.
     const invalid = newAssignees.filter(n => !assignableEmployees.some(emp => emp.name === n));
     if (invalid.length > 0) {
-      alert(`Người nhận không hợp lệ: ${invalid.join(", ")}\nHãy chọn tên từ danh sách gợi ý.`);
+      notify(`Người nhận không hợp lệ: ${invalid.join(", ")}\nHãy chọn tên từ danh sách gợi ý.`);
       return;
     }
 
@@ -798,7 +801,7 @@ export default function TaskManagementPage() {
           if (problem) mailProblems.push(problem);
         }
         if (mailProblems.length > 0) {
-          alert(
+          notify(
             `Đã tạo công việc, nhưng KHÔNG gửi được email báo:\n\n` +
             mailProblems.map(p => `• ${p}`).join("\n") +
             `\n\nVào Danh sách nhân viên bổ sung email công ty cho họ để lần sau hệ thống gửi được.`
@@ -807,7 +810,7 @@ export default function TaskManagementPage() {
       })();
     } catch (err) {
       console.error("Error creating task:", err);
-      alert("Lỗi khi tạo công việc!");
+      notify("Lỗi khi tạo công việc!");
     } finally {
       // Mở khoá kể cả khi lỗi, để người dùng sửa rồi bấm lại được.
       creatingTaskRef.current = false;
@@ -817,7 +820,11 @@ export default function TaskManagementPage() {
 
   // Delete Task
   const handleDeleteTask = async (id: string) => {
-    if (!confirm("Bạn có chắc chắn muốn xóa công việc này?")) return;
+    if (!(await confirm({
+      title: "Xoá công việc này?",
+      message: "Công việc này sẽ bị xoá khỏi hệ thống.",
+      confirmLabel: "Xoá",
+    }))) return;
     try {
       const { error } = await supabase
         .from("tasks")
@@ -885,11 +892,11 @@ export default function TaskManagementPage() {
     if (!editingTask) return;
 
     if (!editTitle.trim()) {
-      alert("Vui lòng điền Tên công việc!");
+      notify("Vui lòng điền Tên công việc!");
       return;
     }
     if (!editAssignee) {
-      alert("Vui lòng chọn Người nhận!");
+      notify("Vui lòng chọn Người nhận!");
       return;
     }
 
@@ -900,7 +907,7 @@ export default function TaskManagementPage() {
     // Cùng một lớp chặn với thao tác kéo thẻ sang cột "Đã hoàn thành"
     // (handleDrop) — kết luận công việc xong là quyền của cấp quản lý.
     if (isApproving && !canManageTasks) {
-      alert('Chỉ Trưởng phòng, Phó phòng, Tổ trưởng, Ban lãnh đạo hoặc Admin mới được phê duyệt hoàn thành công việc.');
+      notify('Chỉ Trưởng phòng, Phó phòng, Tổ trưởng, Ban lãnh đạo hoặc Admin mới được phê duyệt hoàn thành công việc.');
       return;
     }
 
@@ -952,13 +959,13 @@ export default function TaskManagementPage() {
       }
     } catch (err) {
       console.error("Error updating task:", err);
-      alert("Lỗi khi cập nhật công việc!");
+      notify("Lỗi khi cập nhật công việc!");
     }
   };
 
   const handleAiSuggestEdit = async () => {
     if (!editTitle) {
-      alert("Vui lòng nhập Tên công việc trước khi tạo mô tả bằng AI!");
+      notify("Vui lòng nhập Tên công việc trước khi tạo mô tả bằng AI!");
       return;
     }
     
@@ -978,13 +985,13 @@ export default function TaskManagementPage() {
       
       const data = await res.json();
       if (data.error) {
-        alert(data.error);
+        notify(data.error);
       } else if (data.description) {
         setEditDescription(data.description);
       }
     } catch (err) {
       console.error(err);
-      alert("Lỗi kết nối khi gọi AI!");
+      notify("Lỗi kết nối khi gọi AI!");
     } finally {
       setIsAiSuggesting(false);
     }
@@ -2495,6 +2502,7 @@ export default function TaskManagementPage() {
           </div>
         </div>
       )}
+      {dialogsNode}
     </div>
   );
 }

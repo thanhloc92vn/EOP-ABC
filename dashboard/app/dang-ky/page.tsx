@@ -28,6 +28,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { useDialogs } from "@/components/ConfirmDialog";
 import {
   isBookingCap1Approver,
   resolveBookingCap1Approvers,
@@ -183,6 +184,8 @@ function formatDateVi(dateKey: string): string {
 }
 
 function BookingContent() {
+  // Hộp xác nhận căn giữa, đồng bộ giao diện (thay window.confirm)
+  const { confirm, prompt, dialogsNode } = useDialogs();
   const searchParams = useSearchParams();
   const tabParam = searchParams.get("tab");
   const bookingType: BookingType = tabParam === "xe" ? "xe" : "phong_hop";
@@ -600,7 +603,11 @@ function BookingContent() {
   };
 
   const handleCancelBooking = async (id: string) => {
-    if (!window.confirm("Bạn chắc chắn muốn huỷ đăng ký này?")) return;
+    if (!(await confirm({
+      title: "Huỷ đăng ký này?",
+      message: "Đăng ký này sẽ bị huỷ và xoá khỏi hệ thống.",
+      confirmLabel: "Huỷ đăng ký",
+    }))) return;
     try {
       const { error } = await supabase.from("resource_bookings").delete().eq("id", id);
       if (error) throw error;
@@ -845,7 +852,15 @@ function BookingContent() {
   // Từ chối — dùng chung cho cả Trưởng bộ phận (ở mọi giai đoạn) và Hành chính
   const handleRejectBooking = async (b: BookingRow) => {
     if (!currentUser || processingAction) return;
-    const rejectReason = window.prompt("Nhập lý do từ chối (sẽ được gửi trong email cho người đăng ký):") || "";
+    const rejectReason = (await prompt({
+      title: "Từ chối đăng ký này?",
+      message: "Nhập lý do từ chối — sẽ được gửi trong email cho người đăng ký.",
+      placeholder: "Lý do từ chối...",
+      required: true,
+      multiline: true,
+      confirmLabel: "Gửi từ chối",
+      tone: "danger",
+    })) || "";
     if (!rejectReason.trim()) {
       showToast("error", "Vui lòng nhập lý do từ chối để người đăng ký nắm thông tin.");
       return;
@@ -2245,6 +2260,7 @@ function BookingContent() {
           </div>
         </main>
       </div>
+      {dialogsNode}
     </div>
   );
 }

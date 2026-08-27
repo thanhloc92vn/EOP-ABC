@@ -9,6 +9,7 @@ import { fetchApprovalPermissions, fetchApprovalGroups, resolveJustificationAppr
 import { useDepartments } from "@/lib/departments";
 import { useTenantConfig } from "@/lib/tenantConfig";
 import { fetchAvatarMap, pickAvatar } from "@/lib/avatar";
+import { useDialogs } from "@/components/ConfirmDialog";
 import {
   getTenureYears,
   getTenureStr,
@@ -583,6 +584,8 @@ function ContractNoteSelect({ value, onSave }: { value: string; onSave: (value: 
 }
 
 export default function CBPage() {
+  // Hộp thông báo / xác nhận căn giữa, đồng bộ giao diện (thay window.alert & confirm)
+  const { notify, confirm, dialogsNode } = useDialogs();
   // Danh sách phòng ban / BĐH đọc từ bảng departments (fallback danh sách cũ)
   const deptLists = useDepartments();
   // Cấu hình công ty (tenant_config) — lấy tên Trưởng phòng HCNS làm người duyệt mặc định
@@ -990,12 +993,12 @@ export default function CBPage() {
       localStorage.setItem("tnec_cb_smtp_secure", String(secure));
     }
     setShowEmailConfigModal(false);
-    alert("Đã lưu cấu hình gửi email SMTP!");
+    notify("Đã lưu cấu hình gửi email SMTP!");
   };
 
   const handleSaveTimesheetToDb = async () => {
     if (!currentFileObject || parsedEmployees.length === 0) {
-      alert("Vui lòng tải lên file Excel trước!");
+      notify("Vui lòng tải lên file Excel trước!");
       return;
     }
     setIsSavingTimesheet(true);
@@ -1039,18 +1042,22 @@ export default function CBPage() {
         throw new Error("Không thể lưu thông tin vào bảng dữ liệu Supabase! Vui lòng đảm bảo đã chạy file cấu hình database SQL: " + insertError.message);
       }
 
-      alert("Lưu bảng công lên phần mềm thành công!");
+      notify("Lưu bảng công lên phần mềm thành công!");
       fetchImportedTimesheets();
     } catch (err: any) {
       console.error("Error saving timesheet:", err);
-      alert(err.message || "Lỗi khi lưu bảng công!");
+      notify(err.message || "Lỗi khi lưu bảng công!");
     } finally {
       setIsSavingTimesheet(false);
     }
   };
 
   const handleDeleteTimesheet = async (id: string, filePath: string) => {
-    if (!confirm("Bạn có chắc chắn muốn xóa bảng công này khỏi phần mềm không?")) return;
+    if (!(await confirm({
+      title: "Xoá bảng công này?",
+      message: "Bảng công sẽ bị gỡ khỏi phần mềm, không thể khôi phục.",
+      confirmLabel: "Xoá",
+    }))) return;
     try {
       // Delete file from Storage
       await supabase.storage.from("attendance-files").remove([filePath]);
@@ -1059,11 +1066,11 @@ export default function CBPage() {
       const { error } = await supabase.from("attendance_imports").delete().eq("id", id);
       if (error) throw error;
 
-      alert("Đã xóa bảng công thành công!");
+      notify("Đã xóa bảng công thành công!");
       fetchImportedTimesheets();
     } catch (err: any) {
       console.error("Error deleting timesheet:", err);
-      alert("Lỗi khi xóa bảng công: " + err.message);
+      notify("Lỗi khi xóa bảng công: " + err.message);
     }
   };
 
@@ -1192,7 +1199,7 @@ export default function CBPage() {
           }
 
           if (headerRowIndex === -1) {
-            alert("Không tìm thấy dòng tiêu đề cột (Mã nhân viên, Tên nhân viên...) trong file Excel!");
+            notify("Không tìm thấy dòng tiêu đề cột (Mã nhân viên, Tên nhân viên...) trong file Excel!");
             setIsParsingExcel(false);
             return;
           }
@@ -1215,7 +1222,7 @@ export default function CBPage() {
           };
 
           if (colIndices.code === -1 || colIndices.name === -1) {
-            alert("File Excel thiếu cột bắt buộc: 'Mã nhân viên' hoặc 'Tên nhân viên'!");
+            notify("File Excel thiếu cột bắt buộc: 'Mã nhân viên' hoặc 'Tên nhân viên'!");
             setIsParsingExcel(false);
             return;
           }
@@ -1223,7 +1230,7 @@ export default function CBPage() {
           // Bắt buộc phải có cột "Ngày": bảng tổng hợp xếp công theo đúng ngày trong tháng,
           // thiếu cột này thì không có cách nào xác định ngày nào là ngày nào.
           if (colIndices.date === -1) {
-            alert("File Excel thiếu cột bắt buộc: 'Ngày'! Không thể xếp ngày công vào bảng tổng hợp.");
+            notify("File Excel thiếu cột bắt buộc: 'Ngày'! Không thể xếp ngày công vào bảng tổng hợp.");
             setIsParsingExcel(false);
             return;
           }
@@ -1412,17 +1419,17 @@ export default function CBPage() {
           setParsedEmployees(parsedList);
           setTimesheetMonth(detectedMonth || "06/2026");
           setIsParsingExcel(false);
-          alert(`Đã nhận diện thành công ${parsedList.length} nhân viên từ file chấm công!`);
+          notify(`Đã nhận diện thành công ${parsedList.length} nhân viên từ file chấm công!`);
         } catch (err: any) {
           console.error("Error processing Excel:", err);
-          alert("Lỗi khi xử lý file Excel: " + err.message);
+          notify("Lỗi khi xử lý file Excel: " + err.message);
           setIsParsingExcel(false);
         }
       };
       reader.readAsArrayBuffer(file);
     } catch (err: any) {
       console.error("FileReader error:", err);
-      alert("Lỗi đọc file: " + err.message);
+      notify("Lỗi đọc file: " + err.message);
       setIsParsingExcel(false);
     }
   };
@@ -1599,7 +1606,7 @@ export default function CBPage() {
     // Xuất đúng phạm vi đang xem: đang lọc phòng nào thì chỉ tải phòng đó, không lọc thì tải tất cả
     const rows = timesheetMatrixRows;
     if (rows.length === 0) {
-      alert("Chưa có dữ liệu chấm công để xuất bảng tổng hợp!");
+      notify("Chưa có dữ liệu chấm công để xuất bảng tổng hợp!");
       return;
     }
     const { daysInMonth, month, year } = timesheetMatrix;
@@ -1810,7 +1817,7 @@ export default function CBPage() {
       return;
     }
     if (!emp.emailFound || !emp.email) {
-      alert(`Nhân viên ${emp.name} không có địa chỉ email trong danh bạ! Vui lòng cập nhật email trước.`);
+      notify(`Nhân viên ${emp.name} không có địa chỉ email trong danh bạ! Vui lòng cập nhật email trước.`);
       return;
     }
 
@@ -1864,11 +1871,16 @@ export default function CBPage() {
 
     const readyEmps = parsedEmployees.filter(e => e.emailFound && e.email && e.emailStatus !== "success");
     if (readyEmps.length === 0) {
-      alert("Không có nhân viên nào đủ điều kiện gửi email (hoặc tất cả đã gửi thành công)!");
+      notify("Không có nhân viên nào đủ điều kiện gửi email (hoặc tất cả đã gửi thành công)!");
       return;
     }
 
-    if (!confirm(`Bạn có chắc chắn muốn gửi email chấm công cho ${readyEmps.length} nhân viên không?`)) return;
+    if (!(await confirm({
+      title: "Gửi email chấm công?",
+      message: `Hệ thống sẽ gửi email cho ${readyEmps.length} nhân viên đủ điều kiện.`,
+      confirmLabel: "Gửi",
+      tone: "normal",
+    }))) return;
 
     setIsSendingAllEmails(true);
 
@@ -1877,13 +1889,13 @@ export default function CBPage() {
     }
 
     setIsSendingAllEmails(false);
-    alert("Đã hoàn thành tiến trình gửi email chấm công hàng loạt!");
+    notify("Đã hoàn thành tiến trình gửi email chấm công hàng loạt!");
   };
 
   const handleCreateClaim = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!claimForm.employeeId) {
-      alert("Vui lòng chọn nhân viên!");
+      notify("Vui lòng chọn nhân viên!");
       return;
     }
     const emp = employees.find(e => e.id === claimForm.employeeId);
@@ -1937,15 +1949,19 @@ export default function CBPage() {
         notes: "",
         customAmount: ""
       });
-      alert("Đã thêm yêu cầu trợ cấp mới thành công!");
+      notify("Đã thêm yêu cầu trợ cấp mới thành công!");
     } catch (err: any) {
       console.error("Lỗi lưu trợ cấp vào Supabase:", err);
-      alert("Không thể lưu yêu cầu trợ cấp lên hệ thống: " + (err.message || "Lỗi không xác định"));
+      notify("Không thể lưu yêu cầu trợ cấp lên hệ thống: " + (err.message || "Lỗi không xác định"));
     }
   };
 
   const handleDeleteClaim = async (claimId: string) => {
-    if (!confirm("Bạn có chắc chắn muốn xóa yêu cầu trợ cấp này không?")) return;
+    if (!(await confirm({
+      title: "Xoá yêu cầu trợ cấp?",
+      message: "Yêu cầu trợ cấp này sẽ bị xoá khỏi hệ thống.",
+      confirmLabel: "Xoá",
+    }))) return;
     const prev = benefitClaims;
     const target = benefitClaims.find(c => c.id === claimId);
     const updatedClaims = benefitClaims.filter(c => c.id !== claimId);
@@ -1967,7 +1983,7 @@ export default function CBPage() {
       }
     } catch (err: any) {
       console.error("Lỗi xóa trợ cấp trên Supabase:", err);
-      alert("Không thể xóa yêu cầu trợ cấp: " + (err.message || "Lỗi không xác định"));
+      notify("Không thể xóa yêu cầu trợ cấp: " + (err.message || "Lỗi không xác định"));
       setBenefitClaims(prev); // rollback
     }
   };
@@ -1980,7 +1996,12 @@ export default function CBPage() {
     if (decision === "Từ chối") {
       reason = (prompt("Nhập lý do từ chối (bắt buộc):") || "").trim();
       if (!reason) return;
-    } else if (!confirm(`Xác nhận chuyển phiếu sang trạng thái "${decision}"?`)) {
+    } else if (!(await confirm({
+      title: `Chuyển phiếu sang "${decision}"?`,
+      message: "Trạng thái phiếu sẽ được cập nhật ngay trên hệ thống.",
+      confirmLabel: "Xác nhận",
+      tone: "normal",
+    }))) {
       return;
     }
 
@@ -2011,7 +2032,7 @@ export default function CBPage() {
       }
     } catch (err: any) {
       console.error("Lỗi cập nhật trạng thái trợ cấp:", err);
-      alert("Không thể cập nhật phiếu: " + (err.message || "Lỗi không xác định"));
+      notify("Không thể cập nhật phiếu: " + (err.message || "Lỗi không xác định"));
       setBenefitClaims(prev); // rollback
     }
   };
@@ -2024,11 +2045,11 @@ export default function CBPage() {
 
   const handleUploadClaimAttachment = async (claimId: string, file: File) => {
     if (!ALLOWED_CLAIM_FILE_TYPES.includes(file.type)) {
-      alert("Chỉ nhận ảnh (JPG, PNG, WEBP, HEIC) hoặc file PDF.");
+      notify("Chỉ nhận ảnh (JPG, PNG, WEBP, HEIC) hoặc file PDF.");
       return;
     }
     if (file.size > MAX_CLAIM_FILE_MB * 1024 * 1024) {
-      alert(`File quá lớn (tối đa ${MAX_CLAIM_FILE_MB}MB). Dung lượng file của bạn: ${(file.size / 1024 / 1024).toFixed(1)}MB.`);
+      notify(`File quá lớn (tối đa ${MAX_CLAIM_FILE_MB}MB). Dung lượng file của bạn: ${(file.size / 1024 / 1024).toFixed(1)}MB.`);
       return;
     }
 
@@ -2062,7 +2083,7 @@ export default function CBPage() {
       }
     } catch (err: any) {
       console.error("Lỗi tải chứng từ lên:", err);
-      alert("Không tải được chứng từ lên hệ thống: " + (err.message || "Lỗi không xác định"));
+      notify("Không tải được chứng từ lên hệ thống: " + (err.message || "Lỗi không xác định"));
     } finally {
       setUploadingClaimId(null);
     }
@@ -2083,7 +2104,7 @@ export default function CBPage() {
       });
     } catch (err: any) {
       console.error("Lỗi mở chứng từ:", err);
-      alert("Không mở được chứng từ: " + (err.message || "Lỗi không xác định"));
+      notify("Không mở được chứng từ: " + (err.message || "Lỗi không xác định"));
     }
   };
 
@@ -2091,7 +2112,7 @@ export default function CBPage() {
     e.preventDefault();
     if (creatingLeave) return;
     if (!leaveForm.employeeId) {
-      alert("Vui lòng chọn nhân viên!");
+      notify("Vui lòng chọn nhân viên!");
       return;
     }
     const emp = employees.find(e => e.id === leaveForm.employeeId);
@@ -2101,7 +2122,7 @@ export default function CBPage() {
     const dTo = new Date(leaveForm.to);
     const diffTime = dTo.getTime() - dFrom.getTime();
     if (diffTime < 0) {
-      alert("Từ ngày không thể lớn hơn Đến ngày!");
+      notify("Từ ngày không thể lớn hơn Đến ngày!");
       return;
     }
     const days = Math.round(diffTime / (1000 * 60 * 60 * 24)) + 1;
@@ -2112,7 +2133,7 @@ export default function CBPage() {
     if (leaveForm.type === "Phép năm") {
       const empLeave = annualLeaveData.find(d => d.id === leaveForm.employeeId);
       if (empLeave && days > empLeave.remainingLeave) {
-        alert(
+        notify(
           `Không đủ phép năm!\n\n` +
           `Còn lại: ${empLeave.remainingLeave} ngày — đăng ký: ${days} ngày.\n` +
           (empLeave.pendingLeave > 0
@@ -2162,10 +2183,10 @@ export default function CBPage() {
         to: new Date().toISOString().split("T")[0],
         reason: ""
       });
-      alert("Đăng ký nghỉ phép thành công!");
+      notify("Đăng ký nghỉ phép thành công!");
     } catch (err: any) {
       console.error("Error creating leave:", err);
-      alert("Không đăng ký được nghỉ phép: " + (err.message || "Lỗi không xác định"));
+      notify("Không đăng ký được nghỉ phép: " + (err.message || "Lỗi không xác định"));
     } finally {
       setCreatingLeave(false);
     }
@@ -2186,10 +2207,14 @@ export default function CBPage() {
     const leaveId = leave?.id;
     if (!leaveId) return;
     if (!canDeleteLeave(leave)) {
-      alert("Đơn nghỉ phép đã được duyệt — bạn không thể tự xóa. Vui lòng liên hệ HCNS.");
+      notify("Đơn nghỉ phép đã được duyệt — bạn không thể tự xóa. Vui lòng liên hệ HCNS.");
       return;
     }
-    if (!confirm("Bạn có chắc chắn muốn xóa yêu cầu nghỉ phép này không?")) return;
+    if (!(await confirm({
+      title: "Xoá yêu cầu nghỉ phép?",
+      message: "Yêu cầu nghỉ phép này sẽ bị xoá khỏi hệ thống.",
+      confirmLabel: "Xoá",
+    }))) return;
     try {
       // `.select()` là phần QUAN TRỌNG: RLS chặn thì Supabase trả về error = null
       // và 0 dòng, không báo lỗi gì. Không đếm lại số dòng đã xoá thì người không
@@ -2201,13 +2226,13 @@ export default function CBPage() {
         .select("id");
       if (error) throw error;
       if (!data || data.length === 0) {
-        alert("Bạn không có quyền xóa yêu cầu nghỉ phép này!");
+        notify("Bạn không có quyền xóa yêu cầu nghỉ phép này!");
         return;
       }
       setLeaves(prev => prev.filter(l => l.id !== leaveId));
     } catch (err) {
       console.error("Error deleting leave:", err);
-      alert("Không xóa được yêu cầu nghỉ phép. Kiểm tra lại quyền hoặc kết nối!");
+      notify("Không xóa được yêu cầu nghỉ phép. Kiểm tra lại quyền hoặc kết nối!");
     }
   };
 
@@ -2244,13 +2269,18 @@ export default function CBPage() {
       }
     } catch (err: any) {
       console.error("Lỗi lưu mức duyệt thưởng lễ:", err);
-      alert("Không lưu được mức duyệt lên hệ thống: " + (err.message || "Lỗi không xác định"));
+      notify("Không lưu được mức duyệt lên hệ thống: " + (err.message || "Lỗi không xác định"));
       setHolidayBonusAdjustments(prev); // rollback
     }
   };
 
   const handleApproveAllHolidayBonuses = async () => {
-    if (!confirm("Bạn có chắc chắn muốn phê duyệt mức đề xuất cho toàn bộ nhân sự chưa được duyệt trong danh sách đang hiển thị?")) return;
+    if (!(await confirm({
+      title: "Phê duyệt toàn bộ mức đề xuất?",
+      message: "Sẽ phê duyệt mức đề xuất cho toàn bộ nhân sự chưa được duyệt trong danh sách đang hiển thị.",
+      confirmLabel: "Phê duyệt",
+      tone: "normal",
+    }))) return;
 
     const pending: { employee_id: string; employee_name?: string; amount: number }[] = [];
     const updatedAdjustments = { ...holidayBonusAdjustments };
@@ -2262,7 +2292,7 @@ export default function CBPage() {
       }
     });
     if (pending.length === 0) {
-      alert("Toàn bộ nhân sự trong danh sách đã được duyệt mức thưởng.");
+      notify("Toàn bộ nhân sự trong danh sách đã được duyệt mức thưởng.");
       return;
     }
 
@@ -2273,10 +2303,10 @@ export default function CBPage() {
       if (typeof window !== "undefined") {
         localStorage.setItem("tnec_cb_holiday_bonus_adjustments", JSON.stringify(updatedAdjustments));
       }
-      alert(`Đã phê duyệt và lưu lên hệ thống cho ${pending.length} nhân sự.`);
+      notify(`Đã phê duyệt và lưu lên hệ thống cho ${pending.length} nhân sự.`);
     } catch (err: any) {
       console.error("Lỗi phê duyệt hàng loạt thưởng lễ:", err);
-      alert("Không lưu được lên hệ thống: " + (err.message || "Lỗi không xác định"));
+      notify("Không lưu được lên hệ thống: " + (err.message || "Lỗi không xác định"));
       setHolidayBonusAdjustments(prev); // rollback
     }
   };
@@ -2335,7 +2365,7 @@ export default function CBPage() {
       window.URL.revokeObjectURL(url);
     } catch (error: any) {
       console.error("Lỗi xuất báo cáo trợ cấp hiếu hỷ:", error);
-      alert("Đã xảy ra lỗi khi tải file Word: " + error.message);
+      notify("Đã xảy ra lỗi khi tải file Word: " + error.message);
     }
   };
 
@@ -2395,7 +2425,7 @@ export default function CBPage() {
       window.URL.revokeObjectURL(url);
     } catch (error: any) {
       console.error("Lỗi xuất bảng thưởng lễ:", error);
-      alert("Đã xảy ra lỗi khi tải file Word: " + error.message);
+      notify("Đã xảy ra lỗi khi tải file Word: " + error.message);
     }
   };
 
@@ -2452,7 +2482,7 @@ export default function CBPage() {
       window.URL.revokeObjectURL(url);
     } catch (error: any) {
       console.error("Lỗi xuất báo cáo sinh nhật:", error);
-      alert("Đã xảy ra lỗi khi tải file word: " + error.message);
+      notify("Đã xảy ra lỗi khi tải file word: " + error.message);
     } finally {
       setIsExportingBirthday(false);
     }
@@ -2648,21 +2678,21 @@ export default function CBPage() {
             alertMsg += `ℹ️ Đã bỏ qua ${skippedCount} dòng trống hoặc dòng tiêu đề phòng ban.\n\n`;
           }
           alertMsg += `Các ô trống do AI không đọc được, bạn có thể bấm vào bảng bên dưới để điền tay.`;
-          alert(alertMsg);
+          notify(alertMsg);
         } else {
           alertMsg = `⚠️ Đã lưu ${savedCount} hợp đồng. ${failCount} dòng bị lỗi.\n`;
           if (skippedCount > 0) {
             alertMsg += `ℹ️ Đã bỏ qua ${skippedCount} dòng trống hoặc dòng tiêu đề phòng ban.\n`;
           }
           alertMsg += `\nNguyên nhân lỗi: ${firstError || "không xác định"}\n\nCác ô trống do AI không đọc được, bạn có thể bấm vào bảng bên dưới để điền tay.`;
-          alert(alertMsg);
+          notify(alertMsg);
         }
       } else {
-        alert("Không nhận diện được danh sách hợp đồng hợp lệ từ AI. Vui lòng thử lại!");
+        notify("Không nhận diện được danh sách hợp đồng hợp lệ từ AI. Vui lòng thử lại!");
       }
     } catch (err: any) {
       console.error("Lỗi phân tích Excel:", err);
-      alert("Lỗi: " + err.message);
+      notify("Lỗi: " + err.message);
     } finally {
       setIsExcelImporting(false);
     }
@@ -2733,7 +2763,7 @@ export default function CBPage() {
       setShowSingleContractModal(true);
     } catch (err: any) {
       console.error("Lỗi đọc hợp đồng:", err);
-      alert("Lỗi: " + err.message);
+      notify("Lỗi: " + err.message);
     } finally {
       setIsContractReading(false);
     }
@@ -2779,7 +2809,7 @@ export default function CBPage() {
       }
 
       if (!contract.contract_number) {
-        alert("Vui lòng nhập Số HĐLĐ!");
+        notify("Vui lòng nhập Số HĐLĐ!");
         return;
       }
 
@@ -2824,7 +2854,7 @@ export default function CBPage() {
             copy[index] = data[0] as Contract;
             return copy;
           });
-          alert("Thêm hợp đồng lao động thành công!");
+          notify("Thêm hợp đồng lao động thành công!");
         }
       } else {
         const { error } = await supabase
@@ -2833,13 +2863,13 @@ export default function CBPage() {
           .eq("id", contract.id);
           
         if (error) throw error;
-        alert("Cập nhật thông tin hợp đồng thành công!");
+        notify("Cập nhật thông tin hợp đồng thành công!");
       }
       
       await fetchContracts();
     } catch (err: any) {
       console.error("Lỗi khi lưu dòng hợp đồng:", err);
-      alert("Lỗi lưu hợp đồng: " + err.message);
+      notify("Lỗi lưu hợp đồng: " + err.message);
     }
   };
 
@@ -2871,10 +2901,15 @@ export default function CBPage() {
 
       const unmatched = rows.filter(r => !matchedCodes.has(r.code));
       if (pending.length === 0) {
-        alert(`Không có dòng nào cần cập nhật — dữ liệu đã khớp với Excel.${unmatched.length ? `\n(${unmatched.length} mã NV trong Excel không có hợp đồng trong hệ thống)` : ""}`);
+        notify(`Không có dòng nào cần cập nhật — dữ liệu đã khớp với Excel.${unmatched.length ? `\n(${unmatched.length} mã NV trong Excel không có hợp đồng trong hệ thống)` : ""}`);
         return;
       }
-      if (!confirm(`Sẽ điền Ngày ký HĐTV (Từ/Đến) từ Excel cho ${pending.length} hợp đồng khớp Mã NV. Tiếp tục?`)) return;
+      if (!(await confirm({
+        title: "Đồng bộ ngày ký HĐTV?",
+        message: `Sẽ điền Ngày ký HĐTV (Từ/Đến) từ Excel cho ${pending.length} hợp đồng khớp Mã NV.`,
+        confirmLabel: "Tiếp tục",
+        tone: "normal",
+      }))) return;
 
       let updated = 0;
       const failed: string[] = [];
@@ -2884,14 +2919,14 @@ export default function CBPage() {
         else updated++;
       }
       await fetchContracts();
-      alert(
+      notify(
         `Đồng bộ xong: cập nhật ${updated}/${pending.length} hợp đồng.` +
         (failed.length ? `\nLỗi ${failed.length} dòng:\n${failed.slice(0, 5).join("\n")}` : "") +
         (unmatched.length ? `\n${unmatched.length} mã NV trong Excel chưa có hợp đồng trong hệ thống: ${unmatched.slice(0, 10).map(r => r.code).join(", ")}${unmatched.length > 10 ? "..." : ""}` : "")
       );
     } catch (err: any) {
       console.error("Lỗi đồng bộ ngày HĐTV:", err);
-      alert("Lỗi đồng bộ: " + err.message);
+      notify("Lỗi đồng bộ: " + err.message);
     } finally {
       setSyncingProbation(false);
     }
@@ -3065,9 +3100,9 @@ export default function CBPage() {
       await fetchContracts();
 
       if (failures.length === 0) {
-        alert("Lưu toàn bộ danh sách hợp đồng nhân sự thành công!");
+        notify("Lưu toàn bộ danh sách hợp đồng nhân sự thành công!");
       } else {
-        alert(
+        notify(
           `Đã lưu ${savedCount} dòng, ${failures.length} dòng lỗi:\n` +
           failures.slice(0, 5).join("\n") +
           (failures.length > 5 ? `\n...và ${failures.length - 5} dòng khác` : "")
@@ -3075,7 +3110,7 @@ export default function CBPage() {
       }
     } catch (err: any) {
       console.error("Lỗi khi lưu hàng loạt hợp đồng:", err);
-      alert("Lỗi lưu hợp đồng: " + err.message);
+      notify("Lỗi lưu hợp đồng: " + err.message);
     } finally {
       setSavingContracts(false);
     }
@@ -3084,7 +3119,11 @@ export default function CBPage() {
   const handleDeleteContractRow = async (index: number) => {
     const contract = tempContracts[index];
     
-    if (confirm(`Bạn có chắc chắn muốn xoá hợp đồng số "${contract.contract_number || 'chưa nhập'}" của ${contract.employee_name || 'chưa rõ tên'}?`)) {
+    if (await confirm({
+      title: "Xoá hợp đồng này?",
+      message: `Hợp đồng số "${contract.contract_number || 'chưa nhập'}" của ${contract.employee_name || 'chưa rõ tên'} sẽ bị xoá.`,
+      confirmLabel: "Xoá",
+    })) {
       try {
         if (!contract.id.startsWith("new-")) {
           const { error } = await supabase.from("contracts").delete().eq("id", contract.id);
@@ -3093,10 +3132,10 @@ export default function CBPage() {
         
         setTempContracts(prev => prev.filter((_, i) => i !== index));
         setContracts(prev => prev.filter(c => c.id !== contract.id));
-        alert("Xoá hợp đồng thành công!");
+        notify("Xoá hợp đồng thành công!");
       } catch (err: any) {
         console.error("Lỗi khi xoá hợp đồng:", err);
-        alert("Lỗi xoá hợp đồng: " + err.message);
+        notify("Lỗi xoá hợp đồng: " + err.message);
       }
     }
   };
@@ -3227,7 +3266,7 @@ export default function CBPage() {
       setBenefitPolicyDraft(null);
     } catch (err: any) {
       console.error("Error saving benefit policies:", err);
-      alert("Lỗi khi lưu định mức phúc lợi: " + (err.message || "Lỗi không xác định"));
+      notify("Lỗi khi lưu định mức phúc lợi: " + (err.message || "Lỗi không xác định"));
     } finally {
       setSavingBenefitPolicy(false);
     }
@@ -3256,7 +3295,7 @@ export default function CBPage() {
       setAllowanceDraft(null);
     } catch (err: any) {
       console.error("Error saving allowance policy:", err);
-      alert("Lỗi khi lưu định mức phụ cấp: " + err.message);
+      notify("Lỗi khi lưu định mức phụ cấp: " + err.message);
     } finally {
       setSavingAllowance(false);
     }
@@ -3754,11 +3793,11 @@ export default function CBPage() {
           .update({ cost: newCost })
           .eq("id", idOrIndex);
         if (error) throw error;
-        alert("Đã cập nhật chi phí chuyến đi thành công!");
+        notify("Đã cập nhật chi phí chuyến đi thành công!");
         fetchTravels();
       } catch (err: any) {
         console.error("Error updating travel cost:", err);
-        alert("Lỗi khi cập nhật chi phí: " + err.message);
+        notify("Lỗi khi cập nhật chi phí: " + err.message);
       }
     } else {
       const updated = travels.map((t, idx) => {
@@ -3770,7 +3809,11 @@ export default function CBPage() {
   };
 
   const handleDeleteTravel = async (idOrIndex: any) => {
-    if (!window.confirm("Bạn có chắc chắn muốn xóa lịch trình công tác này không?")) {
+    if (!(await confirm({
+      title: "Xoá lịch trình công tác?",
+      message: "Lịch trình công tác này sẽ bị xoá khỏi hệ thống.",
+      confirmLabel: "Xoá",
+    }))) {
       return;
     }
     const isUuid = typeof idOrIndex === "string" && idOrIndex.length > 8;
@@ -3784,7 +3827,7 @@ export default function CBPage() {
         setTravels(prev => prev.filter(t => t.id !== idOrIndex));
       } catch (err: any) {
         console.error("Error deleting business trip:", err);
-        alert("Lỗi khi xóa lịch trình công tác: " + err.message);
+        notify("Lỗi khi xóa lịch trình công tác: " + err.message);
       }
     } else {
       setTravels(prev => prev.filter((t, idx) => idx !== idOrIndex));
@@ -3794,23 +3837,23 @@ export default function CBPage() {
   const handleAddExplanation = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!expFormEmployeeName.trim()) {
-      alert("Vui lòng chọn hoặc nhập tên nhân viên!");
+      notify("Vui lòng chọn hoặc nhập tên nhân viên!");
       return;
     }
     if (!expFormDepartment.trim()) {
-      alert("Vui lòng nhập phòng ban!");
+      notify("Vui lòng nhập phòng ban!");
       return;
     }
     if (!expFormReason.trim()) {
-      alert("Vui lòng nhập lý do giải trình!");
+      notify("Vui lòng nhập lý do giải trình!");
       return;
     }
     if (!expFormPropose.trim()) {
-      alert("Vui lòng nhập khung giờ đề xuất!");
+      notify("Vui lòng nhập khung giờ đề xuất!");
       return;
     }
     if (!expFormApprover.trim()) {
-      alert("Vui lòng nhập người phê duyệt!");
+      notify("Vui lòng nhập người phê duyệt!");
       return;
     }
 
@@ -3837,7 +3880,7 @@ export default function CBPage() {
         }
       } catch (err: any) {
         console.error("Error inserting justification:", err);
-        alert("Lỗi khi lưu vào database: " + err.message);
+        notify("Lỗi khi lưu vào database: " + err.message);
       }
     } else {
       // Fallback
@@ -3865,7 +3908,7 @@ export default function CBPage() {
         setExplanations(prev => prev.map(e => e.id === idOrIndex ? { ...e, status: newStatus } : e));
       } catch (err: any) {
         console.error("Error updating justification status:", err);
-        alert("Lỗi khi cập nhật trạng thái: " + err.message);
+        notify("Lỗi khi cập nhật trạng thái: " + err.message);
       }
     } else {
       // Local state update
@@ -3879,7 +3922,11 @@ export default function CBPage() {
   };
 
   const handleDeleteExplanation = async (idOrIndex: any) => {
-    if (!window.confirm("Bạn có chắc chắn muốn xóa bản ghi giải trình này không?")) {
+    if (!(await confirm({
+      title: "Xoá bản ghi giải trình?",
+      message: "Bản ghi giải trình này sẽ bị xoá khỏi hệ thống.",
+      confirmLabel: "Xoá",
+    }))) {
       return;
     }
     if (isUsingDbForExplanations) {
@@ -3892,7 +3939,7 @@ export default function CBPage() {
         setExplanations(prev => prev.filter(e => e.id !== idOrIndex));
       } catch (err: any) {
         console.error("Error deleting justification:", err);
-        alert("Lỗi khi xóa giải trình: " + err.message);
+        notify("Lỗi khi xóa giải trình: " + err.message);
       }
     } else {
       // Local state delete
@@ -3985,7 +4032,7 @@ export default function CBPage() {
     // Bỏ trống = gỡ ghi đè, trả về cho hệ thống tự tính.
     const value = raw === "" ? null : Number(raw);
     if (value !== null && (!Number.isFinite(value) || value < 0)) {
-      alert("Số ngày phép không hợp lệ!");
+      notify("Số ngày phép không hợp lệ!");
       return;
     }
     setSavingLeaveQuota(true);
@@ -3999,7 +4046,7 @@ export default function CBPage() {
       setEditingLeaveQuotaId(null);
     } catch (err) {
       console.error("Error saving leave quota:", err);
-      alert("Không lưu được số phép. Kiểm tra lại quyền hoặc kết nối!");
+      notify("Không lưu được số phép. Kiểm tra lại quyền hoặc kết nối!");
     } finally {
       setSavingLeaveQuota(false);
     }
@@ -4055,7 +4102,11 @@ export default function CBPage() {
   // Supabase — không chỉ ẩn ở phía trình duyệt như nút xóa bên tab Nghỉ phép.
   const handleDeleteRegime = async (leaveId: string) => {
     if (!canDeleteRegime) return;
-    if (!window.confirm("Bạn có chắc chắn muốn xóa đơn nghỉ chế độ này không?")) return;
+    if (!(await confirm({
+      title: "Xoá đơn nghỉ chế độ?",
+      message: "Đơn nghỉ chế độ này sẽ bị xoá khỏi hệ thống.",
+      confirmLabel: "Xoá",
+    }))) return;
     try {
       const { error } = await supabase
         .from("tasks")
@@ -4065,7 +4116,7 @@ export default function CBPage() {
       setLeaves(prev => prev.filter(l => l.id !== leaveId));
     } catch (err: any) {
       console.error("Error deleting regime leave:", err);
-      alert("Lỗi khi xóa đơn nghỉ chế độ: " + err.message);
+      notify("Lỗi khi xóa đơn nghỉ chế độ: " + err.message);
     }
   };
 
@@ -5554,7 +5605,7 @@ export default function CBPage() {
                                                 setExcelFileName(file.file_name);
                                                 // Clear current file object as we are loading from db
                                                 setCurrentFileObject(null);
-                                                alert(`Đã tải dữ liệu bảng công Tháng ${file.month} từ cơ sở dữ liệu!`);
+                                                notify(`Đã tải dữ liệu bảng công Tháng ${file.month} từ cơ sở dữ liệu!`);
                                               }}
                                               className="p-1 text-slate-500 hover:text-[#005BAC] hover:bg-blue-50 rounded transition-all cursor-pointer"
                                               title="Xem dữ liệu bảng công"
@@ -8261,7 +8312,7 @@ export default function CBPage() {
                     onClick={() => {
                       setTempContracts(prev => [...excelImportedContracts, ...prev]);
                       setShowExcelImportPreview(false);
-                      alert(`Đã nạp ${excelImportedContracts.length} dòng hợp đồng từ Excel vào bảng chính! Nhớ bấm 'Lưu tất cả thay đổi' để đồng bộ lên hệ thống.`);
+                      notify(`Đã nạp ${excelImportedContracts.length} dòng hợp đồng từ Excel vào bảng chính! Nhớ bấm 'Lưu tất cả thay đổi' để đồng bộ lên hệ thống.`);
                     }}
                     className="px-5 py-2 bg-[#005BAC] hover:bg-blue-700 text-white font-bold rounded-xl active:scale-95 transition-all cursor-pointer text-xs shadow-premium"
                   >
@@ -8292,12 +8343,12 @@ export default function CBPage() {
                   onSubmit={(e) => {
                     e.preventDefault();
                     if (!singleContractForm.contract_number) {
-                      alert("Vui lòng điền Số HĐLĐ!");
+                      notify("Vui lòng điền Số HĐLĐ!");
                       return;
                     }
                     setTempContracts(prev => [singleContractForm as Contract, ...prev]);
                     setShowSingleContractModal(false);
-                    alert("Đã thêm hợp đồng trích xuất vào bảng! Bạn nhớ bấm 'Lưu tất cả thay đổi' để hoàn tất.");
+                    notify("Đã thêm hợp đồng trích xuất vào bảng! Bạn nhớ bấm 'Lưu tất cả thay đổi' để hoàn tất.");
                   }}
                   className="p-6 space-y-4 text-xs font-semibold text-slate-700"
                 >
@@ -8551,7 +8602,7 @@ export default function CBPage() {
                     }
 
                     if (!user || !pass) {
-                      alert("Vui lòng điền đầy đủ email và mật khẩu!");
+                      notify("Vui lòng điền đầy đủ email và mật khẩu!");
                       return;
                     }
                     handleSaveSmtpConfig(user, pass, provider, host, port, secure);
@@ -9096,7 +9147,7 @@ export default function CBPage() {
                       localStorage.setItem("openai_api_key", selectedAiApiKey.trim());
                       localStorage.setItem("openai_api_key_hanh_chinh", selectedAiApiKey.trim());
                       setShowAiSettingsModal(false);
-                      alert("Đã lưu cấu hình mô hình AI và API Key thành công!");
+                      notify("Đã lưu cấu hình mô hình AI và API Key thành công!");
                     }}
                     className="px-4 py-2 bg-[#005BAC] hover:bg-blue-700 text-white font-bold rounded-xl active:scale-95 transition-all cursor-pointer shadow-premium text-xs"
                   >
@@ -9132,6 +9183,7 @@ export default function CBPage() {
           )}
         </main>
       </div>
+      {dialogsNode}
     </div>
   );
 }

@@ -24,6 +24,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "@/lib/supabase";
 import { useCurrentUser } from "@/lib/useCurrentUser";
+import { useDialogs } from "@/components/ConfirmDialog";
 import {
   useJdTemplates,
   jdKey,
@@ -51,6 +52,8 @@ interface Props {
 }
 
 export default function JdTemplateModal({ open, onClose, onChanged, onPick, draftContent }: Props) {
+  // Hộp xác nhận căn giữa, đồng bộ giao diện (thay window.confirm)
+  const { confirm, dialogsNode } = useDialogs();
   const user = useCurrentUser();
   // Component luôn nằm trong cây (trả null khi đóng) nên hook vẫn chạy — truyền
   // `open` để chỉ gọi mạng lúc modal thật sự mở.
@@ -173,7 +176,11 @@ export default function JdTemplateModal({ open, onClose, onChanged, onPick, draf
 
   const handleDelete = async (r: JdTemplate) => {
     if (!canWrite) return;
-    if (!confirm(`Xoá bản JD "${r.position}" khỏi thư viện?`)) return;
+    if (!(await confirm({
+      title: "Xoá bản JD này?",
+      message: `Bản JD "${r.position}" sẽ bị xoá khỏi thư viện.`,
+      confirmLabel: "Xoá",
+    }))) return;
     try {
       setSaving(true);
       setWriteErr("");
@@ -415,6 +422,7 @@ export default function JdTemplateModal({ open, onClose, onChanged, onPick, draf
           )}
         </div>
       </div>
+      {dialogsNode}
     </div>,
     document.body
   );

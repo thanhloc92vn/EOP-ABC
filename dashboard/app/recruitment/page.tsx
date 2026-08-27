@@ -10,6 +10,7 @@ import { useJdTemplates, type JdTemplate } from "@/lib/jdTemplates";
 import { isManagerRole, normalizeName } from "@/lib/approvers";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import { useDepartments } from "@/lib/departments";
+import { useDialogs } from "@/components/ConfirmDialog";
 import { isHrDept } from "@/lib/access";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import {
@@ -875,6 +876,8 @@ const getColumnsForTab = (tab: string) => {
 
 // ─── MAIN RECRUITMENT PAGE ────────────────────────────────────────────────────
 export default function RecruitmentPage() {
+  // Hộp thông báo / xác nhận căn giữa, đồng bộ giao diện (thay window.alert & confirm)
+  const { notify, confirm, dialogsNode } = useDialogs();
   const [activeTab, setActiveTab] = useState<"dashboard" | "table_view" | "scorer">("dashboard");
 
   // ─── Thư viện JD (migration 062) ───
@@ -1066,7 +1069,7 @@ export default function RecruitmentPage() {
   // Update candidate field directly
   const handleUpdateCandidateField = async (id: string, field: string, val: any) => {
     if (!canManage) {
-      alert("Bạn không có quyền thực hiện thao tác này.");
+      notify("Bạn không có quyền thực hiện thao tác này.");
       return;
     }
     try {
@@ -1088,7 +1091,7 @@ export default function RecruitmentPage() {
   // Update multiple candidate fields
   const handleUpdateCandidateFields = async (id: string, updates: Record<string, any>) => {
     if (!canManage) {
-      alert("Bạn không có quyền thực hiện thao tác này.");
+      notify("Bạn không có quyền thực hiện thao tác này.");
       return;
     }
     try {
@@ -1325,8 +1328,8 @@ export default function RecruitmentPage() {
 
   // Start CV AI Scoring
   const startScoring = async () => {
-    if (!jdText.trim()) { alert("Vui lòng nhập mô tả công việc (JD)."); return; }
-    if (files.length === 0) { alert("Vui lòng chọn ít nhất 1 file CV."); return; }
+    if (!jdText.trim()) { notify("Vui lòng nhập mô tả công việc (JD)."); return; }
+    if (files.length === 0) { notify("Vui lòng chọn ít nhất 1 file CV."); return; }
 
     setProcessing(true);
     setResults([]);
@@ -1437,14 +1440,14 @@ export default function RecruitmentPage() {
         prev.map((r) => r.file_name === result.file_name ? { ...r, submitted: true } : r)
       );
     } catch (e) {
-      alert("Lỗi ghi Sheets: " + (e instanceof Error ? e.message : String(e)));
+      notify("Lỗi ghi Sheets: " + (e instanceof Error ? e.message : String(e)));
     }
   };
 
   // Save CV score to Supabase Database (new primary workflow)
   const saveToSupabase = async (result: ScoringResult) => {
     if (!canManage) {
-      alert("Bạn không có quyền thực hiện thao tác này.");
+      notify("Bạn không có quyền thực hiện thao tác này.");
       return;
     }
     try {
@@ -1483,14 +1486,14 @@ export default function RecruitmentPage() {
     } catch (err) {
       console.error("Error saving to database:", err);
       const errMsg = err && typeof err === "object" && "message" in err ? String((err as any).message) : String(err);
-      alert("Lỗi khi lưu vào database: " + errMsg);
+      notify("Lỗi khi lưu vào database: " + errMsg);
     }
   };
 
   // Save all un-saved candidates to DB
   const saveAllToDb = async () => {
     if (!canManage) {
-      alert("Bạn không có quyền thực hiện thao tác này.");
+      notify("Bạn không có quyền thực hiện thao tác này.");
       return;
     }
     const unsaved = results.filter((r) => !r.saved_db && !r.error);
@@ -1520,7 +1523,7 @@ export default function RecruitmentPage() {
   const handleDrop = async (e: React.DragEvent, columnId: string) => {
     e.preventDefault();
     if (!canManage) {
-      alert("Bạn không có quyền thực hiện thao tác này.");
+      notify("Bạn không có quyền thực hiện thao tác này.");
       return;
     }
     const candidateId = draggedCandidateId || e.dataTransfer.getData("text/plain");
@@ -1550,7 +1553,7 @@ export default function RecruitmentPage() {
   const handleCreateCandidate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canManage) {
-      alert("Bạn không có quyền thực hiện thao tác này.");
+      notify("Bạn không có quyền thực hiện thao tác này.");
       return;
     }
     if (!addName.trim()) return;
@@ -1582,14 +1585,14 @@ export default function RecruitmentPage() {
     } catch (err) {
       console.error("Error creating candidate:", err);
       const errMsg = err && typeof err === "object" && "message" in err ? String((err as any).message) : String(err);
-      alert("Lỗi khi thêm ứng viên: " + errMsg);
+      notify("Lỗi khi thêm ứng viên: " + errMsg);
     }
   };
 
   // Add Blank Candidate Row (Dòng điền tay)
   const handleAddBlankRow = async () => {
     if (!canManage) {
-      alert("Bạn không có quyền thực hiện thao tác này.");
+      notify("Bạn không có quyền thực hiện thao tác này.");
       return;
     }
     
@@ -1647,17 +1650,21 @@ export default function RecruitmentPage() {
     } catch (err) {
       console.error("Error inserting blank row:", err);
       const errMsg = err && typeof err === "object" && "message" in err ? String((err as any).message) : String(err);
-      alert("Lỗi khi thêm dòng trống: " + errMsg);
+      notify("Lỗi khi thêm dòng trống: " + errMsg);
     }
   };
 
   // Delete Candidate
   const handleDeleteCandidate = async (id: string) => {
     if (!canManage) {
-      alert("Bạn không có quyền thực hiện thao tác này.");
+      notify("Bạn không có quyền thực hiện thao tác này.");
       return;
     }
-    if (!confirm("Bạn có chắc chắn muốn xóa hồ sơ ứng viên này?")) return;
+    if (!(await confirm({
+      title: "Xoá hồ sơ ứng viên?",
+      message: "Hồ sơ ứng viên này sẽ bị xoá khỏi hệ thống.",
+      confirmLabel: "Xoá",
+    }))) return;
     try {
       const { error } = await supabase
         .from("candidates")
@@ -1872,7 +1879,7 @@ export default function RecruitmentPage() {
       a.remove();
       window.URL.revokeObjectURL(url);
     } catch (e: any) {
-      alert("Lỗi xuất báo cáo: " + (e.message || e));
+      notify("Lỗi xuất báo cáo: " + (e.message || e));
     } finally {
       setExportingReport(false);
     }
@@ -3579,6 +3586,7 @@ export default function RecruitmentPage() {
           </div>
         </div>
       )}
+      {dialogsNode}
     </div>
   );
 }

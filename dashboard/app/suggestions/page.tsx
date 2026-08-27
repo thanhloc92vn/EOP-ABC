@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
+import { useDialogs } from "@/components/ConfirmDialog";
 import {
   Search,
   Filter,
@@ -48,6 +49,8 @@ const STATUS_LABELS = {
 };
 
 export default function AdminSuggestions() {
+  // Hộp thông báo / xác nhận căn giữa, đồng bộ giao diện (thay window.alert & confirm)
+  const { notify, confirm, dialogsNode } = useDialogs();
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [loading, setLoading] = useState(true);
   
@@ -124,7 +127,7 @@ export default function AdminSuggestions() {
     if (!selectedId) return;
 
     if (!canManage) {
-      alert("Bạn không có quyền thực hiện hành động này!");
+      notify("Bạn không có quyền thực hiện hành động này!");
       return;
     }
 
@@ -150,7 +153,7 @@ export default function AdminSuggestions() {
         return s;
       }));
 
-      alert("Cập nhật trạng thái xử lý góp ý thành công!");
+      notify("Cập nhật trạng thái xử lý góp ý thành công!");
     } catch (err: any) {
       console.error("Error updating suggestion:", err);
       setErrorMsg(err.message || "Không thể cập nhật thông tin.");
@@ -164,14 +167,15 @@ export default function AdminSuggestions() {
     if (!targetId) return;
     
     if (!canManage) {
-      alert("Bạn không có quyền thực hiện hành động xóa!");
+      notify("Bạn không có quyền thực hiện hành động xóa!");
       return;
     }
 
-    const confirmDelete = window.confirm(
-      "Bạn có chắc chắn muốn xóa ý kiến đóng góp này không? Hành động này không thể khôi phục lại."
-    );
-    if (!confirmDelete) return;
+    if (!(await confirm({
+      title: "Xoá ý kiến đóng góp này?",
+      message: "Ý kiến đóng góp này sẽ bị xoá, không thể khôi phục lại.",
+      confirmLabel: "Xoá",
+    }))) return;
 
     try {
       setSaving(true);
@@ -198,10 +202,10 @@ export default function AdminSuggestions() {
         }
       }
       
-      alert("Đã xóa góp ý thành công!");
+      notify("Đã xóa góp ý thành công!");
     } catch (err: any) {
       console.error("Error deleting suggestion:", err);
-      alert("Lỗi khi xóa góp ý: " + err.message);
+      notify("Lỗi khi xóa góp ý: " + err.message);
     } finally {
       setSaving(false);
     }
@@ -221,7 +225,7 @@ export default function AdminSuggestions() {
       document.body.removeChild(link);
     } catch (err) {
       console.error("Failed to download QR code image", err);
-      alert("Lỗi khi tải xuống hình ảnh QR. Bạn có thể chuột phải vào ảnh và chọn Lưu ảnh.");
+      notify("Lỗi khi tải xuống hình ảnh QR. Bạn có thể chuột phải vào ảnh và chọn Lưu ảnh.");
     }
   };
 
@@ -637,6 +641,7 @@ export default function AdminSuggestions() {
 
         </main>
       </div>
+      {dialogsNode}
     </div>
   );
 }

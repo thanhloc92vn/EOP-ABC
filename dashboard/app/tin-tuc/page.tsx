@@ -19,6 +19,7 @@ import NewsEditorModal from "@/components/news/NewsEditorModal";
 import NewsLikeButton from "@/components/news/NewsLikeButton";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import { supabase } from "@/lib/supabase";
+import { useDialogs } from "@/components/ConfirmDialog";
 import {
   NEWS_CATEGORIES,
   categoryMeta,
@@ -54,6 +55,8 @@ import {
 type TabKey = NewsCategory | "all";
 
 export default function NewsPage() {
+  // Hộp xác nhận căn giữa, đồng bộ giao diện (thay window.confirm)
+  const { confirm, dialogsNode } = useDialogs();
   const user = useCurrentUser();
   const canManage = user.isAdmin || user.perms.canManageNews;
 
@@ -109,7 +112,11 @@ export default function NewsPage() {
   }, [load]);
 
   const handleDelete = async (post: NewsPost) => {
-    if (!confirm(`Xoá bài "${post.title}"?\n\nToàn bộ tệp đính kèm và lượt thích của bài sẽ mất theo, không khôi phục được.`)) return;
+    if (!(await confirm({
+      title: `Xoá bài "${post.title}"?`,
+      message: "Toàn bộ tệp đính kèm và lượt thích của bài sẽ mất theo, không khôi phục được.",
+      confirmLabel: "Xoá",
+    }))) return;
     try {
       const { data: atts } = await supabase.from("news_attachments").select("path").eq("post_id", post.id);
       const { error: delErr } = await supabase.from("news_posts").delete().eq("id", post.id);
@@ -285,6 +292,7 @@ export default function NewsPage() {
           onSaved={load}
         />
       )}
+      {dialogsNode}
     </div>
   );
 }

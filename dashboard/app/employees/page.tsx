@@ -9,6 +9,7 @@ import { supabase } from "@/lib/supabase";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import { useDepartments } from "@/lib/departments";
 import { useTenantConfig, invalidateTenantConfig } from "@/lib/tenantConfig";
+import { useDialogs } from "@/components/ConfirmDialog";
 import {
   Search,
   Plus,
@@ -64,6 +65,8 @@ interface Employee {
 }
 
 export default function EmployeeManagementPage() {
+  // Hộp thông báo / xác nhận căn giữa, đồng bộ giao diện (thay window.alert & confirm)
+  const { notify, confirm, dialogsNode } = useDialogs();
   // Giữ nguyên tên DEPARTMENTS / BDH_OPTIONS để mọi chỗ dùng bên dưới không đổi
   const { phongBan: DEPARTMENTS, bdh: BDH_OPTIONS } = useDepartments();
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -267,10 +270,10 @@ export default function EmployeeManagementPage() {
       setPreviewEmployees(combinedExtracted);
       setShowPreviewModal(true);
       if (errorCount > 0) {
-        alert(`Đã trích xuất thành công từ ${successCount} file. Có ${errorCount} file gặp lỗi không thể trích xuất.`);
+        notify(`Đã trích xuất thành công từ ${successCount} file. Có ${errorCount} file gặp lỗi không thể trích xuất.`);
       }
     } else {
-      alert("Không tìm thấy danh sách nhân sự hợp lệ trong các file đã chọn.");
+      notify("Không tìm thấy danh sách nhân sự hợp lệ trong các file đã chọn.");
     }
   };
 
@@ -333,7 +336,7 @@ export default function EmployeeManagementPage() {
     localStorage.setItem("openai_api_key", tempApiKey.trim());
     localStorage.setItem("openai_model_nhan_su", tempModel);
     setShowSettingsModal(false);
-    alert("Đã lưu cấu hình AI thành công!");
+    notify("Đã lưu cấu hình AI thành công!");
   };
 
   const handleSaveImportedEmployees = async () => {
@@ -413,13 +416,13 @@ export default function EmployeeManagementPage() {
         }
       }
 
-      alert(`Lưu danh sách nhân sự thành công!\n- Thêm mới: ${insertCount} nhân viên\n- Cập nhật: ${updateCount} nhân viên`);
+      notify(`Lưu danh sách nhân sự thành công!\n- Thêm mới: ${insertCount} nhân viên\n- Cập nhật: ${updateCount} nhân viên`);
       setShowPreviewModal(false);
       setPreviewEmployees([]);
       fetchEmployees();
     } catch (err: any) {
       console.error("Error saving imported employees:", err);
-      alert("Lỗi khi lưu danh sách nhân sự: " + (err.message || err));
+      notify("Lỗi khi lưu danh sách nhân sự: " + (err.message || err));
     } finally {
       setLoading(false);
     }
@@ -482,7 +485,7 @@ export default function EmployeeManagementPage() {
       fetchEmployees();
     } catch (err) {
       console.error("Error adding employee:", err);
-      alert("Lỗi khi thêm nhân sự!");
+      notify("Lỗi khi thêm nhân sự!");
     }
   };
 
@@ -490,7 +493,7 @@ export default function EmployeeManagementPage() {
     if (!currentUser) return;
 
     if (!canDelete) {
-      alert("Bạn không có quyền thực hiện hành động xóa!");
+      notify("Bạn không có quyền thực hiện hành động xóa!");
       return;
     }
 
@@ -509,11 +512,15 @@ export default function EmployeeManagementPage() {
 
     // Trưởng phòng cannot delete Admin
     if (!isUserAdmin && isTargetAdmin) {
-      alert("Trưởng phòng không thể xóa tài khoản của Admin!");
+      notify("Trưởng phòng không thể xóa tài khoản của Admin!");
       return;
     }
 
-    if (confirm(`Bạn có chắc chắn muốn xóa nhân viên ${name}?`)) {
+    if (await confirm({
+      title: "Xoá nhân viên này?",
+      message: `Nhân viên ${name} sẽ bị xoá khỏi hệ thống.`,
+      confirmLabel: "Xoá",
+    })) {
       try {
         const { error } = await supabase
           .from("employees")
@@ -524,7 +531,7 @@ export default function EmployeeManagementPage() {
         fetchEmployees();
       } catch (err) {
         console.error("Error deleting employee:", err);
-        alert("Lỗi khi xóa nhân viên!");
+        notify("Lỗi khi xóa nhân viên!");
       }
     }
   };
@@ -533,11 +540,15 @@ export default function EmployeeManagementPage() {
     if (!currentUser) return;
 
     if (!canDelete) {
-      alert("Bạn không có quyền thực hiện hành động xóa tất cả!");
+      notify("Bạn không có quyền thực hiện hành động xóa tất cả!");
       return;
     }
 
-    if (confirm("CẢNH BÁO: Bạn có chắc chắn muốn XÓA TOÀN BỘ danh sách nhân viên hiện có trên hệ thống? Hành động này không thể hoàn tác!")) {
+    if (await confirm({
+      title: "XÓA TOÀN BỘ danh sách nhân viên?",
+      message: "Toàn bộ nhân viên hiện có trên hệ thống sẽ bị xoá. Hành động này KHÔNG THỂ hoàn tác!",
+      confirmLabel: "Xoá toàn bộ",
+    })) {
       try {
         setLoading(true);
         const { error } = await supabase
@@ -546,11 +557,11 @@ export default function EmployeeManagementPage() {
           .neq("id", "00000000-0000-0000-0000-000000000000");
 
         if (error) throw error;
-        alert("Đã xóa toàn bộ danh sách nhân viên thành công!");
+        notify("Đã xóa toàn bộ danh sách nhân viên thành công!");
         fetchEmployees();
       } catch (err: any) {
         console.error("Error deleting all employees:", err);
-        alert("Lỗi khi xóa toàn bộ nhân viên: " + (err.message || err));
+        notify("Lỗi khi xóa toàn bộ nhân viên: " + (err.message || err));
       } finally {
         setLoading(false);
       }
@@ -582,7 +593,7 @@ export default function EmployeeManagementPage() {
     // RLS tenant_config chỉ cho Admin ghi (migration 001) — chặn sớm ở UI để
     // người dùng thường không bấm rồi nhận lỗi khó hiểu.
     if (!currentUser?.isAdmin) {
-      alert("Chỉ tài khoản Admin mới đổi được thiết lập này.");
+      notify("Chỉ tài khoản Admin mới đổi được thiết lập này.");
       return;
     }
     const next = !hideResignedInPickers;
@@ -601,7 +612,7 @@ export default function EmployeeManagementPage() {
       invalidateTenantConfig();
     } catch (err: any) {
       setHideResignedInPickers(!next); // trả lại trạng thái cũ
-      alert("Không lưu được thiết lập: " + (err?.message || err));
+      notify("Không lưu được thiết lập: " + (err?.message || err));
     } finally {
       setSavingHideFlag(false);
     }
@@ -688,7 +699,7 @@ export default function EmployeeManagementPage() {
       if (error) throw error;
     } catch (err) {
       console.error("Lỗi khi cập nhật thông tin nhân sự:", err);
-      alert("Lỗi khi cập nhật thông tin nhân viên!");
+      notify("Lỗi khi cập nhật thông tin nhân viên!");
       fetchEmployees();
     }
   };
@@ -720,7 +731,12 @@ export default function EmployeeManagementPage() {
   const canUploadEmployeeList = isOnlyAdmin;
 
   const handleRestoreAccess = async (emp: Employee) => {
-    if (!confirm(`Mở lại quyền truy cập hệ thống cho "${emp.name}"?\n\nTrạng thái sẽ được đổi từ "NV Nghỉ việc" về "Chính thức", tài khoản Google của họ sẽ đăng nhập được ngay lập tức.`)) return;
+    if (!(await confirm({
+      title: `Mở lại quyền truy cập cho "${emp.name}"?`,
+      message: `Trạng thái sẽ được đổi từ "NV Nghỉ việc" về "Chính thức", tài khoản Google của họ sẽ đăng nhập được ngay lập tức.`,
+      confirmLabel: "Mở lại quyền",
+      tone: "normal",
+    }))) return;
     await handleUpdateEmployeeField(emp.id, "status", "Chính thức");
   };
 
@@ -742,7 +758,7 @@ export default function EmployeeManagementPage() {
 
     if (transferTasks || transferPermissions) {
       if (!targetEmployeeId) {
-        alert("Vui lòng chọn nhân sự tiếp nhận bàn giao!");
+        notify("Vui lòng chọn nhân sự tiếp nhận bàn giao!");
         return;
       }
     }
@@ -754,7 +770,7 @@ export default function EmployeeManagementPage() {
     const newName = targetEmp ? targetEmp.name.trim() : "";
     const newEmail = targetEmp ? (targetEmp.email || "").trim().toLowerCase() : "";
 
-    const confirmMsg = `XÁC NHẬN BÀN GIAO & KHÓA TÀI KHOẢN:\n\n` +
+    const confirmMsg =
       `• Nhân sự nghỉ việc: ${oldName} (${oldEmail || "Không có email"})\n` +
       `• Nhân sự tiếp nhận: ${newName ? `${newName} (${newEmail})` : "Không chọn"}\n\n` +
       `Các hành động sẽ được xử lý tự động:\n` +
@@ -763,7 +779,12 @@ export default function EmployeeManagementPage() {
       `${lockAccount ? "3. Cập nhật trạng thái 'NV Nghỉ việc' & khóa tài khoản đăng nhập Google ngay lập tức." : ""}\n\n` +
       `Bạn có chắc chắn muốn thực hiện?`;
 
-    if (!confirm(confirmMsg)) return;
+    if (!(await confirm({
+      title: "Xác nhận bàn giao & khoá tài khoản?",
+      message: confirmMsg,
+      confirmLabel: "Bàn giao",
+      tone: "normal",
+    }))) return;
 
     try {
       setIsSubmittingHandover(true);
@@ -840,13 +861,13 @@ export default function EmployeeManagementPage() {
         if (empErr) throw empErr;
       }
 
-      alert(`Đã hoàn tất bàn giao & khóa tài khoản của nhân sự ${oldName}!`);
+      notify(`Đã hoàn tất bàn giao & khóa tài khoản của nhân sự ${oldName}!`);
       setShowHandoverModal(false);
       setSelectedEmployeeToHandover(null);
       fetchEmployees();
     } catch (err: any) {
       console.error("Error executing handover:", err);
-      alert("Lỗi khi bàn giao: " + (err.message || err));
+      notify("Lỗi khi bàn giao: " + (err.message || err));
     } finally {
       setIsSubmittingHandover(false);
     }
@@ -971,7 +992,7 @@ export default function EmployeeManagementPage() {
                     if (activeEmps.length > 0) {
                       handleOpenHandoverModal(activeEmps[0]);
                     } else {
-                      alert("Không tìm thấy nhân sự khả thi để bàn giao.");
+                      notify("Không tìm thấy nhân sự khả thi để bàn giao.");
                     }
                   }}
                   className="flex items-center gap-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-md shadow-amber-500/20 active:scale-95 transition-all cursor-pointer"
@@ -1883,6 +1904,7 @@ export default function EmployeeManagementPage() {
           </div>
         </div>
       )}
+      {dialogsNode}
     </div>
   );
 }

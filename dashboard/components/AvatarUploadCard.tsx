@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ImagePlus, Trash2, UserRound, ZoomIn } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { useDialogs } from "@/components/ConfirmDialog";
 import {
   AVATAR_MAX_UPLOAD_BYTES,
   AVATAR_SIZE,
@@ -33,6 +34,8 @@ const PREVIEW_PX = 176;
 const errText = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 export default function AvatarUploadCard({ email, name }: Props) {
+  // Hộp xác nhận căn giữa, đồng bộ giao diện (thay window.confirm)
+  const { confirm, dialogsNode } = useDialogs();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
@@ -188,7 +191,12 @@ export default function AvatarUploadCard({ email, name }: Props) {
   // ─── Gỡ ảnh ───
   const handleRemove = async () => {
     if (!email || !savedAvatar) return;
-    if (!confirm("Gỡ ảnh đại diện và quay về hai chữ viết tắt?")) return;
+    if (!(await confirm({
+      title: "Gỡ ảnh đại diện?",
+      message: "Ảnh đại diện sẽ được gỡ và quay về hai chữ viết tắt.",
+      confirmLabel: "Gỡ ảnh",
+      tone: "normal",
+    }))) return;
 
     setSaving(true);
     setMessage(null);
@@ -343,6 +351,7 @@ export default function AvatarUploadCard({ email, name }: Props) {
           )}
         </div>
       </div>
+      {dialogsNode}
     </div>
   );
 }

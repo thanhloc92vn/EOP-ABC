@@ -22,6 +22,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "@/lib/supabase";
 import { useCurrentUser } from "@/lib/useCurrentUser";
+import { useDialogs } from "@/components/ConfirmDialog";
 import {
   useTripDistances,
   locationKey,
@@ -47,6 +48,8 @@ interface Props {
 }
 
 export default function TripDistanceModal({ open, onClose, onChanged, initialFrom, initialTo }: Props) {
+  // Hộp xác nhận căn giữa, đồng bộ giao diện (thay window.confirm)
+  const { confirm, dialogsNode } = useDialogs();
   const user = useCurrentUser();
   // Component này luôn nằm trong cây (trả null khi đóng) nên hook vẫn chạy —
   // truyền `open` để chỉ gọi mạng lúc modal thật sự mở.
@@ -192,7 +195,11 @@ export default function TripDistanceModal({ open, onClose, onChanged, initialFro
   };
 
   const handleDelete = async (r: TripDistance) => {
-    if (!confirm(`Xoá cung đường "${r.from_location} – ${r.to_location}" (${r.distance_km} km)?`)) return;
+    if (!(await confirm({
+      title: "Xoá cung đường này?",
+      message: `Cung đường "${r.from_location} – ${r.to_location}" (${r.distance_km} km) sẽ bị xoá khỏi danh mục.`,
+      confirmLabel: "Xoá",
+    }))) return;
     try {
       setSaving(true);
       setWriteErr("");
@@ -393,6 +400,7 @@ export default function TripDistanceModal({ open, onClose, onChanged, initialFro
           </button>
         </div>
       </div>
+      {dialogsNode}
     </div>,
     document.body
   );

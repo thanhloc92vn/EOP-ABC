@@ -19,6 +19,7 @@ import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import { invalidateProjectCatalog, type CatalogKind } from "@/lib/projectCatalog";
+import { useDialogs } from "@/components/ConfirmDialog";
 import {
   FolderKanban, ShieldAlert, Loader2, Plus, Trash2, Save, RefreshCw, Tags,
 } from "lucide-react";
@@ -27,6 +28,8 @@ type ProjectRow = { id: string; code: string; name: string; active: boolean; sor
 type CatalogRow = { id: string; kind: CatalogKind; name: string; active: boolean; sort_order: number };
 
 export default function ProjectCatalogPanel() {
+  // Hộp xác nhận căn giữa, đồng bộ giao diện (thay window.confirm)
+  const { confirm, dialogsNode } = useDialogs();
   const currentUser = useCurrentUser();
   const isAdmin = !!currentUser?.isAdmin;
 
@@ -101,8 +104,12 @@ export default function ProjectCatalogPanel() {
       "Không lưu được dự án"
     );
 
-  const removeProject = (r: ProjectRow) => {
-    if (!confirm(`Xoá dự án "${r.code} — ${r.name}"?\n\nCác task ĐÃ tạo vẫn giữ nguyên mã và tên dự án đã ghi, không bị mất.`)) return;
+  const removeProject = async (r: ProjectRow) => {
+    if (!(await confirm({
+      title: `Xoá dự án "${r.code} — ${r.name}"?`,
+      message: "Các task ĐÃ tạo vẫn giữ nguyên mã và tên dự án đã ghi, không bị mất.",
+      confirmLabel: "Xoá",
+    }))) return;
     runWrite(async () => supabase.from("projects").delete().eq("id", r.id), "Không xoá được dự án");
   };
 
@@ -123,8 +130,12 @@ export default function ProjectCatalogPanel() {
       "Không lưu được mục"
     );
 
-  const removeCatalog = (r: CatalogRow) => {
-    if (!confirm(`Xoá "${r.name}" khỏi danh mục?\n\nCác task đã chọn giá trị này vẫn giữ nguyên.`)) return;
+  const removeCatalog = async (r: CatalogRow) => {
+    if (!(await confirm({
+      title: `Xoá "${r.name}" khỏi danh mục?`,
+      message: "Các task đã chọn giá trị này vẫn giữ nguyên.",
+      confirmLabel: "Xoá",
+    }))) return;
     runWrite(async () => supabase.from("task_catalog").delete().eq("id", r.id), "Không xoá được mục");
   };
 
@@ -345,6 +356,7 @@ export default function ProjectCatalogPanel() {
           </p>
         </>
       )}
+      {dialogsNode}
     </div>
   );
 }
