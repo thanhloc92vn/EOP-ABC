@@ -87,7 +87,7 @@ export default function BaoCaoPage() {
       <div className="flex min-h-screen bg-[#F7F9FC]">
         <Sidebar />
         <div className="ml-60 flex-1 flex flex-col min-w-0">
-          <Header title="Báo cáo" />
+          <Header title="Trình ký hồ sơ" />
           <main className="flex-1 flex items-center justify-center">
             <div className="flex items-center gap-2.5 text-slate-400 text-xs font-bold">
               <Loader2 size={16} className="animate-spin" />
@@ -104,7 +104,7 @@ export default function BaoCaoPage() {
       <div className="flex min-h-screen bg-[#F7F9FC]">
         <Sidebar />
         <div className="ml-60 flex-1 flex flex-col min-w-0">
-          <Header title="Báo cáo" />
+          <Header title="Trình ký hồ sơ" />
           <main className="flex-1 flex items-center justify-center p-8">
             <div className="max-w-md w-full bg-white border border-slate-200/60 rounded-[2rem] shadow-premium p-10 flex flex-col items-center text-center space-y-5">
               <div className="w-16 h-16 rounded-2xl bg-amber-50 flex items-center justify-center text-amber-500 ring-4 ring-amber-100/50">
@@ -112,10 +112,10 @@ export default function BaoCaoPage() {
               </div>
               <div className="space-y-2">
                 <h2 className="font-heading font-extrabold text-slate-800 text-base">
-                  Bạn chưa được cấp quyền xem Báo cáo
+                  Bạn chưa được cấp quyền xem Trình ký hồ sơ
                 </h2>
                 <p className="text-slate-500 text-xs leading-relaxed font-medium">
-                  Module Báo cáo thuộc gói <strong>Enterprise</strong> và chỉ mở cho
+                  Module Trình ký hồ sơ thuộc gói <strong>Enterprise</strong> và chỉ mở cho
                   tài khoản được cấp cờ <strong>Báo cáo quản trị</strong>. Liên hệ
                   Quản trị viên nếu bạn cần truy cập.
                 </p>
@@ -139,7 +139,7 @@ export default function BaoCaoPage() {
     <div className="flex min-h-screen bg-[#F7F9FC]">
       <Sidebar />
       <div className="ml-60 flex-1 flex flex-col min-w-0">
-        <Header title="Báo cáo" />
+        <Header title="Trình ký hồ sơ" />
 
         <main className="flex-1 p-8 overflow-y-auto space-y-6">
           {/* ─── Thanh chọn nhóm báo cáo ─── */}
