@@ -5647,7 +5647,7 @@ export default function CBPage() {
                   </div>
 
                   {/* CARD 3: DANH SÁCH NHÂN VIÊN CHẤM CÔNG GPS (khối Ban Điều hành) */}
-                  <GpsCheckinList smtpConfig={smtpConfig} onNeedSmtp={() => setShowEmailConfigModal(true)} />
+                  <GpsCheckinList smtpConfig={smtpConfig} onNeedSmtp={() => setShowEmailConfigModal(true)} confirm={confirm} notify={notify} />
 
                 </div>
               )}

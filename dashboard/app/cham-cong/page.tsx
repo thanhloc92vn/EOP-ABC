@@ -183,9 +183,15 @@ export default function ChamCongPage() {
       ctx.fillStyle = "#fff"; ctx.font = "600 13px sans-serif"; ctx.textBaseline = "top";
       lines.forEach((t, i) => ctx.fillText(t, pad, h - boxH + pad / 2 + i * lh));
 
-      const blob: Blob = await new Promise((res, rej) =>
-        canvas.toBlob(b => (b ? res(b) : rej(new Error("toBlob failed"))), "image/jpeg", 0.7)
-      );
+      // Nén JPEG, đảm bảo ảnh < 2MB (720px/q0.7 thường ~100-200KB; vòng lặp chỉ
+      // là bảo hiểm cho máy có camera độ phân giải rất cao).
+      const MAX_BYTES = 2 * 1024 * 1024;
+      const encode = (qlt: number): Promise<Blob> =>
+        new Promise((res, rej) => canvas.toBlob(b => (b ? res(b) : rej(new Error("toBlob failed"))), "image/jpeg", qlt));
+      let quality = 0.7;
+      let blob: Blob = await encode(quality);
+      while (blob.size > MAX_BYTES && quality > 0.3) { quality -= 0.15; blob = await encode(quality); }
+      if (blob.size > MAX_BYTES) throw new Error("Ảnh quá lớn (>2MB). Vui lòng thử lại.");
 
       stopCamera();
 

@@ -171,7 +171,7 @@ begin
   insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
   values (
     'gps-checkins', 'gps-checkins', false,
-    5242880, -- 5MB/ảnh là dư (client đã nén ~100KB)
+    2097152, -- 2MB/ảnh (client nén ~100-200KB; đây là trần chặn phía server)
     array['image/jpeg','image/png','image/webp']
   )
   on conflict (id) do update set
