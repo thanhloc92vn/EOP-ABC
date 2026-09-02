@@ -226,7 +226,7 @@ export default function GpsCheckinList({ smtpConfig, onNeedSmtp, confirm, notify
     const src = bdhFilter ? rows.filter(r => r.bdh_name === bdhFilter) : rows;
     const people = new Set(src.map(r => r.user_email)).size;
     const valid = src.filter(r => r.is_valid).length;
-    return { people, valid, invalid: src.length - valid };
+    return { people, valid };
   }, [rows, bdhFilter]);
 
   async function viewPhoto(path: string | null, title: string) {
@@ -409,10 +409,9 @@ export default function GpsCheckinList({ smtpConfig, onNeedSmtp, confirm, notify
           </button>
         </div>
 
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 gap-3">
           <Stat label="Nhân sự chấm" value={stats.people} tone="blue" />
-          <Stat label="Lượt hợp lệ" value={stats.valid} tone="green" />
-          <Stat label="Lượt ngoài vùng" value={stats.invalid} tone="amber" />
+          <Stat label="Lượt chấm hợp lệ" value={stats.valid} tone="green" />
         </div>
 
         {!smtpConfig.user && view === "summary" && summaries.length > 0 && (

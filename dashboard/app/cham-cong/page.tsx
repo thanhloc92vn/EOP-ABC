@@ -17,7 +17,7 @@ import { useCurrentUser } from "@/lib/useCurrentUser";
 import { fetchDepartments } from "@/lib/departments";
 import {
   MapPin, Camera, CheckCircle2, XCircle, Loader2, Navigation,
-  LogIn, LogOut, RefreshCw, ShieldAlert, Clock,
+  LogIn, LogOut, RefreshCw, ShieldAlert, Clock, AlertTriangle,
 } from "lucide-react";
 
 type Located = { bdh_name: string; lat: number; lng: number; radius_m: number | null; province: string | null };
@@ -50,6 +50,7 @@ export default function ChamCongPage() {
   const [phase, setPhase] = useState<"idle" | "locating" | "camera" | "saving">("idle");
   const [err, setErr] = useState<string>("");
   const [okMsg, setOkMsg] = useState<string>("");
+  const [alertMsg, setAlertMsg] = useState<string>(""); // popup căn giữa khi ngoài vùng / lỗi cứng
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -118,10 +119,16 @@ export default function ChamCongPage() {
       (pos) => {
         const { latitude, longitude, accuracy } = pos.coords;
         setGps({ lat: latitude, lng: longitude, acc: accuracy });
-        if (loc) setDist(distanceM(latitude, longitude, loc.lat, loc.lng));
+        const d = loc ? distanceM(latitude, longitude, loc.lat, loc.lng) : null;
+        if (d !== null) setDist(d);
         // Định vị rác -> chặn ngay, khỏi tốn công chụp ảnh.
         if (accuracy > 100) {
           setErr(`Tín hiệu GPS quá yếu (sai số ~${Math.round(accuracy)}m). Ra chỗ thoáng và thử lại.`);
+          setPhase("idle"); return;
+        }
+        // NGOÀI BÁN KÍNH -> chặn hẳn bằng popup, KHÔNG mở camera, KHÔNG ghi nhận.
+        if (d !== null && d > radius) {
+          setAlertMsg(`Bạn đang cách vị trí BĐH khoảng ~${Math.round(d)}m, ngoài bán kính cho phép ${radius}m.\n\nVui lòng đến đúng công trường để chấm công. Hệ thống KHÔNG ghi nhận lượt chấm ngoài vùng.`);
           setPhase("idle"); return;
         }
         openCamera();
@@ -335,6 +342,18 @@ export default function ChamCongPage() {
           Vị trí & thời gian do máy chủ ghi nhận và kiểm tra lại. Ảnh chụp là minh chứng có mặt tại công trường.
         </p>
       </div>
+
+      {/* Popup Alert căn giữa — ngoài bán kính thì chặn hẳn, không cho chấm */}
+      {alertMsg && (
+        <div onClick={() => setAlertMsg("")} className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div onClick={e => e.stopPropagation()} className="bg-white rounded-3xl shadow-2xl max-w-sm w-full p-6 text-center space-y-4">
+            <div className="w-14 h-14 rounded-2xl bg-rose-50 text-rose-500 flex items-center justify-center mx-auto"><AlertTriangle size={26} /></div>
+            <h3 className="font-extrabold text-slate-800 text-base">Ngoài phạm vi chấm công</h3>
+            <p className="text-xs text-slate-500 leading-relaxed whitespace-pre-line">{alertMsg}</p>
+            <button onClick={() => setAlertMsg("")} className="w-full py-3 rounded-2xl bg-[#005BAC] text-white font-bold text-sm active:scale-95">Đã hiểu</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
