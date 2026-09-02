@@ -67,6 +67,7 @@ export default function GpsCheckinList({ smtpConfig, onNeedSmtp }: { smtpConfig:
   const [q, setQ] = useState("");
   const [view, setView] = useState<"summary" | "detail">("summary");
   const [mailStatus, setMailStatus] = useState<Record<string, EmailStatus>>({});
+  const [mailError, setMailError] = useState<Record<string, string>>({});
   const [sendingAll, setSendingAll] = useState(false);
 
   const monthLabel = useMemo(() => { const [y, m] = month.split("-"); return `${m}/${y}`; }, [month]); // MM/YYYY
@@ -189,6 +190,7 @@ export default function GpsCheckinList({ smtpConfig, onNeedSmtp }: { smtpConfig:
   async function sendOne(s: Summary): Promise<boolean> {
     if (!smtpConfig.user || !smtpConfig.pass) { onNeedSmtp(); return false; }
     setMailStatus(p => ({ ...p, [s.email]: "sending" }));
+    setMailError(p => ({ ...p, [s.email]: "" }));
     try {
       const res = await apiFetch("/api/send-attendance-email", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -200,12 +202,15 @@ export default function GpsCheckinList({ smtpConfig, onNeedSmtp }: { smtpConfig:
           month: monthLabel,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Gửi thất bại");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       setMailStatus(p => ({ ...p, [s.email]: "success" }));
       return true;
-    } catch {
+    } catch (e: any) {
+      const msg = e?.message || "Gửi thất bại";
+      console.error("[GPS email]", s.email, msg);
       setMailStatus(p => ({ ...p, [s.email]: "error" }));
+      setMailError(p => ({ ...p, [s.email]: msg }));
       return false;
     }
   }
@@ -325,7 +330,7 @@ export default function GpsCheckinList({ smtpConfig, onNeedSmtp }: { smtpConfig:
                         <td className="py-3 px-3 text-center text-[10px] font-mono text-slate-400">{sh.in}–{sh.out}</td>
                         <td className="py-3 px-3 text-center">
                           <button onClick={() => sendOne(s)} disabled={st === "sending"}
-                            title={`Gửi báo cáo cho ${s.email}`}
+                            title={st === "error" ? mailError[s.email] : `Gửi báo cáo cho ${s.email}`}
                             className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold active:scale-95 transition-all ${
                               st === "success" ? "bg-emerald-100 text-emerald-700"
                               : st === "error" ? "bg-rose-100 text-rose-700"
@@ -335,6 +340,11 @@ export default function GpsCheckinList({ smtpConfig, onNeedSmtp }: { smtpConfig:
                               : st === "error" ? <><XCircle size={11} /> Lỗi, gửi lại</>
                               : <><Mail size={11} /> Gửi</>}
                           </button>
+                          {st === "error" && mailError[s.email] && (
+                            <div className="mt-1 text-[9px] text-rose-500 font-semibold max-w-[180px] mx-auto leading-tight break-words" title={mailError[s.email]}>
+                              {mailError[s.email]}
+                            </div>
+                          )}
                         </td>
                       </tr>
                     );
