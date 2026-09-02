@@ -43,6 +43,7 @@ export function isPlanAtLeast(current: Plan, min: Plan): boolean {
 // lương. Xem app/cb/page.tsx (hasFullAccess) và RLS bảng contracts.
 export const ROUTE_MIN_PLAN: { prefix: string; min: Plan }[] = [
   { prefix: "/vi-tri-du-an", min: "basic" },
+  { prefix: "/cham-cong", min: "basic" },
   { prefix: "/tin-tuc", min: "basic" },
   { prefix: "/cb", min: "basic" },
   { prefix: "/employees", min: "professional" },

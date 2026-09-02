@@ -25,7 +25,8 @@ import {
   Newspaper,
   CalendarOff,
   Plane,
-  TrendingUp
+  TrendingUp,
+  Fingerprint
 } from "lucide-react";
 import { useSidebar } from "./SidebarContext";
 import ThemeToggle from "./ThemeToggle";
@@ -34,6 +35,7 @@ import { fetchApprovalPermissions, hasAnyApprovalPermission, isMarketingTeamLead
 import { useTenantConfig } from "@/lib/tenantConfig";
 import { usePlan } from "@/lib/plan";
 import { useCurrentUser } from "@/lib/useCurrentUser";
+import { useDepartments } from "@/lib/departments";
 
 function SidebarLinks({ isApprover, pathname, setSidebarOpen }: { isApprover: boolean; pathname: string; setSidebarOpen: (o: boolean) => void }) {
   const searchParams = useSearchParams();
@@ -50,6 +52,9 @@ function SidebarLinks({ isApprover, pathname, setSidebarOpen }: { isApprover: bo
   // Đang tải danh tính -> hiện tạm (tránh nháy menu trống), narrow lại khi có dữ liệu.
   const currentUser = useCurrentUser();
   const isPathAllowed = (p: string) => (currentUser.loading ? true : currentUser.canPath(p));
+  // "Chấm công GPS": nhân sự thuộc một Ban Điều hành dự án (BĐH), và Admin luôn thấy.
+  const deps = useDepartments();
+  const showGpsCheckin = !currentUser.loading && (currentUser.isAdmin || deps.bdh.includes(currentUser.department));
 
   const navItems = [
     { label: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -57,6 +62,7 @@ function SidebarLinks({ isApprover, pathname, setSidebarOpen }: { isApprover: bo
     { label: "Vị trí dự án", href: "/vi-tri-du-an", icon: MapPin },
     { label: "Quản lý Công việc", href: "/tasks", icon: ClipboardList },
     { label: "Lịch công việc", href: "/calendar", icon: CalendarRange },
+    ...(showGpsCheckin ? [{ label: "Chấm công GPS", href: "/cham-cong", icon: Fingerprint }] : []),
     { label: "Tuyển dụng", href: "/recruitment", icon: Briefcase },
     { label: "Danh sách nhân viên", href: "/employees", icon: Users },
     { label: "Lương & Phúc lợi (C&B)", href: "/cb", icon: Calculator },

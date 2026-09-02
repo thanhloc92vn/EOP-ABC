@@ -10,6 +10,7 @@ import { useDepartments } from "@/lib/departments";
 import { useTenantConfig } from "@/lib/tenantConfig";
 import { fetchAvatarMap, pickAvatar } from "@/lib/avatar";
 import { useDialogs } from "@/components/ConfirmDialog";
+import GpsCheckinList from "./GpsCheckinList";
 import {
   getTenureYears,
   getTenureStr,
@@ -5644,6 +5645,9 @@ export default function CBPage() {
                     </div>
                     )}
                   </div>
+
+                  {/* CARD 3: DANH SÁCH NHÂN VIÊN CHẤM CÔNG GPS (khối Ban Điều hành) */}
+                  <GpsCheckinList smtpConfig={smtpConfig} onNeedSmtp={() => setShowEmailConfigModal(true)} />
 
                 </div>
               )}

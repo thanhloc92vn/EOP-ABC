@@ -119,7 +119,7 @@ export async function POST(request: NextRequest) {
               Kính gửi Anh/Chị: <strong style="color: #005BAC; font-size: 16px;">${recipient.name}</strong> (Mã nhân viên: <strong>${recipient.employeeCode}</strong>),
             </p>
             <p style="margin: 8px 0 0 0; font-size: 14px; line-height: 1.6; color: #475569;">
-              Phòng Hành chính Nhân sự (C&B) gửi đến Anh/Chị thông tin chi tiết dữ liệu chấm công được ghi nhận từ hệ thống máy chấm công vân tay trong tháng <strong>${month}</strong>. Vui lòng đối soát các thông tin bên dưới:
+              Phòng Hành chính Nhân sự (C&B) gửi đến Anh/Chị thông tin chi tiết dữ liệu chấm công được ghi nhận từ hệ thống chấm công trong tháng <strong>${month}</strong>. Vui lòng đối soát các thông tin bên dưới:
             </p>
           </div>
 
