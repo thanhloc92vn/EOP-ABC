@@ -2,7 +2,7 @@
 
 > Tài liệu tự chứa để **tái sử dụng module sang phần mềm khác**. Gồm: kiến trúc, chi phí,
 > phụ thuộc, toàn bộ mã nguồn (SQL + React/Next.js), điểm tích hợp, chống gian lận,
-> và **cách fix lỗi gửi email Gmail**. (Cập nhật: đã bao gồm migration 067 — ngoài vùng bị TỪ CHỐI GHI.)
+> và **cách fix lỗi gửi email Gmail**. (Cập nhật: migration 067 — ngoài vùng bị TỪ CHỐI GHI; migration 068 — bán kính mặc định 100m.)
 
 Stack gốc: **Next.js (App Router) + React + TypeScript + TailwindCSS + Supabase (Postgres + Storage + Auth) + Nodemailer**. Bản đồ (module Vị trí dự án) dùng **Leaflet + OpenStreetMap**. Icon: **lucide-react**.
 
@@ -10,7 +10,7 @@ Stack gốc: **Next.js (App Router) + React + TypeScript + TailwindCSS + Supabas
 
 ## 0. Tính năng đã có
 
-- ✅ Nhân sự BĐH check-in bằng **GPS + ảnh camera** trên điện thoại (`/cham-cong`), đo **bán kính** (mặc định 50m).
+- ✅ Nhân sự BĐH check-in bằng **GPS + ảnh camera** trên điện thoại (`/cham-cong`), đo **bán kính** (mặc định 100m).
 - ✅ **Ngoài bán kính = CHẶN HẲN**: hiện **popup Alert giữa màn hình**, không mở camera, **không ghi bản ghi nào** (server cũng RAISE EXCEPTION nếu bị lách client). → không có "bản ghi ma", không mập mờ "có tính công hay không".
 - ✅ Ảnh chụp **nén < 2MB** (client) + trần bucket 2MB (server).
 - ✅ HR xem card **"Danh sách nhân viên chấm công GPS"** trong trang C&B, 2 chế độ:
@@ -70,7 +70,7 @@ Chạy trong Supabase SQL Editor. Idempotent.
 ```sql
 -- ─── 1. BỔ SUNG CẤU HÌNH CHO project_locations ───
 alter table public.project_locations
-  add column if not exists radius_m  integer default 50,
+  add column if not exists radius_m  integer default 100,  -- 100m (migration 068)
   add column if not exists shift_in  text    default '08:00',
   add column if not exists shift_out text    default '17:00';
 
@@ -124,7 +124,7 @@ returns trigger language plpgsql as $$
 declare pl record; d double precision;
 begin
   new.captured_at := now();  -- giờ chính thức = server, bỏ qua client
-  select lat, lng, coalesce(radius_m, 50) as radius_m into pl
+  select lat, lng, coalesce(radius_m, 100) as radius_m into pl
   from public.project_locations where bdh_name = new.bdh_name limit 1;
   if not found then
     raise exception 'BĐH "%" chưa được ghim toạ độ.', new.bdh_name using errcode='check_violation';
@@ -224,7 +224,7 @@ Mobile-first. Nhận diện BĐH → GPS → **nếu ngoài bán kính: popup Al
 
 **Logic then chốt (khối lấy GPS + chặn ngoài vùng):**
 ```tsx
-const radius = loc?.radius_m ?? 50;
+const radius = loc?.radius_m ?? 100;
 
 navigator.geolocation.getCurrentPosition((pos) => {
   const { latitude, longitude, accuracy } = pos.coords;
@@ -385,7 +385,7 @@ nodemailer.createTransport({ host: smtpConfig.host || "smtp.gmail.com", port: po
 ## 11. Checklist triển khai (port)
 
 - [ ] Có `project_locations` với `lat/lng`; chạy phần ALTER thêm `radius_m/shift_in/shift_out`.
-- [ ] Chạy `066_gps_checkins.sql` **và** `067_gps_reject_out_of_range.sql` (trigger từ chối ngoài vùng + dọn dữ liệu cũ). Sửa RLS cho khớp hệ đích.
+- [ ] Chạy `066_gps_checkins.sql` → `067_gps_reject_out_of_range.sql` (từ chối ngoài vùng + dọn dữ liệu cũ) → `068_gps_radius_100.sql` (bán kính 100m). Sửa RLS cho khớp hệ đích.
 - [ ] Tạo bucket `gps-checkins` (private, ≤2MB) nếu SQL không tạo được.
 - [ ] Thêm trang `/cham-cong` (có popup ngoài vùng) + card `GpsCheckinList` (+ props confirm/notify).
 - [ ] Đấu nối `useCurrentUser`, `fetchDepartments`, `apiFetch`, `useDialogs`, API email.

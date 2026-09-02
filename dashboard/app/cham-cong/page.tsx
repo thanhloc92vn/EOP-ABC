@@ -55,7 +55,7 @@ export default function ChamCongPage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  const radius = loc?.radius_m ?? 50;
+  const radius = loc?.radius_m ?? 100;
   const inRange = dist !== null && dist <= radius;
 
   // ─── Nhận diện BĐH + tải toạ độ + trạng thái hôm nay ───
