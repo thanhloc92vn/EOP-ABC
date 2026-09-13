@@ -7,6 +7,16 @@ import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
 import { fetchTenantConfig } from "@/lib/tenantConfig";
 import { isResignedRow } from "@/lib/resigned";
+import MeetingRecorder, { type RecordedSegment } from "@/components/MeetingRecorder";
+import VoiceSampleManager from "@/components/VoiceSampleManager";
+import DialogProvider, { useDialog } from "@/components/DialogProvider";
+import {
+  MEETING_MODELS,
+  MEETING_MODEL_DEFAULT,
+  MAX_KNOWN_SPEAKERS,
+  OPENAI_AUDIO_MAX_BYTES,
+  type MeetingModelId,
+} from "@/lib/meetingModels";
 import {
   Mic,
   Calendar,
@@ -28,7 +38,6 @@ import {
   Search,
   ExternalLink,
   ChevronRight,
-  Info,
   Archive,
   Brain,
   FileDown,
@@ -36,7 +45,10 @@ import {
   FileEdit,
   Download,
   Play,
-  Sparkles
+  Sparkles,
+  Volume2,
+  Trash,
+  CheckCircle2
 } from "lucide-react";
 
 // Đọc response an toàn: khi server bị timeout/quá tải (Vercel trả text
@@ -54,6 +66,34 @@ async function readJsonSafe(res: Response, context: string): Promise<any> {
   }
 }
 
+/** Một đoạn audio trong kho lưu trữ, kèm vị trí của nó trong cả cuộc họp. */
+type AudioPart = { path: string; offsetSec: number; durationSec: number };
+
+/**
+ * Đo thời lượng file audio ngay trên trình duyệt để xếp các file tải lên vào
+ * đúng vị trí trên trục thời gian. Không đọc được thì trả 0 — biên bản vẫn chạy,
+ * chỉ là timeline kém chính xác hơn so với ghi âm trực tiếp trong app.
+ */
+function estimateDurationSec(file: File): Promise<number> {
+  return new Promise((resolve) => {
+    try {
+      const url = URL.createObjectURL(file);
+      const audio = new Audio();
+      const done = (value: number) => {
+        URL.revokeObjectURL(url);
+        resolve(Number.isFinite(value) && value > 0 ? Math.floor(value) : 0);
+      };
+      audio.onloadedmetadata = () => done(audio.duration);
+      audio.onerror = () => done(0);
+      // Một số định dạng không bao giờ bắn sự kiện -> đừng treo luồng xử lý
+      setTimeout(() => done(audio.duration), 5000);
+      audio.src = url;
+    } catch {
+      resolve(0);
+    }
+  });
+}
+
 interface Meeting {
   id: string;
   created_at: string;
@@ -68,6 +108,7 @@ interface Meeting {
   project_name: string;
   package_name: string;
   audio_url: string;
+  audio_segments: AudioPart[];
   transcript_raw: string;
   transcript_clean: string;
   summary: string;
@@ -75,6 +116,21 @@ interface Meeting {
   document_url: string;
   status: "draft" | "confirmed";
   distribution: string;
+  // ─── Bổ sung cho ghi âm trong app + tách người nói (migration 069) ───
+  audio_paths: string[];
+  recording_started_at: string | null;
+  transcript_segments: TranscriptSegment[];
+  speaker_map: Record<string, string>;
+  audio_deleted_at: string | null;
+  audio_deleted_by: string | null;
+  ai_model: string | null;
+}
+
+interface TranscriptSegment {
+  speaker: string;
+  start: number;
+  end: number;
+  text: string;
 }
 
 interface ActionItem {
@@ -84,9 +140,23 @@ interface ActionItem {
   coop: string;
   deadline: string;
   is_header?: boolean;
+  /** Giây tính từ lúc bắt đầu ghi — để tua lại đúng đoạn kiểm chứng. */
+  ts?: number | null;
 }
 
+// Trang thật nằm trong DialogProvider để mọi thông báo/xác nhận dùng hộp thoại
+// giữa màn hình thay cho alert()/confirm() của trình duyệt. Phải tách làm 2 hàm
+// vì một component không dùng được context do chính nó tạo ra.
 export default function MeetingTeamPage() {
+  return (
+    <DialogProvider>
+      <MeetingTeamContent />
+    </DialogProvider>
+  );
+}
+
+function MeetingTeamContent() {
+  const dialog = useDialog();
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -107,6 +177,18 @@ export default function MeetingTeamPage() {
   // AI Center Intake Fields
   const [chairperson, setChairperson] = useState("");
   const [audioFiles, setAudioFiles] = useState<File[]>([]);
+  // Model phân tích biên bản — mặc định gpt-5.6-sol (xem lib/meetingModels.ts)
+  const [meetingModel, setMeetingModel] = useState<MeetingModelId>(MEETING_MODEL_DEFAULT);
+  // Người dự họp được xác nhận trước: vừa làm danh sách chặn AI bịa tên, vừa là
+  // nguồn mẫu giọng nạp vào known_speaker_references khi gỡ băng.
+  const [participantIds, setParticipantIds] = useState<string[]>([]);
+  const [intakeMode, setIntakeMode] = useState<"record" | "upload">("record");
+  const [isDeletingAudio, setIsDeletingAudio] = useState(false);
+  const [showVoiceSamples, setShowVoiceSamples] = useState(false);
+  // Bản ghi đã lưu xong nhưng chưa đủ thông tin để chạy AI (thiếu chủ trì hoặc
+  // API key). Giữ lại ở đây để không mất bản ghi — điền nốt rồi bấm chạy tiếp.
+  const [pendingRecording, setPendingRecording] = useState<{ startedAt: string; segments: RecordedSegment[] } | null>(null);
+  const [speakerMapDraft, setSpeakerMapDraft] = useState<Record<string, string>>({});
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
   const [processingStep, setProcessingStep] = useState<"idle" | "stt" | "ai" | "done">("idle");
@@ -140,6 +222,13 @@ export default function MeetingTeamPage() {
     if (typeof window !== "undefined") {
       const key = localStorage.getItem("openai_api_key_hanh_chinh") || localStorage.getItem("openai_api_key") || "";
       setOpenaiKey(key);
+
+      // Model của module Biên bản họp lưu riêng, KHÔNG dùng chung key với trang
+      // Hành chính — hai việc có yêu cầu khác hẳn nhau về độ mạnh của model.
+      const savedModel = localStorage.getItem("openai_model_bien_ban_hop");
+      if (MEETING_MODELS.some(m => m.id === savedModel)) {
+        setMeetingModel(savedModel as MeetingModelId);
+      }
     }
   }, []);
 
@@ -218,12 +307,12 @@ export default function MeetingTeamPage() {
     e.preventDefault();
   };
 
-  const handleDrop = (e: React.DragEvent) => {
+  const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const newFiles = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith("audio/"));
       if (newFiles.length === 0) {
-        alert("Vui lòng chọn file âm thanh (MP3, WAV, M4A).");
+        await dialog.alert("Vui lòng chọn file âm thanh (MP3, WAV, M4A).");
         return;
       }
       setAudioFiles(prev => [...prev, ...newFiles]);
@@ -239,93 +328,125 @@ export default function MeetingTeamPage() {
     }
   };
 
-  // Simplified Intake: Only Chairperson + Audio Upload
-  const handleIntakeAndProcess = async () => {
-    if (audioFiles.length === 0) {
-      alert("Vui lòng kéo thả hoặc chọn file ghi âm cuộc họp!");
-      return;
-    }
-    if (!openaiKey) {
-      alert("Vui lòng cấu hình OpenAI API Key ở góc trên bên phải trước khi xử lý!");
-      return;
-    }
-    if (!chairperson) {
-      alert("Vui lòng chọn người chủ trì cuộc họp!");
-      return;
-    }
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // QUY TRÌNH XỬ LÝ CHUNG
+  //
+  // Hai đường vào — ghi âm trực tiếp trong app và tải file lên — chỉ khác nhau
+  // ở cách có được danh sách đoạn audio. Từ đó trở đi (tạo biên bản nháp -> gỡ
+  // băng từng đoạn -> AI dựng biên bản) hoàn toàn giống nhau, nên gom về một
+  // hàm để không phải sửa hai nơi mỗi lần đổi luồng.
+  //
+  // `offsetSec` của mỗi đoạn là vị trí của nó tính từ lúc bắt đầu ghi. Cộng với
+  // mốc start/end do khâu gỡ băng trả về sẽ ra timeline giờ thật của cả cuộc
+  // họp — thay cho việc AI phải tự nghĩ ra giờ như bản cũ.
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    const oversizedFiles = audioFiles.filter(f => f.size > 25 * 1024 * 1024);
-    if (oversizedFiles.length > 0) {
-      const fileList = oversizedFiles.map(f => `- ${f.name} (${(f.size / (1024 * 1024)).toFixed(2)} MB)`).join("\n");
-      const confirmUpload = window.confirm(
-        `Cảnh báo: ${oversizedFiles.length} file vượt quá giới hạn 25MB của Whisper API:\n${fileList}\n\nQuá trình gỡ băng có thể gặp lỗi. Bạn có muốn tiếp tục không?`
-      );
-      if (!confirmUpload) return;
+  // `existingMeetingId` dùng khi chạy lại trên một biên bản nháp đã có sẵn file
+  // ghi âm (lần trước gỡ băng hỏng giữa chừng) — không tạo biên bản mới, tránh
+  // sinh ra bản trùng cho cùng một cuộc họp.
+  const runMeetingPipeline = async (
+    parts: AudioPart[],
+    recordingStartedAt: string | null,
+    existingMeetingId?: string,
+    rosterOverride?: string[]
+  ) => {
+    if (parts.length === 0) {
+      await dialog.alert("Không có đoạn ghi âm nào để xử lý.");
+      return;
     }
-
-    const totalSize = audioFiles.reduce((sum, f) => sum + f.size, 0);
 
     setIsUploading(true);
-    setUploadProgress(10);
     setProcessingStep("stt");
+
+    // Danh sách người dự đã xác nhận -> chặn AI bịa tên người phát biểu.
+    // Khi chạy lại trên biên bản có sẵn thì lấy danh sách của chính biên bản đó
+    // (ô chọn người dự ở Trung tâm AI không còn trên màn hình).
+    const roster = rosterOverride ?? (() => {
+      const names = employees.filter(e => participantIds.includes(e.id)).map(e => e.name);
+      if (chairperson && !names.includes(chairperson)) names.unshift(chairperson);
+      return names;
+    })();
+
+    // Mẫu giọng suy ra TỪ danh sách người dự, không phải từ ô tick — nhờ vậy cả
+    // luồng chạy lại cũng dùng được mẫu giọng mà không cần tick lại từ đầu.
+    const knownSpeakerIds = employees
+      .filter(e => e.voice_sample_path && roster.includes(e.name))
+      .slice(0, MAX_KNOWN_SPEAKERS)
+      .map(e => e.id);
+    const voiceSampleCount = knownSpeakerIds.length;
+
     setProcessingLog([
-      `[1/6] Bắt đầu tải ${audioFiles.length} file ghi âm lên storage...`,
-      `Tổng dung lượng: ${(totalSize / (1024 * 1024)).toFixed(2)} MB`
+      `[1/5] Chuẩn bị xử lý ${parts.length} đoạn ghi âm...`,
+      roster.length > 0
+        ? `Danh sách người dự đã xác nhận: ${roster.join(", ")}`
+        : "⚠️ Chưa chọn người dự họp — AI sẽ ghi theo bộ phận thay vì tên riêng.",
+      voiceSampleCount > 0
+        ? `Có ${voiceSampleCount} mẫu giọng — AI sẽ gọi thẳng tên thật thay vì "Speaker 1".`
+        : "Chưa có mẫu giọng nào: AI vẫn tách được người nói nhưng đánh nhãn Speaker 1/2/3, bạn gán tên sau.",
     ]);
 
+    let draftMeetingId = "";
+
     try {
-      // 1. Upload all audio files to Storage
-      const uploadedPaths: string[] = [];
-      for (let i = 0; i < audioFiles.length; i++) {
-        const file = audioFiles[i];
-        const cleanName = file.name.replace(/[^a-zA-Z0-9.]/g, "_");
-        const filePath = `recordings/${Date.now()}_${i}_${cleanName}`;
-        
-        setProcessingLog(prev => [...prev, `  📁 Đang tải file ${i + 1}/${audioFiles.length}: ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB)...`]);
+      // ─── 1. Biên bản nháp: dùng lại bản có sẵn, hoặc tạo mới ───
+      if (existingMeetingId) {
+        draftMeetingId = existingMeetingId;
 
-        const { error: uploadError } = await supabase.storage
+        // Route gỡ băng NỐI THÊM vào transcript đang có (để tiến trình chết giữa
+        // chừng không mất phần đã gỡ). Nên khi chạy lại phải dọn sạch trước, nếu
+        // không nội dung cũ sẽ bị nhân đôi trong biên bản.
+        const { error: resetError } = await supabase
           .from("meetings")
-          .upload(filePath, file, {
-            cacheControl: "3600",
-            upsert: true
-          });
+          .update({ transcript_raw: "", transcript_segments: [] })
+          .eq("id", existingMeetingId);
+        if (resetError) throw resetError;
 
-        if (uploadError) throw new Error(`Lỗi upload file ${file.name}: ${uploadError.message}`);
-        uploadedPaths.push(filePath);
-        setUploadProgress(Math.round(((i + 1) / audioFiles.length) * 100));
+        setProcessingLog(prev => [
+          ...prev,
+          `[2/5] Chạy lại trên biên bản nháp có sẵn (ID: ${existingMeetingId}).`,
+          `Bắt đầu gỡ băng & tách người nói ${parts.length} đoạn...`,
+        ]);
+      } else {
+        const { data: { publicUrl } } = supabase.storage
+          .from("meetings")
+          .getPublicUrl(parts[0].path);
+
+        const today = new Date().toISOString().split("T")[0];
+        const { data: draftMeeting, error: dbError } = await supabase
+          .from("meetings")
+          .insert([{
+            title: `Biên bản họp ngày ${today} (Đang xử lý)`,
+            meeting_date: today,
+            chairperson,
+            audio_url: publicUrl,
+            audio_paths: parts.map(p => p.path),
+            audio_segments: parts,
+            recording_started_at: recordingStartedAt,
+            status: "draft",
+            distribution: "P. KHĐT, P. QLDA, P. VTTB; Lưu: HCNS."
+          }])
+          .select()
+          .single();
+
+        if (dbError) throw dbError;
+        draftMeetingId = draftMeeting.id;
+
+        setProcessingLog(prev => [
+          ...prev,
+          `[2/5] Đã khởi tạo biên bản nháp (ID: ${draftMeeting.id}).`,
+          `Bắt đầu gỡ băng & tách người nói ${parts.length} đoạn...`,
+        ]);
       }
-      
-      setProcessingLog(prev => [...prev, `[2/6] Upload ${audioFiles.length} file thành công!`, "Khởi tạo biên bản nháp trong cơ sở dữ liệu..."]);
 
-      // Get public URL of first file
-      const { data: { publicUrl } } = supabase.storage.from("meetings").getPublicUrl(uploadedPaths[0]);
+      // ─── 2. Gỡ băng tuần tự từng đoạn ───
+      // Server tự nối kết quả vào biên bản (không ghi đè), nên nếu tiến trình
+      // chết giữa chừng thì phần đã gỡ vẫn còn trong CSDL.
+      let totalChars = 0;
+      const warnings: string[] = [];
+      const speakersFound = new Set<string>();
 
-      // Create draft meeting
-      const today = new Date().toISOString().split("T")[0];
-      const { data: draftMeeting, error: dbError } = await supabase
-        .from("meetings")
-        .insert([{
-          title: `Biên bản họp ngày ${today} (Đang xử lý)`,
-          meeting_date: today,
-          chairperson,
-          audio_url: publicUrl,
-          status: "draft",
-          distribution: "P. KHĐT, P. QLDA, P. VTTB; Lưu: HCNS."
-        }])
-        .select()
-        .single();
-
-      if (dbError) throw dbError;
-      
-      setProcessingLog(prev => [...prev, `[3/6] Khởi tạo biên bản nháp thành công (ID: ${draftMeeting.id}).`, `Bắt đầu gỡ băng ${audioFiles.length} file bằng Whisper API...`]);
-
-      // 2. Transcribe each file sequentially and merge transcripts
-      const allTranscripts: string[] = [];
-      let hasHallucination = false;
-      let hallucinationWarning = "";
-
-      for (let i = 0; i < uploadedPaths.length; i++) {
-        setProcessingLog(prev => [...prev, `  🎙️ Đang gỡ băng file ${i + 1}/${uploadedPaths.length}...`]);
+      for (let i = 0; i < parts.length; i++) {
+        setProcessingLog(prev => [...prev, `  🎙️ Đang gỡ băng đoạn ${i + 1}/${parts.length}...`]);
 
         const { data: { session: transcribeSession } } = await supabase.auth.getSession();
         const transcribeRes = await apiFetch("/api/meeting/transcribe", {
@@ -336,113 +457,224 @@ export default function MeetingTeamPage() {
             "x-supabase-auth": transcribeSession?.access_token || ""
           },
           body: JSON.stringify({
-            meetingId: draftMeeting.id,
-            audioPath: uploadedPaths[i]
+            meetingId: draftMeetingId,
+            audioPath: parts[i].path,
+            offsetSec: parts[i].offsetSec,
+            knownSpeakerIds,
           })
         });
 
-        const transcribeData = await readJsonSafe(transcribeRes, `Lỗi gỡ băng file ${i + 1}`);
-        if (!transcribeRes.ok) throw new Error(transcribeData.error || `Lỗi gỡ băng file ${i + 1}.`);
+        const transcribeData = await readJsonSafe(transcribeRes, `Lỗi gỡ băng đoạn ${i + 1}`);
+        if (!transcribeRes.ok) throw new Error(transcribeData.error || `Lỗi gỡ băng đoạn ${i + 1}.`);
 
-        // Check hallucination for this segment
+        totalChars += (transcribeData.text || "").length;
+        (transcribeData.speakers || []).forEach((s: string) => speakersFound.add(s));
+
+        // KHÁC BẢN CŨ: cảnh báo lặp vòng KHÔNG còn làm mất nội dung đoạn đó nữa.
+        // Trước đây một đoạn bị gắn cờ là bị loại khỏi biên bản, tức là mất luôn
+        // 20 phút họp mà chỉ hiện một dòng log nhỏ.
         if (transcribeData.is_hallucination) {
-          hasHallucination = true;
-          hallucinationWarning = transcribeData.hallucination_warning;
-          setProcessingLog(prev => [...prev, `  ⚠️ File ${i + 1} bị lỗi ảo giác (hallucination)!`]);
+          warnings.push(`Đoạn ${i + 1}: ${transcribeData.hallucination_warning}`);
+          setProcessingLog(prev => [...prev, `  ⚠️ Đoạn ${i + 1} có dấu hiệu nghe không rõ — nội dung VẪN được giữ để bạn kiểm tra.`]);
         } else {
-          allTranscripts.push(transcribeData.text);
-          setProcessingLog(prev => [...prev, `  ✅ File ${i + 1}: ${transcribeData.text.length} ký tự`]);
+          setProcessingLog(prev => [...prev, `  ✅ Đoạn ${i + 1}: ${(transcribeData.text || "").length} ký tự`]);
         }
       }
 
-      // Merge all valid transcripts
-      const rawTranscript = allTranscripts.join("\n\n");
-
-      // CHECK: If ALL files had hallucination or no valid transcript
-      if (rawTranscript.trim().length === 0 || (hasHallucination && allTranscripts.length === 0)) {
-        setProcessingLog(prev => [
-          ...prev,
-          "⚠️ [LỖI NGHIÊM TRỌNG] Không có file nào gỡ băng thành công!",
-          `Chi tiết: ${hallucinationWarning}`,
-          "❌ Đã dừng xử lý. Vui lòng kiểm tra lại file ghi âm.",
-        ]);
-        setProcessingStep("done");
-
-        await supabase.from("meetings").delete().eq("id", draftMeeting.id);
-
-        alert(
-          `⚠️ LỖI: AI GỠ BĂNG KHÔNG NHẬN DIỆN ĐƯỢC NỘI DUNG!\n\n` +
-          `${hallucinationWarning}\n\n` +
-          `CÁCH KHẮC PHỤC:\n` +
-          `1. Kiểm tra lại file ghi âm gốc - mở nghe thử xem giọng nói có rõ không.\n` +
-          `2. Nếu file đã bị nén quá mức (bitrate < 32kbps), hãy nén lại với chất lượng cao hơn (48-64kbps).\n` +
-          `3. Đảm bảo file ghi âm có giọng nói rõ ràng, không bị nhiễu hoặc im lặng kéo dài.`
+      if (totalChars === 0) {
+        throw new Error(
+          "Không gỡ được nội dung nào từ các đoạn ghi âm. Hãy mở nghe thử file gốc: nếu không nghe thấy tiếng nói thì micro đã không thu được âm thanh trong lúc họp."
         );
-
-        setAudioFiles([]);
-        setIsUploading(false);
-        setUploadProgress(0);
-        setProcessingStep("idle");
-        return;
       }
 
-      // Warn if some (but not all) files had hallucination
-      if (hasHallucination && allTranscripts.length > 0) {
-        setProcessingLog(prev => [...prev, `⚠️ Cảnh báo: Một số file bị lỗi ảo giác, chỉ xử lý ${allTranscripts.length} file hợp lệ.`]);
-      }
-
-      // Update merged transcript in DB
-      await supabase.from("meetings").update({ transcript_raw: rawTranscript }).eq("id", draftMeeting.id);
-
-      setProcessingLog(prev => [...prev, `[4/6] Gỡ băng hoàn tất. Tổng cộng ${rawTranscript.length} ký tự từ ${allTranscripts.length} file.`, "Bắt đầu chạy AI phân tích nội dung cuộc họp..."]);
+      setProcessingLog(prev => [
+        ...prev,
+        `[3/5] Gỡ băng xong: ${totalChars} ký tự, nhận diện ${speakersFound.size} người nói.`,
+        `Bắt đầu dựng biên bản bằng ${meetingModel}...`,
+      ]);
       setProcessingStep("ai");
 
-      // 3. Call AI process API
+      // ─── 3. AI dựng biên bản ───
       const { data: { session: processSession } } = await supabase.auth.getSession();
       const processRes = await apiFetch("/api/meeting/process", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${openaiKey}`,
-          "x-supabase-auth": processSession?.access_token || ""
+          "x-supabase-auth": processSession?.access_token || "",
+          "x-openai-model": meetingModel,
         },
-        body: JSON.stringify({
-          meetingId: draftMeeting.id,
-          transcriptRaw: rawTranscript
-        })
+        body: JSON.stringify({ meetingId: draftMeetingId, roster })
       });
 
       const processData = await readJsonSafe(processRes, "Lỗi AI phân tích biên bản");
-      if (!processRes.ok) throw new Error(processData.error || "Gặp lỗi khi GPT phân tích biên bản.");
+      if (!processRes.ok) throw new Error(processData.error || "Gặp lỗi khi AI dựng biên bản.");
 
-      setProcessingLog(prev => [...prev, "[5/6] Xử lý AI hoàn thành thành công!", "Tự động điền metadata, bản tóm tắt và phân công công việc...", "[6/6] Đang điều hướng sang màn hình Review biên bản..."]);
+      setProcessingLog(prev => [
+        ...prev,
+        `[4/5] Dựng biên bản xong bằng ${processData.model || meetingModel}.`,
+        processData.timeline_mode === "clock"
+          ? "Timeline lấy từ giờ đồng hồ thật lúc ghi âm."
+          : processData.timeline_mode === "relative"
+          ? "Timeline theo khoảng thời gian của file (tải file lên nên không biết giờ đồng hồ). Ghi âm trực tiếp trong app sẽ có giờ thật."
+          : "⚠️ Không có mốc thời gian — timeline trình bày theo trình tự phát biểu.",
+        "[5/5] Đang mở màn hình kiểm tra biên bản...",
+      ]);
       setProcessingStep("done");
 
-      // Fetch the fully updated meeting
       const { data: finalMeeting } = await supabase
-        .from("meetings")
-        .select("*")
-        .eq("id", draftMeeting.id)
-        .single();
+        .from("meetings").select("*").eq("id", draftMeetingId).single();
 
       fetchMeetings();
-      
+
+      if (warnings.length > 0) {
+        await dialog.alert(
+          "Biên bản đã dựng xong, nhưng có đoạn nghe không rõ:\n\n" +
+          warnings.join("\n\n") +
+          "\n\nVui lòng đối chiếu lại các đoạn này trong tab Bản gỡ băng trước khi khoá biên bản."
+        );
+      }
+
       if (finalMeeting) {
         setTimeout(() => {
           handleViewDetail(finalMeeting);
           setAudioFiles([]);
           setChairperson("");
+          setParticipantIds([]);
           setProcessingStep("idle");
           setProcessingLog([]);
         }, 1200);
       }
     } catch (err: any) {
       console.error(err);
-      setProcessingLog(prev => [...prev, `❌ LỖI: ${err.message}`]);
+      setProcessingLog(prev => [
+        ...prev,
+        `❌ LỖI: ${err.message}`,
+        draftMeetingId
+          ? "File ghi âm KHÔNG bị mất — vẫn nằm trên server cùng biên bản nháp. Vào Hồ sơ biên bản họp, mở bản nháp: nếu lỗi ở khâu gỡ băng thì bấm \"Gỡ băng lại\"; nếu đã gỡ băng xong mà lỗi ở khâu dựng biên bản thì bấm \"Phân tích lại bằng AI\" (không tốn tiền gỡ băng lần nữa)."
+          : "",
+      ].filter(Boolean));
       setProcessingStep("idle");
-      alert(err.message || "Đã xảy ra lỗi trong quy trình xử lý tự động.");
+      await dialog.alert(
+        (err.message || "Đã xảy ra lỗi trong quy trình xử lý tự động.") +
+        (draftMeetingId
+          ? "\n\nFile ghi âm KHÔNG bị mất. Vào Hồ sơ biên bản họp, mở bản nháp rồi bấm \"Gỡ băng lại\" (nếu lỗi ở khâu gỡ băng) hoặc \"Phân tích lại bằng AI\" (nếu đã gỡ băng xong)."
+          : "")
+      );
     } finally {
       setIsUploading(false);
+    }
+  };
+
+  // ─── Đường vào 1: ghi âm trực tiếp trong app ───
+  //
+  // Ghi âm KHÔNG đòi hỏi phải chọn chủ trì hay nhập API key trước: cuộc họp bắt
+  // đầu là bấm ghi được ngay, không mất mấy phút đầu vì loay hoay điền form.
+  // Hai thứ đó chỉ cần khi gọi AI, tức là lúc kết thúc. Nếu lúc đó vẫn thiếu
+  // thì bản ghi được giữ lại trong `pendingRecording` (file đã nằm an toàn trên
+  // Storage rồi), điền nốt là chạy tiếp — không mất gì.
+  const handleRecordingFinished = async (result: { startedAt: string; segments: RecordedSegment[] }) => {
+    const usable = result.segments.filter(s => s.status === "done");
+    const failed = result.segments.filter(s => s.status === "error");
+
+    if (usable.length === 0) {
+      await dialog.alert("Không có đoạn ghi âm nào tải lên thành công. Vui lòng kiểm tra kết nối mạng rồi ghi lại.", { title: "Lỗi", tone: "danger" });
+      return;
+    }
+    if (failed.length > 0) {
+      const ok = await dialog.confirm(
+        `Có ${failed.length}/${result.segments.length} đoạn tải lên thất bại và sẽ bị thiếu trong biên bản.\n\n` +
+        `Vẫn tiếp tục xử lý ${usable.length} đoạn còn lại?`
+      );
+      if (!ok) return;
+    }
+
+    if (!chairperson || !openaiKey) {
+      setPendingRecording({ startedAt: result.startedAt, segments: usable });
+      await dialog.alert(
+        `Bản ghi đã được lưu an toàn (${usable.length} đoạn) — không mất gì cả.\n\n` +
+        `Chỉ còn thiếu ${[!chairperson && "người chủ trì", !openaiKey && "OpenAI API Key"].filter(Boolean).join(" và ")} ` +
+        `để chạy AI. Điền nốt ở cột bên trái rồi bấm "Chạy AI dựng biên bản".`
+      );
+      return;
+    }
+
+    await processRecording(result.startedAt, usable);
+  };
+
+  const processRecording = async (startedAt: string, usable: RecordedSegment[]) => {
+    setPendingRecording(null);
+    await runMeetingPipeline(
+      usable.map(s => ({ path: s.path, offsetSec: s.offsetSec, durationSec: s.durationSec })),
+      startedAt
+    );
+  };
+
+  // ─── Đường vào 2: tải file ghi âm sẵn có lên ───
+  const handleIntakeAndProcess = async () => {
+    if (audioFiles.length === 0) {
+      await dialog.alert("Vui lòng kéo thả hoặc chọn file ghi âm cuộc họp!");
+      return;
+    }
+    if (!openaiKey) {
+      await dialog.alert("Vui lòng cấu hình OpenAI API Key ở góc trên bên phải trước khi xử lý!");
+      return;
+    }
+    if (!chairperson) {
+      await dialog.alert("Vui lòng chọn người chủ trì cuộc họp!");
+      return;
+    }
+
+    // Trần 25MB là giới hạn cứng của OpenAI cho MỌI model gỡ băng, không lách
+    // được. File quá cỡ chắc chắn lỗi nên chặn hẳn thay vì chỉ cảnh báo.
+    const oversized = audioFiles.filter(f => f.size > OPENAI_AUDIO_MAX_BYTES);
+    if (oversized.length > 0) {
+      await dialog.alert(
+        `${oversized.length} file vượt trần 25MB mỗi lần gọi của OpenAI:\n` +
+        oversized.map(f => `- ${f.name} (${(f.size / (1024 * 1024)).toFixed(1)} MB)`).join("\n") +
+        `\n\nHãy cắt nhỏ dưới 20 phút mỗi file, hoặc dùng chức năng "Ghi âm trực tiếp" để hệ thống tự cắt đoạn.`
+      );
+      return;
+    }
+
+    setIsUploading(true);
+    setUploadProgress(5);
+    setProcessingLog([`[0/5] Đang tải ${audioFiles.length} file lên kho lưu trữ...`]);
+
+    try {
+      const sessionId = `${Date.now()}`;
+      const parts: AudioPart[] = [];
+      // File tải lên không có thông tin thời lượng thật, nên mốc offset chỉ là
+      // ước lượng theo thứ tự file. Timeline sẽ kém chính xác hơn so với ghi âm
+      // trực tiếp — đây là lý do nên ưu tiên ghi thẳng trong app.
+      let cumulativeSec = 0;
+
+      for (let i = 0; i < audioFiles.length; i++) {
+        const file = audioFiles[i];
+        const cleanName = file.name.replace(/[^a-zA-Z0-9.]/g, "_");
+        const filePath = `recordings/${sessionId}/${String(i).padStart(3, "0")}_${cleanName}`;
+
+        setProcessingLog(prev => [...prev, `  📁 Tải file ${i + 1}/${audioFiles.length}: ${file.name} (${(file.size / (1024 * 1024)).toFixed(1)} MB)...`]);
+
+        const { error: uploadError } = await supabase.storage
+          .from("meetings")
+          .upload(filePath, file, { cacheControl: "3600", upsert: true });
+
+        if (uploadError) throw new Error(`Lỗi upload file ${file.name}: ${uploadError.message}`);
+
+        const durationSec = await estimateDurationSec(file);
+        parts.push({ path: filePath, offsetSec: cumulativeSec, durationSec });
+        cumulativeSec += durationSec;
+        setUploadProgress(Math.round(((i + 1) / audioFiles.length) * 100));
+      }
+
+      await runMeetingPipeline(parts, null);
+    } catch (err: any) {
+      console.error(err);
+      setProcessingLog(prev => [...prev, `❌ LỖI: ${err.message}`]);
+      setProcessingStep("idle");
+      setIsUploading(false);
+      await dialog.alert(err.message || "Lỗi khi tải file ghi âm lên.", { title: "Lỗi", tone: "danger" });
     }
   };
 
@@ -452,8 +684,11 @@ export default function MeetingTeamPage() {
     // Set editable states
     setEditableTitle(meeting.title || "");
     setEditableDate(meeting.meeting_date || "");
-    setEditableStartTime(meeting.start_time || "09:00");
-    setEditableEndTime(meeting.end_time || "10:30");
+    // Để TRỐNG khi không có dữ liệu thật, thay vì điền sẵn 09:00/10:30 như bản
+    // cũ — ô trống nhắc thư ký điền, còn giờ điền sẵn thì trôi thẳng vào biên
+    // bản chính thức mà không ai để ý là nó bịa.
+    setEditableStartTime(meeting.start_time || "");
+    setEditableEndTime(meeting.end_time || "");
     setEditableLocation(meeting.location || "");
     setEditableSecretary(meeting.secretary || "");
     setEditableAttendees(meeting.attendees || []);
@@ -463,9 +698,179 @@ export default function MeetingTeamPage() {
     setEditableTranscript(meeting.transcript_clean || meeting.transcript_raw || "");
     setEditableSummary(meeting.summary || "");
     setEditableActionItems(meeting.action_items || []);
-    
+    setSpeakerMapDraft((meeting.speaker_map as Record<string, string>) || {});
+    setPlayingSegment(0);
+
     setReviewTab("tasks");
     setCurrentView("detail");
+  };
+
+  // ━━━ NGHE LẠI ĐÚNG ĐOẠN ĐỂ KIỂM CHỨNG ━━━
+  // Mỗi đầu việc AI bóc ra đều mang mốc `ts` (giây tính từ lúc bắt đầu ghi).
+  // Nhưng một cuộc họp 2 tiếng nằm rải trên 6 file 20 phút, nên phải dò xem
+  // giây đó rơi vào FILE NÀO rồi mới tua trong file đó — đây là lý do cần bản đồ
+  // `audio_segments` chứ danh sách đường dẫn thuần không đủ.
+  const audioSegments: AudioPart[] = Array.isArray(selectedMeeting?.audio_segments)
+    ? selectedMeeting.audio_segments
+    : [];
+  const [playingSegment, setPlayingSegment] = useState(0);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const pendingSeekRef = useRef<number | null>(null);
+
+  const segmentUrl = (path?: string) =>
+    path ? supabase.storage.from("meetings").getPublicUrl(path).data.publicUrl : "";
+
+  const seekToTs = (ts: number) => {
+    if (audioSegments.length === 0) return;
+    let target = audioSegments.findIndex(
+      s => ts >= s.offsetSec && ts < s.offsetSec + (s.durationSec || Number.MAX_SAFE_INTEGER)
+    );
+    if (target < 0) target = audioSegments.length - 1;
+
+    const local = Math.max(0, ts - (audioSegments[target]?.offsetSec || 0));
+    if (target !== playingSegment) {
+      // Đổi file thì phải đợi trình duyệt nạp xong mới tua được
+      pendingSeekRef.current = local;
+      setPlayingSegment(target);
+    } else if (audioRef.current) {
+      audioRef.current.currentTime = local;
+      void audioRef.current.play();
+    }
+  };
+
+  const handleAudioLoaded = () => {
+    if (pendingSeekRef.current === null || !audioRef.current) return;
+    audioRef.current.currentTime = pendingSeekRef.current;
+    pendingSeekRef.current = null;
+    void audioRef.current.play();
+  };
+
+  /** Giây -> mm:ss (hoặc h:mm:ss) để hiện trên nút mốc trích dẫn. */
+  const formatTs = (sec: number) => {
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = Math.floor(sec % 60);
+    return h > 0
+      ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
+      : `${m}:${String(s).padStart(2, "0")}`;
+  };
+
+  // ─── Gán tên thật cho các nhãn máy (Speaker 1/2/3) ───
+  // Khâu gỡ băng tách được giọng ai ra giọng nấy nhưng chỉ đặt nhãn máy cho
+  // người không có mẫu giọng. Thư ký nghe vài giây rồi chọn tên, sau đó bấm
+  // "Phân tích lại" để AI viết biên bản với tên thật.
+  const detectedSpeakers = (() => {
+    const segs = selectedMeeting?.transcript_segments;
+    if (!Array.isArray(segs)) return [] as string[];
+    return Array.from(new Set(segs.map(s => s.speaker))).sort();
+  })();
+
+  const handleSaveSpeakerMap = async () => {
+    if (!selectedMeeting) return;
+    try {
+      const { error } = await supabase
+        .from("meetings")
+        .update({ speaker_map: speakerMapDraft })
+        .eq("id", selectedMeeting.id);
+      if (error) throw error;
+      setSelectedMeeting({ ...selectedMeeting, speaker_map: speakerMapDraft });
+      await dialog.alert("Đã lưu tên người nói. Bấm \"Phân tích lại bằng AI\" để biên bản dùng tên thật.", { tone: "success" });
+    } catch (err: any) {
+      await dialog.alert("Lỗi khi lưu tên người nói: " + err.message, { title: "Lỗi", tone: "danger" });
+    }
+  };
+
+  // ─── Gỡ băng lại từ file ghi âm đã có trên server ───
+  //
+  // Khi khâu gỡ băng hỏng giữa chừng (mạng rớt, API đổi tham số, hết hạn mức),
+  // file ghi âm VẪN nằm nguyên trong kho lưu trữ. Không có nút này thì cách duy
+  // nhất để cứu là họp lại từ đầu — điều không ai làm được với cuộc họp đã diễn ra.
+  const [isRetranscribing, setIsRetranscribing] = useState(false);
+  const handleRetranscribe = async () => {
+    if (!selectedMeeting) return;
+    if (!openaiKey) {
+      await dialog.alert("Vui lòng nhập OpenAI API Key ở Trung tâm Xử lý AI trước khi gỡ băng lại.");
+      return;
+    }
+    if (selectedMeeting.audio_deleted_at) {
+      await dialog.alert("File ghi âm của biên bản này đã được dọn nên không gỡ băng lại được. Bản gỡ băng cũ vẫn dùng được với nút \"Phân tích lại bằng AI\".");
+      return;
+    }
+
+    const stored = Array.isArray(selectedMeeting.audio_segments) ? selectedMeeting.audio_segments : [];
+    const paths = Array.isArray(selectedMeeting.audio_paths) ? selectedMeeting.audio_paths : [];
+    const segs: AudioPart[] = stored.length > 0
+      ? stored
+      : paths.map(p => ({ path: p, offsetSec: 0, durationSec: 0 }));
+
+    if (segs.length === 0) {
+      await dialog.alert("Biên bản này không lưu đường dẫn file ghi âm (biên bản cũ tạo trước bản nâng cấp), nên không gỡ băng lại tự động được.");
+      return;
+    }
+
+    const approximateTimeline = stored.length === 0 && paths.length > 1;
+    const ok = await dialog.confirm(
+      `Gỡ băng lại toàn bộ ${segs.length} đoạn ghi âm?\n\n` +
+      `Bản gỡ băng hiện tại sẽ bị thay thế, và thao tác này TÍNH PHÍ API theo độ dài bản ghi.` +
+      (approximateTimeline
+        ? `\n\nLưu ý: biên bản này không lưu bản đồ đoạn nên mốc giờ trong timeline sẽ chỉ gần đúng.`
+        : "")
+    );
+    if (!ok) return;
+
+    const roster = [
+      chairperson || selectedMeeting.chairperson,
+      ...editableAttendees,
+    ].filter(Boolean);
+
+    setIsRetranscribing(true);
+    try {
+      // Chuyển về Trung tâm Xử lý AI để nhìn được nhật ký tiến trình
+      setCurrentView("list");
+      setActiveModule("ai_center");
+      await runMeetingPipeline(
+        segs,
+        selectedMeeting.recording_started_at,
+        selectedMeeting.id,
+        roster
+      );
+    } finally {
+      setIsRetranscribing(false);
+    }
+  };
+
+  // ─── Dọn file ghi âm sau khi đã có biên bản ───
+  const handleDeleteAudio = async (meeting: Meeting, afterExport = false) => {
+    const confirmText = afterExport
+      ? `Đã xuất biên bản Word xong.\n\nDọn luôn ${meeting.audio_paths?.length || 0} file ghi âm của cuộc họp này để tiết kiệm dung lượng?\n\nBản gỡ băng và toàn bộ biên bản VẪN ĐƯỢC GIỮ — chỉ mất khả năng nghe lại file gốc.`
+      : `Xoá vĩnh viễn ${meeting.audio_paths?.length || 0} file ghi âm của cuộc họp này?\n\nBản gỡ băng và biên bản vẫn giữ nguyên, nhưng sẽ KHÔNG nghe lại được file gốc nữa. Thao tác này không hoàn tác được.`;
+
+    if (!await dialog.confirm(confirmText, { title: "Dọn file ghi âm", tone: "danger", confirmText: "Xoá file ghi âm" })) return;
+
+    setIsDeletingAudio(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await apiFetch("/api/meeting/delete-audio", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-supabase-auth": session?.access_token || "",
+        },
+        body: JSON.stringify({ meetingId: meeting.id }),
+      });
+      const data = await readJsonSafe(res, "Lỗi dọn file ghi âm");
+      if (!res.ok) throw new Error(data.error || "Không dọn được file ghi âm.");
+
+      await dialog.alert(data.message || "Đã dọn file ghi âm.", { tone: "success" });
+      const { data: refreshed } = await supabase
+        .from("meetings").select("*").eq("id", meeting.id).single();
+      if (refreshed) setSelectedMeeting(refreshed);
+      fetchMeetings();
+    } catch (err: any) {
+      await dialog.alert("Lỗi: " + err.message, { title: "Lỗi", tone: "danger" });
+    } finally {
+      setIsDeletingAudio(false);
+    }
   };
 
   // Chạy lại bước GPT phân tích từ transcript đã gỡ băng sẵn (không tốn Whisper
@@ -475,14 +880,14 @@ export default function MeetingTeamPage() {
     if (!selectedMeeting) return;
     const transcript = selectedMeeting.transcript_raw || editableTranscript;
     if (!transcript || transcript.trim().length === 0) {
-      alert("Biên bản này chưa có bản gỡ băng (transcript). Vui lòng tải file ghi âm và xử lý lại từ đầu.");
+      await dialog.alert("Biên bản này chưa có bản gỡ băng (transcript). Vui lòng tải file ghi âm và xử lý lại từ đầu.");
       return;
     }
     if (!openaiKey) {
-      alert("Vui lòng nhập OpenAI API Key trước khi phân tích!");
+      await dialog.alert("Vui lòng nhập OpenAI API Key trước khi phân tích!");
       return;
     }
-    if (!window.confirm("Chạy lại AI phân tích từ bản gỡ băng hiện có? Metadata, tóm tắt và bảng phân công sẽ được điền lại tự động.")) return;
+    if (!await dialog.confirm("Chạy lại AI phân tích từ bản gỡ băng hiện có? Metadata, tóm tắt và bảng phân công sẽ được điền lại tự động.")) return;
 
     setIsReprocessing(true);
     try {
@@ -492,11 +897,18 @@ export default function MeetingTeamPage() {
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${openaiKey}`,
-          "x-supabase-auth": session?.access_token || ""
+          "x-supabase-auth": session?.access_token || "",
+          "x-openai-model": meetingModel,
         },
         body: JSON.stringify({
           meetingId: selectedMeeting.id,
-          transcriptRaw: transcript
+          transcriptRaw: transcript,
+          // Danh sách người dự đã xác nhận trên biên bản -> AI không được bịa
+          // thêm tên nào ngoài danh sách này.
+          roster: [
+            ...(selectedMeeting.chairperson ? [selectedMeeting.chairperson] : []),
+            ...editableAttendees,
+          ].filter(Boolean),
         })
       });
 
@@ -511,10 +923,10 @@ export default function MeetingTeamPage() {
 
       fetchMeetings();
       if (refreshed) handleViewDetail(refreshed);
-      alert("AI đã phân tích lại và điền nội dung biên bản thành công!");
+      await dialog.alert("AI đã phân tích lại và điền nội dung biên bản thành công!", { tone: "success" });
     } catch (err: any) {
       console.error("Re-analyze error:", err);
-      alert("Lỗi phân tích lại: " + err.message);
+      await dialog.alert("Lỗi phân tích lại: " + err.message, { title: "Lỗi", tone: "danger" });
     } finally {
       setIsReprocessing(false);
     }
@@ -544,11 +956,11 @@ export default function MeetingTeamPage() {
         .eq("id", selectedMeeting.id);
 
       if (error) throw error;
-      alert("Đã lưu chỉnh sửa bản nháp thành công!");
+      await dialog.alert("Đã lưu chỉnh sửa bản nháp thành công!", { tone: "success" });
       fetchMeetings();
     } catch (err: any) {
       console.error(err);
-      alert("Lỗi khi lưu bản nháp: " + err.message);
+      await dialog.alert("Lỗi khi lưu bản nháp: " + err.message, { title: "Lỗi", tone: "danger" });
     }
   };
 
@@ -602,11 +1014,23 @@ export default function MeetingTeamPage() {
       const safeFilename = `Bien_Ban_Hop_${editableTitle.replace(/[^a-zA-Z0-9]/g, "_")}.docx`;
       await downloadFile(documentUrl, safeFilename);
 
-      alert("File Word biên bản họp đã được xuất và tải xuống thành công!");
+      await dialog.alert("File Word biên bản họp đã được xuất và tải xuống thành công!", { tone: "success" });
       fetchMeetings();
+
+      // Biên bản đã ra file — đây là lúc hợp lý nhất để hỏi dọn ghi âm, vì công
+      // việc đã xong mà dung lượng thì đang chiếm chỗ. Chỉ hỏi khi biên bản đã
+      // khoá và file ghi âm còn tồn tại (server vẫn kiểm tra lại điều kiện này).
+      const canOfferCleanup =
+        selectedMeeting.status === "confirmed" &&
+        !selectedMeeting.audio_deleted_at &&
+        (selectedMeeting.audio_paths?.length || 0) > 0;
+
+      if (canOfferCleanup) {
+        await handleDeleteAudio({ ...selectedMeeting, document_url: documentUrl }, true);
+      }
     } catch (err: any) {
       console.error("Export Word error:", err);
-      alert("Lỗi khi xuất file Word: " + err.message);
+      await dialog.alert("Lỗi khi xuất file Word: " + err.message, { title: "Lỗi", tone: "danger" });
     } finally {
       setIsExporting(false);
     }
@@ -627,7 +1051,7 @@ export default function MeetingTeamPage() {
   const handleConfirmMeeting = async () => {
     if (!selectedMeeting) return;
     
-    const confirm = window.confirm("Xác nhận khóa biên bản họp? Hệ thống sẽ tạo Task tự động cho các bộ phận và xuất file Word biên bản họp.");
+    const confirm = await dialog.confirm("Xác nhận khóa biên bản họp? Hệ thống sẽ tạo Task tự động cho các bộ phận và xuất file Word biên bản họp.", { title: "Khoá biên bản", confirmText: "Khoá & tạo Task" });
     if (!confirm) return;
 
     try {
@@ -702,7 +1126,7 @@ export default function MeetingTeamPage() {
 
         if (taskError) {
           console.error("Error creating tasks:", taskError);
-          alert("Biên bản được xác nhận nhưng gặp lỗi khi tự động tạo Task.");
+          await dialog.alert("Biên bản được xác nhận nhưng gặp lỗi khi tự động tạo Task.", { title: "Cảnh báo", tone: "warning" });
         }
       }
 
@@ -710,7 +1134,7 @@ export default function MeetingTeamPage() {
       const safeFilename = `Bien_Ban_Hop_${editableTitle.replace(/[^a-zA-Z0-9]/g, "_")}.docx`;
       await downloadFile(documentUrl, safeFilename);
 
-      alert("Biên bản họp đã được xác nhận và khóa thành công! Các Task công việc đã được tự động phân bổ.");
+      await dialog.alert("Biên bản họp đã được xác nhận và khóa thành công! Các Task công việc đã được tự động phân bổ.", { tone: "success" });
       
       // Reload details
       const { data: updatedMeeting } = await supabase
@@ -723,7 +1147,7 @@ export default function MeetingTeamPage() {
       fetchMeetings();
     } catch (err: any) {
       console.error(err);
-      alert("Lỗi khi xác nhận biên bản: " + err.message);
+      await dialog.alert("Lỗi khi xác nhận biên bản: " + err.message, { title: "Lỗi", tone: "danger" });
     } finally {
       setLoading(false);
     }
@@ -731,7 +1155,7 @@ export default function MeetingTeamPage() {
 
   const handleDeleteMeeting = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    const confirm = window.confirm("Bạn có chắc muốn xóa cuộc họp này cùng toàn bộ tệp đính kèm?");
+    const confirm = await dialog.confirm("Bạn có chắc muốn xóa cuộc họp này cùng toàn bộ tệp đính kèm?", { title: "Xoá cuộc họp", tone: "danger", confirmText: "Xoá" });
     if (!confirm) return;
 
     try {
@@ -757,7 +1181,7 @@ export default function MeetingTeamPage() {
         .eq("id", id);
 
       if (error) throw error;
-      alert("Đã xóa cuộc họp thành công!");
+      await dialog.alert("Đã xóa cuộc họp thành công!", { tone: "success" });
       fetchMeetings();
       if (selectedMeeting?.id === id) {
         setCurrentView("list");
@@ -765,7 +1189,7 @@ export default function MeetingTeamPage() {
       }
     } catch (err: any) {
       console.error(err);
-      alert("Lỗi khi xóa cuộc họp: " + err.message);
+      await dialog.alert("Lỗi khi xóa cuộc họp: " + err.message, { title: "Lỗi", tone: "danger" });
     } finally {
       setLoading(false);
     }
@@ -872,22 +1296,9 @@ export default function MeetingTeamPage() {
               </div>
             </div>
 
-            {/* Quick API Key Setup */}
-            <div className="flex items-center gap-3">
-              <div className="flex flex-col items-end">
-                <span className="text-[10px] text-slate-400 uppercase font-extrabold tracking-wider">OpenAI API Key</span>
-                <input
-                  type="password"
-                  placeholder="Nhập mã OpenAI API Key..."
-                  value={openaiKey}
-                  onChange={(e) => {
-                    setOpenaiKey(e.target.value);
-                    localStorage.setItem("openai_api_key_hanh_chinh", e.target.value);
-                  }}
-                  className="px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-blue-500 focus:outline-none text-slate-800 w-56 placeholder-slate-400 shadow-inner"
-                />
-              </div>
-            </div>
+            {/* Ô nhập API Key đã chuyển xuống cùng chỗ chọn model trong Trung
+                tâm Xử lý AI — hai thứ này đều là cấu hình của cùng một lần chạy,
+                để cạnh nhau thì khỏi phải nhớ ngó lên góc màn hình. */}
           </div>
 
           {/* LIST VIEWS */}
@@ -1050,20 +1461,188 @@ export default function MeetingTeamPage() {
                         </select>
                       </div>
 
-                      <div className="bg-slate-50 border border-slate-200/80 p-4 rounded-xl text-xs text-slate-600 space-y-2">
-                        <h4 className="font-bold text-slate-800 flex items-center gap-1.5 uppercase tracking-wider text-[10px]">
-                          <Info size={13} className="text-[#005BAC]" /> Hướng dẫn tự động
-                        </h4>
-                        <ul className="list-disc pl-4 space-y-1 text-slate-600 leading-relaxed text-[11px]">
-                          <li>Bạn không cần nhập tiêu đề hay danh sách tham dự. AI sẽ tự đọc tên dự án, thư ký, và thành viên từ file ghi âm.</li>
-                          <li>Tải lên các file âm thanh ghi âm cuộc họp (.mp3, .wav, .m4a).</li>
-                          <li>Sau khi xử lý xong, bạn có thể kiểm tra lại thông tin và bấm **"Xuất biên bản Word (.docx)"**.</li>
-                        </ul>
+                      {/* Chọn người dự họp: vừa chặn AI bịa tên, vừa là nguồn mẫu giọng */}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <label className="text-xs font-extrabold text-slate-700 uppercase tracking-wider">
+                            Người dự họp
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => setShowVoiceSamples(true)}
+                            className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-bold text-slate-600 transition hover:bg-slate-50"
+                          >
+                            <Volume2 size={11} /> Mẫu giọng
+                          </button>
+                        </div>
+                        <div className="max-h-52 space-y-1 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50/60 p-2">
+                          {employees.map(emp => {
+                            const checked = participantIds.includes(emp.id);
+                            return (
+                              <label
+                                key={`participant_${emp.id}`}
+                                className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-[11px] hover:bg-white"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  disabled={isUploading || processingStep !== "idle"}
+                                  onChange={() =>
+                                    setParticipantIds(prev =>
+                                      checked ? prev.filter(id => id !== emp.id) : [...prev, emp.id]
+                                    )
+                                  }
+                                  className="h-3.5 w-3.5 accent-[#005BAC]"
+                                />
+                                <span className="truncate font-semibold text-slate-700">{emp.name}</span>
+                                <span className="truncate text-slate-400">{emp.role}</span>
+                                {emp.voice_sample_path && (
+                                  <Volume2 size={11} className="ml-auto flex-shrink-0 text-emerald-600" />
+                                )}
+                              </label>
+                            );
+                          })}
+                        </div>
                       </div>
+
+                      {/* Chọn model phân tích */}
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-extrabold text-slate-700 uppercase tracking-wider">
+                          Model AI dựng biên bản
+                        </label>
+                        <select
+                          value={meetingModel}
+                          onChange={(e) => {
+                            const value = e.target.value as MeetingModelId;
+                            setMeetingModel(value);
+                            localStorage.setItem("openai_model_bien_ban_hop", value);
+                          }}
+                          disabled={isUploading || processingStep !== "idle"}
+                          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-semibold text-slate-800 focus:border-blue-500 focus:bg-white focus:outline-none"
+                        >
+                          {MEETING_MODELS.map(m => (
+                            <option key={m.id} value={m.id}>{m.label}</option>
+                          ))}
+                        </select>
+
+                        {/* Khoá API đứng ngay dưới model: cùng là cấu hình của
+                            một lần chạy, và nếu thiếu khoá thì chọn model gì
+                            cũng không chạy được. */}
+                        <div className="pt-2">
+                          <label className="mb-1 flex items-center justify-between text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
+                            <span>OpenAI API Key</span>
+                            {openaiKey ? (
+                              <span className="flex items-center gap-1 font-bold normal-case tracking-normal text-emerald-600">
+                                <Check size={11} /> Đã lưu
+                              </span>
+                            ) : (
+                              <span className="font-bold normal-case tracking-normal text-amber-600">Chưa có khoá</span>
+                            )}
+                          </label>
+                          <input
+                            type="password"
+                            placeholder="sk-..."
+                            value={openaiKey}
+                            onChange={(e) => {
+                              setOpenaiKey(e.target.value);
+                              localStorage.setItem("openai_api_key_hanh_chinh", e.target.value);
+                            }}
+                            disabled={isUploading || processingStep !== "idle"}
+                            className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs text-slate-800 placeholder-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none disabled:opacity-60"
+                          />
+                        </div>
+                      </div>
+
                     </div>
 
-                    {/* Right Panel: Drag & Drop Zone */}
+                    {/* Right Panel: Ghi âm trực tiếp HOẶC tải file lên */}
                     <div className="md:col-span-2 flex flex-col justify-between">
+                      {/* Chuyển giữa 2 đường vào */}
+                      <div className="mb-3 flex gap-1 rounded-xl border border-slate-200 bg-slate-100/70 p-1">
+                        {([
+                          { id: "record" as const, label: "Ghi âm trực tiếp", icon: <Mic size={13} /> },
+                          { id: "upload" as const, label: "Tải file có sẵn", icon: <UploadCloud size={13} /> },
+                        ]).map(tab => (
+                          <button
+                            key={tab.id}
+                            type="button"
+                            onClick={() => setIntakeMode(tab.id)}
+                            disabled={isUploading || processingStep !== "idle"}
+                            className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
+                              intakeMode === tab.id
+                                ? "bg-white text-[#005BAC] shadow-sm"
+                                : "text-slate-500 hover:text-slate-800"
+                            }`}
+                          >
+                            {tab.icon} {tab.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {intakeMode === "record" ? (
+                        <div className="space-y-2">
+                          {/* Bản ghi xong nhưng còn thiếu thông tin để chạy AI.
+                              File đã nằm an toàn trên Storage — chỉ chờ điền nốt. */}
+                          {pendingRecording && (
+                            <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-[11px] text-blue-900">
+                              <div className="flex items-start gap-2">
+                                <CheckCircle2 size={14} className="mt-0.5 flex-shrink-0 text-blue-600" />
+                                <span>
+                                  Đã lưu an toàn <b>{pendingRecording.segments.length} đoạn ghi âm</b>.
+                                  {(!chairperson || !openaiKey) && (
+                                    <> Còn thiếu
+                                      {!chairperson && <b> người chủ trì</b>}
+                                      {!chairperson && !openaiKey && " và"}
+                                      {!openaiKey && <b> OpenAI API Key</b>}
+                                      {" "}ở cột bên trái.</>
+                                  )}
+                                </span>
+                              </div>
+                              <div className="mt-2 flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => processRecording(pendingRecording.startedAt, pendingRecording.segments)}
+                                  disabled={!chairperson || !openaiKey || isUploading}
+                                  className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-[#005BAC] to-[#00AEEF] px-3 py-1.5 text-[11px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  <Sparkles size={12} /> Chạy AI dựng biên bản
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    if (await dialog.confirm("Bỏ bản ghi này? File ghi âm sẽ nằm lại trong kho lưu trữ nhưng không có biên bản nào dùng tới.")) {
+                                      setPendingRecording(null);
+                                    }
+                                  }}
+                                  className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-600"
+                                >
+                                  Bỏ qua
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Nhắc nhẹ, KHÔNG khoá nút: cuộc họp bắt đầu là ghi
+                              được ngay, hai mục này chỉ cần trước khi bấm Kết thúc. */}
+                          {!pendingRecording && (!openaiKey || !chairperson) && (
+                            <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-800">
+                              <AlertCircle size={14} className="mt-0.5 flex-shrink-0" />
+                              <span>
+                                {!chairperson && !openaiKey
+                                  ? "Hãy chọn người chủ trì cuộc họp và nhập OpenAI API Key"
+                                  : !chairperson
+                                  ? "Hãy chọn người chủ trì cuộc họp"
+                                  : "Hãy nhập OpenAI API Key"}
+                              </span>
+                            </div>
+                          )}
+
+                          <MeetingRecorder
+                            disabled={isUploading || processingStep !== "idle"}
+                            onFinish={handleRecordingFinished}
+                          />
+                        </div>
+                      ) : (
                       <div className="space-y-1.5">
                         <label className="text-xs font-extrabold text-slate-700 uppercase tracking-wider">Kéo thả file ghi âm cuộc họp</label>
                         <div
@@ -1117,11 +1696,12 @@ export default function MeetingTeamPage() {
                           ) : (
                             <div className="space-y-1">
                               <p className="text-slate-700 text-xs font-bold">Thả file âm thanh họp vào đây, hoặc nhấp để tải file</p>
-                              <p className="text-[11px] text-slate-400">Hỗ trợ MP3, WAV, M4A — Chọn nhiều file cùng lúc</p>
+                              <p className="text-[11px] text-slate-400">Hỗ trợ MP3, WAV, M4A — mỗi file tối đa 25MB (trần cứng của OpenAI)</p>
                             </div>
                           )}
                         </div>
                       </div>
+                      )}
 
                       {/* Processing status logs */}
                       {(isUploading || processingStep !== "idle") && (
@@ -1137,14 +1717,16 @@ export default function MeetingTeamPage() {
                         </div>
                       )}
 
-                      {/* Action Button */}
-                      {processingStep === "idle" && (
+                      {/* Action Button — chỉ cho luồng tải file; luồng ghi âm
+                          có nút "Kết thúc & gỡ băng" nằm trong chính bộ ghi âm */}
+                      {processingStep === "idle" && intakeMode === "upload" && (
                         <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 mt-4">
                           <button
                             type="button"
                             onClick={() => {
                               setAudioFiles([]);
                               setChairperson("");
+                              setParticipantIds([]);
                             }}
                             className="px-4 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-600 rounded-xl text-xs font-bold transition-all"
                           >
@@ -1205,6 +1787,24 @@ export default function MeetingTeamPage() {
 
                   {selectedMeeting.status === "draft" && (
                     <>
+                      {/* Gỡ băng lại: cứu biên bản khi khâu gỡ băng hỏng giữa
+                          chừng mà file ghi âm vẫn còn trên server */}
+                      {!selectedMeeting.audio_deleted_at &&
+                        ((selectedMeeting.audio_segments?.length || 0) > 0 ||
+                          (selectedMeeting.audio_paths?.length || 0) > 0) && (
+                          <button
+                            onClick={handleRetranscribe}
+                            disabled={isRetranscribing || isUploading}
+                            title="Chạy lại khâu gỡ băng từ file ghi âm đã lưu trên server"
+                            className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-700 shadow-sm transition-all hover:bg-slate-50 active:scale-[0.97] disabled:opacity-50"
+                          >
+                            {isRetranscribing ? (
+                              <><Loader2 className="animate-spin" size={14} /> Đang gỡ băng...</>
+                            ) : (
+                              <><Mic size={14} /> Gỡ băng lại</>
+                            )}
+                          </button>
+                        )}
                       <button
                         onClick={handleReAnalyze}
                         disabled={isReprocessing}
@@ -1234,8 +1834,88 @@ export default function MeetingTeamPage() {
                       </button>
                     </>
                   )}
+
+                  {/* Dọn file ghi âm — chỉ hiện khi biên bản đã khoá và audio còn */}
+                  {selectedMeeting.status === "confirmed" &&
+                    !selectedMeeting.audio_deleted_at &&
+                    (selectedMeeting.audio_paths?.length || 0) > 0 && (
+                      <button
+                        onClick={() => handleDeleteAudio(selectedMeeting)}
+                        disabled={isDeletingAudio}
+                        title="Xoá file ghi âm gốc, giữ nguyên bản gỡ băng và biên bản"
+                        className="flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs font-bold text-amber-700 shadow-sm transition-all hover:bg-amber-100 active:scale-[0.97] disabled:opacity-50"
+                      >
+                        {isDeletingAudio ? (
+                          <><Loader2 className="animate-spin" size={14} /> Đang dọn...</>
+                        ) : (
+                          <><Trash size={14} /> Dọn file ghi âm ({selectedMeeting.audio_paths.length})</>
+                        )}
+                      </button>
+                    )}
+
+                  {selectedMeeting.audio_deleted_at && (
+                    <span className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] font-semibold text-slate-500">
+                      Đã dọn ghi âm {new Date(selectedMeeting.audio_deleted_at).toLocaleDateString("vi-VN")}
+                      {selectedMeeting.audio_deleted_by ? ` · ${selectedMeeting.audio_deleted_by}` : ""}
+                    </span>
+                  )}
                 </div>
               </div>
+
+              {/* ━━━ GÁN TÊN NGƯỜI NÓI ━━━
+                  Khâu gỡ băng tách được giọng ai ra giọng nấy, nhưng chỉ tự gọi
+                  đúng tên với những người đã lưu mẫu giọng. Số còn lại mang nhãn
+                  máy (Speaker 1/2/3) — thư ký nghe vài giây rồi gán tên, sau đó
+                  bấm "Phân tích lại bằng AI" để biên bản dùng tên thật. */}
+              {detectedSpeakers.length > 0 && selectedMeeting.status === "draft" && (
+                <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
+                  <h3 className="mb-1 flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-wider text-slate-800">
+                    <Users size={14} className="text-[#005BAC]" /> Gán tên người nói
+                  </h3>
+                  <p className="mb-3 text-[11px] leading-relaxed text-slate-400">
+                    AI đã tách được {detectedSpeakers.length} giọng nói khác nhau. Gán tên xong hãy bấm
+                    &quot;Phân tích lại bằng AI&quot; để biên bản ghi tên thật thay cho nhãn máy.
+                  </p>
+                  <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                    {detectedSpeakers.map(sp => {
+                      const sample = (selectedMeeting.transcript_segments || [])
+                        .find(s => s.speaker === sp)?.text || "";
+                      return (
+                        <div key={`sp_${sp}`} className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+                          <div className="mb-2 flex items-center gap-2">
+                            <span className="rounded-md bg-slate-800 px-2 py-0.5 font-mono text-[10px] font-bold text-white">
+                              {sp}
+                            </span>
+                            <select
+                              value={speakerMapDraft[sp] || ""}
+                              onChange={(e) =>
+                                setSpeakerMapDraft(prev => ({ ...prev, [sp]: e.target.value }))
+                              }
+                              className="flex-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-semibold text-slate-800 focus:border-blue-500 focus:outline-none"
+                            >
+                              <option value="">-- Chưa rõ, giữ nhãn máy --</option>
+                              {employees.map(emp => (
+                                <option key={`sp_${sp}_${emp.id}`} value={emp.name}>
+                                  {emp.name} ({emp.role})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <p className="line-clamp-2 text-[10px] italic leading-relaxed text-slate-500">
+                            &ldquo;{sample.slice(0, 140)}{sample.length > 140 ? "..." : ""}&rdquo;
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <button
+                    onClick={handleSaveSpeakerMap}
+                    className="mt-3 rounded-xl bg-slate-800 px-4 py-2 text-xs font-bold text-white transition hover:bg-slate-900"
+                  >
+                    Lưu tên người nói
+                  </button>
+                </div>
+              )}
 
               {/* Review Panel Body */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1408,10 +2088,36 @@ export default function MeetingTeamPage() {
                     </div>
                   )}
 
-                  {selectedMeeting.audio_url && (
+                  {!selectedMeeting.audio_deleted_at && audioSegments.length > 0 && (
+                    <div className="pt-3 border-t border-slate-100 text-xs space-y-1">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase block">
+                        Audio ghi âm
+                        {audioSegments.length > 1 && ` — đoạn ${playingSegment + 1}/${audioSegments.length}`}
+                      </span>
+                      <audio
+                        ref={audioRef}
+                        controls
+                        onLoadedMetadata={handleAudioLoaded}
+                        src={segmentUrl(audioSegments[playingSegment]?.path)}
+                        className="w-full h-8 mt-1 rounded bg-slate-50"
+                      />
+                      <p className="text-[10px] text-slate-400">
+                        Bấm mốc giờ ở cột bên phải để tua thẳng tới đoạn phát biểu tương ứng.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Biên bản cũ chưa có bản đồ đoạn -> vẫn cho nghe file gốc */}
+                  {!selectedMeeting.audio_deleted_at && audioSegments.length === 0 && selectedMeeting.audio_url && (
                     <div className="pt-3 border-t border-slate-100 text-xs space-y-1">
                       <span className="text-[10px] font-bold text-slate-400 uppercase block">Audio Ghi Âm</span>
                       <audio controls src={selectedMeeting.audio_url} className="w-full h-8 mt-1 rounded bg-slate-50" />
+                    </div>
+                  )}
+
+                  {selectedMeeting.audio_deleted_at && (
+                    <div className="pt-3 border-t border-slate-100 text-[11px] text-slate-400">
+                      File ghi âm đã được dọn để tiết kiệm dung lượng. Bản gỡ băng và biên bản vẫn đầy đủ.
                     </div>
                   )}
                 </div>
@@ -1497,15 +2203,45 @@ export default function MeetingTeamPage() {
                                       <td className="px-3 py-2.5 text-center font-bold text-slate-700">{item.stt}</td>
                                       <td className="px-4 py-2.5 text-xs text-slate-800" colSpan={isHeader ? 4 : 1}>
                                         {selectedMeeting.status === "draft" ? (
-                                          <input
-                                            type="text"
-                                            value={item.content}
-                                            onChange={(e) => handleUpdateActionItemField(index, "content", e.target.value)}
-                                            className={`w-full bg-transparent border-b border-slate-200 focus:border-blue-500 focus:outline-none text-slate-800 ${isHeader ? "font-extrabold text-[#005BAC]" : ""}`}
-                                          />
+                                          isHeader ? (
+                                            <input
+                                              type="text"
+                                              value={item.content}
+                                              onChange={(e) => handleUpdateActionItemField(index, "content", e.target.value)}
+                                              className="w-full bg-transparent border-b border-slate-200 focus:border-blue-500 focus:outline-none font-extrabold text-[#005BAC]"
+                                            />
+                                          ) : (
+                                            /* Nội dung công việc được yêu cầu viết 2-4 câu, nhét
+                                               vào <input> một dòng thì bị cắt cụt — không đọc
+                                               hết thì không soát được biên bản trước khi khoá. */
+                                            <textarea
+                                              value={item.content}
+                                              onChange={(e) => handleUpdateActionItemField(index, "content", e.target.value)}
+                                              rows={3}
+                                              className="w-full min-w-[280px] resize-y rounded-lg border border-slate-200 bg-transparent px-2 py-1.5 text-xs leading-relaxed text-slate-800 focus:border-blue-500 focus:outline-none"
+                                            />
+                                          )
                                         ) : (
                                           <span className={`block ${isHeader ? "font-extrabold text-[#005BAC]" : "text-slate-800"}`}>{item.content}</span>
                                         )}
+
+                                        {/* Mốc trích dẫn: bấm là tua thẳng tới đoạn
+                                            phát biểu mà AI căn cứ để viết dòng này.
+                                            Đây là thứ biến "AI có thể viết sai" thành
+                                            "sai thì kiểm chứng được trong vài giây". */}
+                                        {!isHeader &&
+                                          typeof item.ts === "number" &&
+                                          audioSegments.length > 0 &&
+                                          !selectedMeeting.audio_deleted_at && (
+                                            <button
+                                              type="button"
+                                              onClick={() => seekToTs(item.ts as number)}
+                                              title="Nghe lại đoạn ghi âm gốc của nội dung này"
+                                              className="mt-1 inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] font-bold text-slate-500 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
+                                            >
+                                              <Play size={9} /> {formatTs(item.ts)}
+                                            </button>
+                                          )}
                                       </td>
                                       {!isHeader && (
                                         <>
@@ -1618,6 +2354,14 @@ export default function MeetingTeamPage() {
 
               </div>
             </div>
+          )}
+
+          {showVoiceSamples && (
+            <VoiceSampleManager
+              employees={employees}
+              onClose={() => setShowVoiceSamples(false)}
+              onChanged={fetchEmployees}
+            />
           )}
 
         </main>
